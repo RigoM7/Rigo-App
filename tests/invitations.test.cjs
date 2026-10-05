@@ -121,3 +121,44 @@ test('viewer cannot write and stale saves are rejected', async () => {
   await assert.rejects(h.server.run(h.req('employee', 'POST', { id: workspaceId, version: h.row.version, requestId: 'viewer-edit', action: { type: 'configure', name: 'Changed' } })), /read-only/);
   await assert.rejects(h.server.run(h.req('owner', 'POST', { id: workspaceId, version: 0, requestId: 'old-save', action: { type: 'configure', name: 'Changed' } })), e => e.status === 409);
 });
+test('employee signs up, requests access, and owner approves with a role', async () => {
+  const h = harness();
+  const ask = (token, method, body) => h.server.run({ method, headers: { authorization: 'Bearer ' + token }, query: { route: 'requests' }, body });
+  assert.equal((await ask('employee', 'GET')).status, 'none');
+  assert.equal((await ask('employee', 'POST', { op: 'request', name: 'Sam Field' })).status, 'pending');
+  assert.equal((await ask('employee', 'POST', { op: 'request', name: 'Sam Field' })).status, 'pending');
+  assert.equal((await h.server.run(h.req('employee'))).workspaces.length, 0);
+  const { requests, signupUrl } = await ask('owner', 'GET');
+  assert.equal(signupUrl, 'https://rigo.example/?signup=1');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].name, 'Sam Field');
+  await assert.rejects(ask('employee', 'POST', { op: 'approve', requestId: requests[0].id, role: 'Administrator' }), e => e.status === 403);
+  await assert.rejects(ask('owner', 'POST', { op: 'approve', requestId: requests[0].id, role: 'Owner' }), /valid role/);
+  await ask('owner', 'POST', { op: 'approve', requestId: requests[0].id, role: 'Dispatcher' });
+  assert.equal(h.mails.length, 0);
+  assert.equal((await ask('owner', 'GET')).requests.length, 0);
+  const data = await h.server.run(h.req('employee', 'GET', undefined, { id: workspaceId }));
+  assert.equal(data.role, 'Dispatcher');
+  assert.deepEqual(data.state.accessRequests, []);
+  assert.equal(h.row.audit[0].action, 'accessApproved');
+});
+test('declined or removed employees cannot re-request themselves into access', async () => {
+  const h = harness();
+  const ask = (token, method, body) => h.server.run({ method, headers: { authorization: 'Bearer ' + token }, query: { route: 'requests' }, body });
+  await ask('employee', 'POST', { op: 'request' });
+  const [request] = (await ask('owner', 'GET')).requests;
+  await ask('owner', 'POST', { op: 'decline', requestId: request.id });
+  assert.equal((await ask('employee', 'POST', { op: 'request' })).status, 'declined');
+  await assert.rejects(ask('owner', 'POST', { op: 'approve', requestId: request.id, role: 'Viewer' }), e => e.status === 404);
+  assert.equal((await h.server.run(h.req('employee'))).workspaces.length, 0);
+});
+test('removing an approved employee revokes access and blocks re-requesting', async () => {
+  const h = harness();
+  const ask = (token, method, body) => h.server.run({ method, headers: { authorization: 'Bearer ' + token }, query: { route: 'requests' }, body });
+  await ask('employee', 'POST', { op: 'request' });
+  const [request] = (await ask('owner', 'GET')).requests;
+  await ask('owner', 'POST', { op: 'approve', requestId: request.id, role: 'Viewer' });
+  await h.server.run(h.req('owner', 'POST', { id: workspaceId, version: h.row.version, requestId: 'remove', action: { type: 'member', email: employee.email, role: 'Viewer', remove: true } }));
+  assert.equal((await ask('employee', 'POST', { op: 'request' })).status, 'removed');
+  assert.equal((await h.server.run(h.req('employee'))).workspaces.length, 0);
+});

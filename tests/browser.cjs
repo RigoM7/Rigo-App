@@ -71,6 +71,56 @@ const domain = require('../lib/domain.cjs');
     await page.getByRole('button', { name: 'Save password and open Rigo' }).click();
     await page.getByRole('button', { name: 'App settings', exact: true }).waitFor();
     assert.equal(errors.length, 0, errors.join('\n'));
+    // Employee self-signup: shared link opens the sign-up form, then the request waits for approval.
+    const joiner = await browser.newContext();
+    await joiner.route(origin + '/**', route => {
+      const filename = new URL(route.request().url()).pathname.slice(1) || 'index.html';
+      if (!['index.html', 'rigo-access.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
+      return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'application/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+    const employeePage = await joiner.newPage();
+    employeePage.on('pageerror', e => errors.push(e.message));
+    let signupBody, requestBody;
+    await employeePage.route('**/api/rigo?*', async route => {
+      const url = new URL(route.request().url()); const name = url.searchParams.get('route');
+      if (name === 'config') return route.fulfill({ json: { configured: true, url: 'https://test.supabase.co', key: 'public-key' } });
+      if (name === 'requests') { requestBody = route.request().postDataJSON(); return route.fulfill({ json: { status: 'pending' } }); }
+      return route.fulfill({ json: { owner: false, workspaces: [], user: 'new@example.com' } });
+    });
+    await employeePage.route('https://test.supabase.co/auth/v1/**', route => {
+      const url = route.request().url();
+      if (url.includes('/signup')) { signupBody = route.request().postDataJSON(); return route.fulfill({ json: { access_token: 'new-token', refresh_token: 'r', expires_in: 3600 } }); }
+      return route.fulfill({ json: { id: 'new', email: 'new@example.com', user_metadata: { full_name: 'New Hire' } } });
+    });
+    await employeePage.goto(origin + '/?signup=1');
+    await employeePage.getByRole('heading', { name: 'Create your Rigo account' }).waitFor();
+    await employeePage.getByLabel('Full name').fill('New Hire');
+    await employeePage.getByLabel('Email').fill('new@example.com');
+    await employeePage.getByLabel('Password', { exact: true }).fill('new-password');
+    await employeePage.getByLabel('Confirm password').fill('new-password');
+    await employeePage.getByRole('button', { name: 'Create account' }).click();
+    await employeePage.getByRole('heading', { name: 'Waiting for approval' }).waitFor();
+    assert.equal(signupBody.data.full_name, 'New Hire');
+    assert.deepEqual(requestBody, { op: 'request', name: 'New Hire' });
+    await employeePage.screenshot({ path: '/tmp/rigo-waiting.png' });
+    await joiner.close();
+
+    // Owner sees pending requests and approves with a role.
+    const decisions = [];
+    await page.route('**/api/rigo?route=requests*', route => {
+      if (route.request().method() === 'POST') { decisions.push(route.request().postDataJSON()); return route.fulfill({ json: { ok: true } }); }
+      return route.fulfill({ json: { signupUrl: origin + '/?signup=1', requests: decisions.length ? [] : [{ id: 'req-1', email: 'new@example.com', name: 'New Hire', at: '2026-10-05T00:00:00Z' }] } });
+    });
+    await page.goto(origin);
+    await page.getByRole('button', { name: 'Access requests (1)' }).click();
+    await page.getByText('New Hire', { exact: true }).waitFor();
+    await page.getByLabel('Role for new@example.com').selectOption('Dispatcher');
+    await page.screenshot({ path: '/tmp/rigo-requests.png' });
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.getByText('No pending requests.').waitFor();
+    assert.deepEqual(decisions[0], { op: 'approve', requestId: 'req-1', role: 'Dispatcher' });
+    assert.equal(errors.length, 0, errors.join('\n'));
+    console.log('Browser checks passed: employee sign-up, approval queue.');
     console.log('Browser checks passed: standalone fallback, owner invitation, password setup, token removal.');
   } finally { if (browser) await browser.close();  }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -5,3 +5,11 @@
 .rigo-auth form { display:grid; gap:16px; margin-top:24px; }
 .rigo-auth input { width:100%; padding:12px; border:1px solid #ccd5d9; border-radius:8px; background:white; color:#182b33; }
 .rigo-auth button { margin-top:8px; }
+#rigo-requests { position:fixed; right:16px; bottom:16px; z-index:50; display:grid; justify-items:end; gap:8px; max-width:calc(100vw - 32px); }
+#rigo-requests .panel { width:min(420px,calc(100vw - 32px)); max-height:70vh; overflow:auto; padding:20px; background:white; border:1px solid #ccd5d9; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.15); }
+#rigo-requests h2 { font-size:18px; margin-bottom:8px; }
+#rigo-requests p { margin:8px 0; line-height:1.5; }
+#rigo-request-list > div { display:grid; gap:8px; padding:12px 0; border-top:1px solid #e3e8ea; }
+#rigo-request-list small { display:block; color:#5b6b72; }
+.rigo-request-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.rigo-request-actions select { padding:8px; border:1px solid #ccd5d9; border-radius:8px; }
