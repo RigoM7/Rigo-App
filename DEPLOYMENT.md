@@ -68,6 +68,24 @@ Safari, tap Share > **Add to Home Screen**. On Android, open it in Chrome and
 choose **Install app** / **Add to Home screen**. It then opens full screen with
 its own icon, signed in as that employee, showing only what their role allows.
 
+## Optional: address lookup for coordinates
+
+Jobs appear on the Fleet map when they have latitude and longitude. They come
+from the job's saved service location, or can be typed into Create job. To look
+coordinates up from an address instead, add a Mapbox access token as the
+Vercel environment variable `MAPBOX_TOKEN` (Production and Preview) and
+redeploy. Without it, the lookup button is hidden and coordinates are entered
+by hand.
+
+## Setup checklist, templates and demo data
+
+New workspaces show a setup checklist on the Jobs page. Owners and
+administrators can apply a starter template (portable sanitation, fuel
+delivery, septic, or all three), which turns on the matching modules, adds
+trade fields to lists and publishes a Call Received → Dispatched → En Route →
+On Site → Completed workflow if none is active. The owner can load demo data
+(records and jobs labelled "Demo ·") and remove it in one step.
+
 ## Architecture and checks
 
 `rigo-access.js` provides sign-in, recovery, invitation password setup, session

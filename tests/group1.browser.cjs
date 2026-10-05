@@ -11,9 +11,9 @@ function workspace() {
   s.id = '22222222-2222-4222-8222-222222222222';
   s = act(s, { type: 'configure', name: '370 Enviro LLC', modules: ['Clients & sales', 'Services & pricing', 'Orders & jobs', 'Scheduling & dispatch', 'Employees & crews', 'Fleet & equipment', 'Locations'], terminology: s.terminology });
   s = act(s, { type: 'workflow', workflow: { statuses: ['Call Received', 'Dispatched', 'En Route', 'On Site', 'Completed'], checklist: [], autoInvoice: false, signatureRequired: false, requireApproval: false, retired: false } });
-  const imp = (listId, rows) => { s = act(s, { type: 'import', input: { listId, headers: ['code', 'name'], rows, mapping: ['code', 'name'], match: 'code', mode: 'add', historical: false } }); };
+  const imp = (listId, rows, headers = ['code', 'name']) => { s = act(s, { type: 'import', input: { listId, headers, rows, mapping: headers, match: 'code', mode: 'add', historical: false } }); };
   imp('clients', [['C-1', 'Hartley Construction']]);
-  imp('services', [['S-1', 'Portable toilet delivery']]);
+  imp('services', [['S-1', 'Portable toilet delivery', 'each']], ['code', 'name', 'unit']);
   imp('employees', [['T-3', 'Luis Herrera']]);
   imp('vehicles', [['V-201', 'Vacuum truck']]);
   imp('equipment', [['PJ-1', 'Standard unit'], ['PJ-2', 'ADA unit']]);

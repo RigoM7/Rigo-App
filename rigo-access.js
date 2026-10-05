@@ -264,5 +264,11 @@
       else screen('Rigo is temporarily unavailable', 'Refresh to retry the connection.', '');
     }
   }
-  window.Rigo = { start, request, logout, get connected() { return Boolean(config?.configured); } };
+  async function geocode(address) {
+    const response = await request('/api/geocode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    return data;
+  }
+  window.Rigo = { start, request, logout, geocode, get connected() { return Boolean(config?.configured); }, get geocoding() { return Boolean(config?.geocoding); } };
 })();
