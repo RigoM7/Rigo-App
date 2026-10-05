@@ -250,12 +250,100 @@ Screenshots: `docs/screenshots/rigo-b-*.png`.
 - Fees, taxes, minimums and cancellation charges. These need owner decisions
   and are not invented.
 
-## 6. Progress
+## 6. Milestone D: dashboard, exceptions, approvals, recurring work, automation
+
+All of this is internal. Nothing sends messages, takes payments, calls paid
+services or runs in the background.
+
+The rules live in `lib/ops-source.js`. `npm run build` injects them into the
+app bundle and extracts them into `lib/domain.cjs`, so the browser, the demo
+and the server run the same rules. The screens live in `rigo-ops.js`.
+
+### What changed
+
+- **Today** (top of the Jobs page) for owners, administrators, dispatchers and
+  viewers:
+  - **Needs attention**: unassigned or overdue work with a suggested driver,
+    declined jobs, reported problems, approvals waiting or changed, completed
+    work without a price, and overdue invoices.
+  - **Today's work** by status.
+  - **Resources today**: drivers and free units.
+  - **Invoices and payments**: invoiced, collected and outstanding, labelled
+    as not profit.
+  - **Recurring service** and **What Rigo did**.
+  Every item opens its job.
+- **My work today** for field employees. Each job shows when, service and
+  quantity, where, resources, site contact and instructions. Drivers can
+  accept or decline (with a reason), report a problem, or open the job to
+  update or complete it.
+- **Automation modes**, chosen by owners. The setup checklist asks for this.
+  Settings are in App settings › Process builder:
+  - a company default of Manual, Assisted or Automatic;
+  - per-process overrides for assigning drivers and preparing invoices;
+  - pause.
+  Precedence: permissions, then readiness and approvals, then the existing
+  workflow setting "Generate an invoice when a job is completed" (kept), then
+  the process setting, then the company default. Paused never executes on its
+  own. Suggestions pick the driver with the fewest jobs that day and never
+  someone who declined. Automatic assignment also handles declines. Every
+  automatic step is logged.
+- **Approvals.** Owners set rules: invoices at or above an amount wait for an
+  owner or administrator, with an optional backup.
+  - An approval covers exactly the proposed quantity, price and total.
+  - Any change marks it "changed", and a new request is needed.
+  - Nothing is ever approved because time passed.
+  - Approving creates exactly that invoice.
+- **Reported problems** (equipment failure, site not accessible, running late,
+  customer wants to cancel, information missing, could not deliver, other).
+  - Drivers can report them only on their own jobs; the server checks this.
+  - Dispatchers resolve them with an outcome and a note.
+  - Owners can escalate a kind of problem to owners and administrators.
+- **Recurring service**:
+  - Service frequency (days, weeks or months) is separate from billing,
+    which is per visit for now.
+  - Each visit is its own job with its own history.
+  - Planning is manual: "Plan visits for the next 2 weeks", at most two
+    months ahead. It is idempotent, with one visit per series per date.
+  - Visit dates are calendar dates in the series' time zone. Monthly visits
+    on the 31st fall on the last day of shorter months.
+  - Pause, resume and end are available. Pausing or ending archives upcoming
+    unstarted, unassigned visits; nothing is deleted.
+  - "This and future visits" changes only visits that have not started, are
+    not assigned, and were not changed by hand.
+- **Conflict checks** for the new actions compare only the job, approval or
+  series involved, so unrelated saves don't cause false "changed elsewhere"
+  errors. The demo compares against the previewed view, like the server.
+- **Demo:** assisted mode, a weekly series with planned visits, an approval
+  rule with a $1,700 invoice waiting, and a reported delay.
+
+### Not in this milestone
+
+- Monthly or consolidated billing for recurring work.
+- Automatic planning on a schedule; there is no background scheduler.
+- Approval rules for actions other than invoices.
+- Live customer messages about delays; Milestone E covers communication.
+
+### Verification
+
+- `tests/automation.test.cjs` (9 tests): modes, suggestions, automatic
+  assignment with pause and declines, precedence, unpriced auto-invoicing,
+  approvals bound to proposals, escalation, recurring planning, future edits,
+  pause and end, month ends.
+- `tests/invitations.test.cjs`: drivers report problems only on their own
+  jobs, can't change automation or approval rules, and see only their own
+  work.
+- `tests/today.browser.cjs`: approving the exact invoice, resolving a
+  problem, idempotent planning, pause, a new series with validation,
+  automation settings, a driver accepting, reporting and opening a job, and a
+  phone-width check.
+- Screenshots: `docs/screenshots/rigo-d-*.png`.
+
+## 7. Progress
 
 - [x] Milestone A — accounts and company foundation
 - [x] Milestone B — isolated free demo
 - [x] Milestone C — reliable service-specific operations
-- [ ] Milestone D — dashboard, exceptions, approvals, recurring work (next)
-- [ ] Milestone E — configuration, imports, communication, templates
+- [x] Milestone D — dashboard, exceptions, approvals, recurring work
+- [ ] Milestone E — configuration, imports, communication, templates (next)
 - [ ] Milestone F — authorized cross-company sharing
 - [ ] Milestone G — native distribution and billing (needs approval)

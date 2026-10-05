@@ -35,7 +35,7 @@ async function open(browser, initial) {
   page.on('dialog', d => d.accept());
   await page.route(ORIGIN + '/**', route => {
     const f = new URL(route.request().url()).pathname.slice(1) || 'index.html';
-    if (!['index.html', 'rigo-access.js', 'rigo-access.css'].includes(f)) return route.fulfill({ status: 404 });
+    if (!['index.html', 'rigo-access.js', 'rigo-ops.js', 'rigo-access.css'].includes(f)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: fs.readFileSync(f), contentType: f.endsWith('.js') ? 'application/javascript' : f.endsWith('.css') ? 'text/css' : 'text/html' });
   });
   await page.route('**/api/rigo?*', route => {

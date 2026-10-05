@@ -11,7 +11,7 @@ const domain = require('../lib/domain.cjs');
     const context = await browser.newContext();
     await context.route(origin + '/**', route => {
       const filename = new URL(route.request().url()).pathname.slice(1) || 'index.html';
-      if (!['index.html', 'rigo-access.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
+      if (!['index.html', 'rigo-access.js', 'rigo-ops.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
       return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'application/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
     });
     // The deployed app must continue to work before Supabase is configured.
@@ -78,7 +78,7 @@ const domain = require('../lib/domain.cjs');
     const joiner = await browser.newContext();
     await joiner.route(origin + '/**', route => {
       const filename = new URL(route.request().url()).pathname.slice(1) || 'index.html';
-      if (!['index.html', 'rigo-access.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
+      if (!['index.html', 'rigo-access.js', 'rigo-ops.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
       return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'application/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
     });
     const employeePage = await joiner.newPage();

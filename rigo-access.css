@@ -94,7 +94,8 @@ button.rigo-choice:hover { background:var(--brand-soft, #fcf0f2); }
 .rigo-choice span { color:#4d5d64; line-height:1.5; }
 .rigo-choice.is-disabled { background:#f5f7f8; color:#5b6b72; }
 .rigo-hint { padding:12px 14px; border-radius:8px; background:#f5f7f8; border:1px solid #e3e8ea; overflow-wrap:anywhere; }
-.rigo-help { display:block; margin-top:-8px; color:#4d5d64; }
+.rigo-help { display:block; color:#4d5d64; }
+#company-name-help { margin-top:-8px; }
 .rigo-auth input[aria-invalid="true"] { border-color:#b42318; }
 .rigo-danger { color:#b42318 !important; }
 #rigo-switcher { position:fixed; inset:0; margin:auto; height:fit-content; width:min(480px, calc(100vw - 32px)); max-height:min(80dvh, 640px); padding:20px; border:1px solid #ccd5d9; border-radius:14px; box-shadow:0 16px 40px rgba(0,0,0,.2); color:#182b33; }
@@ -175,3 +176,57 @@ button.rigo-choice.is-secondary:hover { border-color:var(--primary, #b51f36); }
 #rigo-price .field { display:grid; gap:6px; margin-top:12px; }
 #rigo-price input { min-height:44px; padding:10px; border:1px solid #ccd5d9; border-radius:8px; }
 .rigo-demo-mode [role="dialog"] { padding-bottom:calc(var(--rigo-demo-bar, 96px) + 16px); }
+/* Today, My work today, automation settings (Milestone D). */
+.rigo-today:not(:empty) { margin:0 0 20px; }
+.rigo-today-panel { padding:20px; }
+.rigo-today-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+.rigo-today-head h2 { margin:0; }
+.rigo-today-head p { margin:2px 0 0; }
+.rigo-mode-chip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px; border:1px solid #e3e8ea; border-radius:999px; background:#fafbfc; font-size:13px; }
+.rigo-today-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; }
+.rigo-card { padding:14px 16px; border:1px solid #e3e8ea; border-radius:10px; background:#fff; min-width:0; }
+.rigo-card h3 { display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:16px; }
+.rigo-attention { grid-column:1 / -1; }
+.rigo-count { display:inline-grid; place-items:center; min-width:24px; height:24px; padding:0 6px; border-radius:12px; background:var(--brand-soft, #fcf0f2); color:var(--primary, #b51f36); font-size:13px; }
+.rigo-items { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.rigo-items > li { padding:8px 0; border-top:1px solid #eef2f3; overflow-wrap:anywhere; }
+.rigo-items > li:first-child { border-top:0; }
+.rigo-items small { display:block; color:#4d5d64; margin-top:2px; }
+.rigo-empty { color:#5b6b72; }
+.rigo-tag { display:inline-block; margin-right:4px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; background:#eef2f3; color:#33434a; }
+.rigo-tag-unassigned, .rigo-tag-declined, .rigo-tag-issue { background:#fff1e0; color:#8a4b00; }
+.rigo-tag-approval, .rigo-tag-price { background:#eef3ff; color:#2c4a8a; }
+.rigo-tag-overdue { background:#fde8e8; color:#9b1c1c; }
+.rigo-open { padding:0; min-height:24px; font-weight:600; text-align:left; }
+.rigo-row-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-top:6px; }
+.rigo-row-actions button { margin:0; }
+button.small, .small { min-height:36px; padding:6px 12px; font-size:13px; }
+.rigo-status-list { list-style:none; margin:0 0 8px; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.rigo-status-list li { display:flex; gap:6px; padding:4px 10px; border-radius:999px; background:#f5f7f8; font-size:13px; }
+.rigo-money { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin:0 0 10px; line-height:1.4; }
+.rigo-money dt { font-size:12px; color:#4d5d64; }
+.rigo-money dd { margin:0; font-weight:700; font-variant-numeric:tabular-nums; }
+.rigo-work { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+.rigo-work-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+.rigo-work-facts { display:grid; gap:6px; margin:10px 0; }
+.rigo-work-facts > div { display:grid; grid-template-columns:96px 1fr; gap:8px; }
+.rigo-work-facts dt { color:#4d5d64; font-size:13px; }
+.rigo-work-facts dd { margin:0; overflow-wrap:anywhere; }
+.rigo-automation:not(:empty) { margin:0 0 20px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-settings h3 { margin:16px 0 6px; font-size:16px; }
+.rigo-settings h3:first-child { margin-top:0; }
+.rigo-grid2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px 12px; }
+.rigo-field { display:grid; gap:4px; margin:8px 0; }
+.rigo-field select, .rigo-field input, .rigo-field textarea { min-height:44px; padding:8px 10px; border:1px solid #ccd5d9; border-radius:8px; background:#fff; font:inherit; }
+.rigo-check { display:flex; align-items:center; gap:8px; margin:8px 0; min-height:44px; }
+.rigo-check input { width:20px; height:20px; accent-color:var(--primary, #b51f36); }
+.rigo-rule-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px 12px; }
+.rigo-rule-form .rigo-field { min-width:150px; }
+.rigo-rule-form button { min-height:44px; margin:8px 0; }
+.rigo-dialog-message:empty { display:none; }
+#rigo-issue textarea { width:100%; }
+@media (max-width: 600px) {
+  .rigo-today-panel { padding:14px; }
+  .rigo-money { grid-template-columns:1fr; }
+  .rigo-work-facts > div { grid-template-columns:1fr; gap:0; }
+}

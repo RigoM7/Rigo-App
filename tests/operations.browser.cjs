@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const origin = 'https://rigo-test.example';
 const shots = process.env.RIGO_SHOTS || '/tmp';
 const REAL = '0a000000-0000-4000-8000-000000000001';
-const files = { 'index.html': 'index.html', 'rigo-access.js': 'rigo-access.js', 'rigo-access.css': 'rigo-access.css', 'rigo-demo-seed.js': 'lib/demo-seed.js' };
+const files = { 'index.html': 'index.html', 'rigo-access.js': 'rigo-access.js', 'rigo-access.css': 'rigo-access.css', 'rigo-ops.js': 'rigo-ops.js', 'rigo-demo-seed.js': 'lib/demo-seed.js' };
 
 async function setup(browser, { width = 1280, height = 900, account = { id: 'user-1', email: 'one@example.com' }, companies = [], blockStorage = false } = {}) {
   const context = await browser.newContext({ viewport: { width, height } });

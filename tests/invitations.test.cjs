@@ -54,6 +54,8 @@ test('invitations and access requests', { skip: !localdb.available && 'local Pos
   };
   // A fresh company owned by "owner", with no other members.
   const company = async () => {
+    // Each subtest needs a fresh company; keep the daily creation limit out of the way here.
+    db.sql(`update public.rigo_company_requests set created_at = now() - interval '2 days'`);
     return (await post('owner', 'companies', { name: 'Company ' + (++seq), requestId: 'company-' + seq })).id;
   };
   const accept = async (who, ws) => {
@@ -170,5 +172,31 @@ test('invitations and access requests', { skip: !localdb.available && 'local Pos
     await act('owner', other, { type: 'member', email: people.employee.email, role: 'Viewer', remove: true });
     assert.equal((await ask('employee', 'POST', { op: 'request', workspace: other })).status, 'removed');
     await assert.rejects(open('employee', other), e => e.status === 403);
+  });
+
+  await t.test('drivers report problems only on their own jobs and cannot approve or change automation', async () => {
+    const ws = await company();
+    await act('owner', ws, { type: 'member', email: people.employee.email, role: 'Field employee' });
+    await accept('employee', ws);
+    await act('owner', ws, { type: 'applyTemplate', template: 'combined' });
+    for (const [listId, values] of [['clients', { code: 'C-1', name: 'Client' }], ['services', { code: 'S-1', name: 'Diesel', rate: '4', unit: 'gallon' }], ['employees', { code: 'T-1', name: 'Driver', role: 'Driver/Field' }]]) await act('owner', ws, { type: 'record', listId, values });
+    let state = (await open('owner', ws)).state;
+    const code = (list, c) => state.lists.find(l => l.id === list).rows.find(r => r.values.code === c).id;
+    await act('owner', ws, { type: 'linkAccount', id: code('employees', 'T-1'), email: people.employee.email });
+    for (const title of ['Mine', 'Not mine']) await act('owner', ws, { type: 'job', job: { title, clientId: code('clients', 'C-1'), serviceId: code('services', 'S-1'), quantity: 10, date: '2026-10-06' } });
+    state = (await open('owner', ws)).state;
+    const mine = state.jobs.find(j => j.title === 'Mine'), other = state.jobs.find(j => j.title === 'Not mine');
+    await act('owner', ws, { type: 'assign', id: mine.id, jobRevision: mine.revision, employeeId: code('employees', 'T-1') });
+    await act('employee', ws, { type: 'reportIssue', id: mine.id, kind: 'delay', note: 'Traffic' });
+    await assert.rejects(act('employee', ws, { type: 'reportIssue', id: other.id, kind: 'delay', note: 'x' }), e => e.status === 403);
+    await assert.rejects(act('employee', ws, { type: 'automation', default: 'automatic' }), e => [400, 403].includes(e.status));
+    await assert.rejects(act('employee', ws, { type: 'approvalRule', action: 'invoice', minTotal: 0, role: 'Owner' }), e => [400, 403].includes(e.status));
+    const after = (await open('owner', ws)).state;
+    assert.equal(after.jobs.find(j => j.id === mine.id).issues.length, 1);
+    assert.equal(after.automation, undefined);
+    // The driver's own view does not include other people's work or company money.
+    const view = (await open('employee', ws)).state;
+    assert.deepEqual(view.jobs.map(j => j.title), ['Mine']);
+    assert.deepEqual(view.invoices, []);
   });
 });

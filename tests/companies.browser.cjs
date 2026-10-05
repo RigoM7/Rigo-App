@@ -63,7 +63,7 @@ async function setup(browser, api, { width = 1280, height = 900 } = {}) {
   const context = await browser.newContext({ viewport: { width, height } });
   await context.route(origin + '/**', route => {
     const filename = new URL(route.request().url()).pathname.slice(1) || 'index.html';
-    if (!['index.html', 'rigo-access.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
+    if (!['index.html', 'rigo-access.js', 'rigo-ops.js', 'rigo-access.css'].includes(filename)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'application/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
   });
   await context.route(/\/api\/rigo\?/, route => api.handle(route));

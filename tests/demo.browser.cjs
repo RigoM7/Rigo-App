@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const origin = 'https://rigo-test.example';
 const shots = process.env.RIGO_SHOTS || '/tmp';
 const REAL = '0a000000-0000-4000-8000-000000000001';
-const files = { 'index.html': 'index.html', 'rigo-access.js': 'rigo-access.js', 'rigo-access.css': 'rigo-access.css', 'rigo-demo-seed.js': 'lib/demo-seed.js' };
+const files = { 'index.html': 'index.html', 'rigo-access.js': 'rigo-access.js', 'rigo-access.css': 'rigo-access.css', 'rigo-ops.js': 'rigo-ops.js', 'rigo-demo-seed.js': 'lib/demo-seed.js' };
 
 async function setup(browser, { width = 1280, height = 900, account = { id: 'user-1', email: 'one@example.com' }, companies = [], blockStorage = false } = {}) {
   const context = await browser.newContext({ viewport: { width, height } });
@@ -40,6 +40,7 @@ async function setup(browser, { width = 1280, height = 900, account = { id: 'use
   context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
   return { context, log, errors };
 }
+const SEED = (() => { const d = require('../lib/domain.cjs'); const st = require('../lib/demo-seed.js').build(d); return { all: String(st.jobs.filter(j => !j.archived).length), received: String(st.jobs.filter(j => !j.archived && j.status === st.workflow.statuses[0]).length) }; })();
 const thirdParty = log => log.requests.filter(r => !r.includes(origin) && !r.includes('https://test.supabase.co/auth/v1/user'));
 const count = (page, label) => page.locator('button', { hasText: label }).locator('span').last().innerText().then(t => t.replace(/[()]/g, '')).catch(() => '');
 const noSideScroll = page => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
@@ -58,14 +59,14 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.getByText('Demo workspace — fictional data.').waitFor();
       await page.getByText('Prairie Services Co. (demo)').first().waitFor();
       assert.equal(await page.locator('.html-toolbar').count() ? await page.locator('.html-toolbar').isVisible() : false, false);
-      assert.equal(await count(page, 'All Jobs'), '8');
+      assert.equal(await count(page, 'All Jobs'), SEED.all);
       await page.screenshot({ path: shots + '/rigo-b-demo.png' });
       const apiBefore = log.api.length;
       // A real write in the demo: dispatch the new request, through the app's own rules.
       await page.getByRole('button', { name: 'Mark Dispatched' }).first().click();
       await page.waitForFunction(() => document.body.innerText.includes('Dispatched'));
       await page.waitForTimeout(500);
-      assert.equal(await count(page, 'Call Received'), '0', 'the demo job moved');
+      assert.equal(await count(page, 'Call Received'), String(Number(SEED.received) - 1), 'the demo job moved');
       // Map view makes no third-party request.
       await page.getByRole('tab', { name: 'Map' }).or(page.getByRole('button', { name: 'Map', exact: true })).first().click();
       await page.waitForTimeout(500);
@@ -83,7 +84,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.getByRole('button', { name: 'Reset demo' }).click();
       await page.getByText('Demo workspace — fictional data.').waitFor();
       await page.waitForFunction(() => document.body.innerText.includes('Call Received'));
-      assert.equal(await count(page, 'Call Received'), '1', 'reset restores the sample data');
+      assert.equal(await count(page, 'Call Received'), SEED.received, 'reset restores the sample data');
       assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(k => !k.startsWith('rigo-demo')).sort()), other, 'reset changes only demo storage');
       assert.equal(await page.evaluate(() => localStorage.getItem('fieldbase-html-workspace')), 'real-marker', 'the demo leaves real markers alone');
       assert.deepEqual(errors, []);
@@ -104,7 +105,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.locator('#rigo-demo-role').selectOption('Viewer');
       await page.getByText('Demo workspace — fictional data.').waitFor();
       await page.waitForFunction(() => /All Jobs/.test(document.body.innerText));
-      assert.equal(await count(page, 'All Jobs'), '8');
+      assert.equal(await count(page, 'All Jobs'), SEED.all);
       assert.ok(log.api.every(a => a === 'GET config' || a === 'GET workspaces'), 'role preview never calls membership endpoints: ' + log.api.join(', '));
       assert.deepEqual(errors, []);
       await context.close();
@@ -138,7 +139,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await other.goto(origin + '/?demo=1');
       await other.getByText('Demo workspace — fictional data.').waitFor();
       await other.waitForFunction(() => /Call Received/.test(document.body.innerText));
-      assert.equal(await count(other, 'Call Received'), '1', 'the second account does not see the first account’s demo changes');
+      assert.equal(await count(other, 'Call Received'), SEED.received, 'the second account does not see the first account’s demo changes');
       assert.deepEqual([...errors, ...second.errors], []);
       await second.context.close();
     }
@@ -156,7 +157,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.goto(origin + '/?demo=1');
       await page.getByText('The demo was refreshed with new sample data.').waitFor();
       await page.waitForFunction(() => /All Jobs/.test(document.body.innerText));
-      assert.equal(await count(page, 'All Jobs'), '8');
+      assert.equal(await count(page, 'All Jobs'), SEED.all);
       assert.deepEqual(errors, []);
       await context.close();
     }
