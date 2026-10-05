@@ -19,7 +19,7 @@ function activeWorkspace() {
   let state = domain.createState('370 Enviro LLC');
   state = act(state, { type: 'workflow', workflow: { statuses: ['Call Received', 'Dispatched', 'En Route', 'On Site', 'Completed'], checklist: [], autoInvoice: false, signatureRequired: false, requireApproval: false, retired: false } });
   state = importRows(state, 'clients', [['C-1', 'Hartley Construction']]);
-  state = importRows(state, 'services', [['S-1', 'Portable toilet delivery']]);
+  state = importRows(state, 'services', [['S-1', 'Portable toilet delivery', 'each']], ['code', 'name', 'unit']);
   return state;
 }
 

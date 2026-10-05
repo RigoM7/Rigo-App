@@ -17,3 +17,59 @@
 .rigo-undo button { width:auto; }
 .rigo-undo small { line-height:1.4; white-space:normal; overflow-wrap:anywhere; color:#5b6b72; }
 .rigo-team-notes p { white-space:pre-wrap; margin:4px 0 0; padding:10px 12px; border-radius:8px; background:#f5f7f8; border:1px solid #e3e8ea; }
+/* Groups 2-4 */
+.rigo-span { grid-column: 1 / -1; }
+.rigo-sub { display:block; margin-top:2px; color:#6b7a80; font-size:12px; font-weight:400; }
+.rigo-demo { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:4px; background:#fff4d6; color:#7a5300; font-size:10px; font-weight:700; letter-spacing:.04em; }
+.rigo-flag { color:#9a5b00; font-weight:600; }
+.rigo-chips { display:flex; flex-wrap:wrap; gap:6px; margin:4px 0; }
+.rigo-chip { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:999px; background:#eef2f3; border:1px solid #d9e1e4; font-size:13px; }
+.rigo-chip button { border:0; background:none; cursor:pointer; font-size:15px; line-height:1; padding:0 2px; color:#5b6b72; }
+.rigo-coords { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.rigo-why { display:block; margin-top:6px; }
+.rigo-steps { display:grid; gap:10px; justify-items:start; }
+.rigo-steps p { margin:0; }
+.rigo-step-back { width:100%; }
+.rigo-step-back summary { cursor:pointer; color:#5b6b72; margin-bottom:8px; }
+.rigo-step-back[open] { display:grid; gap:10px; padding:12px; border:1px solid #e3e8ea; border-radius:8px; }
+.rigo-history ol { margin:0; padding-left:20px; display:grid; gap:4px; }
+.rigo-history li span, .rigo-history li em { color:#5b6b72; font-size:13px; }
+.rigo-status-cell { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+.rigo-status { font-weight:600; white-space:nowrap; }
+.rigo-next.small { padding:4px 10px; font-size:12px; white-space:nowrap; }
+.rigo-not-notified a { font-weight:600; }
+.rigo-setup { margin-bottom:20px; }
+.rigo-checklist { list-style:none; margin:0 0 16px; padding:0; display:grid; gap:6px; }
+.rigo-checklist li { display:grid; grid-template-columns:20px 1fr auto; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #eef2f3; }
+.rigo-checklist li.done span:nth-child(2) { color:#5b6b72; text-decoration:line-through; }
+.rigo-checklist li.done span:first-child { color:#166b57; font-weight:700; }
+.rigo-setup-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; }
+.rigo-setup-row .field { min-width:260px; margin:0; }
+.rigo-demo-note { margin-top:12px; }
+.rigo-import-dest { margin:12px 0; }
+.rigo-import-dest strong { font-size:16px; }
+.rigo-import-dest p { margin:6px 0 0; }
+.rigo-step-move { flex-wrap:wrap; gap:2px 12px; }
+.rigo-step-move button { white-space:nowrap; font-size:13px; padding:2px 0; }
+/* Job list: keep key columns visible on laptops and pin the actions column. */
+.dispatch-surface td .choice { min-width:0; max-width:150px; }
+.dispatch-surface td.location-cell { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+table tr > td:last-child, table tr > th:last-child { position:sticky; right:0; z-index:1; background:#fff; box-shadow:-8px 0 8px -8px rgba(0,0,0,.18); }
+/* Create job: keep the Create button visible while scrolling the form. */
+.app-modal .modal-footer { position:sticky; bottom:-1px; z-index:3; background:#fff; padding-top:12px; padding-bottom:12px; border-top:1px solid #e3e8ea; }
+@media (max-width: 1500px) {
+  .rigo-col-dispatcher, .rigo-col-statusChangedAt { display:none; }
+  .dispatch-surface td .choice { max-width:130px; }
+}
+.rigo-ack-inline { display:none; }
+@media (max-width: 1500px) {
+  .rigo-col-ack { display:none; }
+  .rigo-ack-inline { display:block; }
+}
+.dispatch-surface .rigo-sub { white-space:normal; max-width:190px; line-height:1.35; }
+.dispatch-surface .rigo-ack-inline { max-width:140px; }
+.dispatch-table table { min-width:0 !important; width:100%; }
+.dispatch-table td { white-space:normal; padding:12px 8px; }
+.dispatch-table th { padding-left:8px; padding-right:8px; }
+.dispatch-table .choice { min-width:96px !important; }
+.rigo-step-move { justify-content:flex-start !important; }
