@@ -5,33 +5,36 @@ trigger Vercel deployments. There is no additional deployment service to install
 
 ## Activate shared access
 
-The app retains browser-local mode until all five server environment variables
+The app retains browser-local mode until all four server environment variables
 are present. Invitations stay disabled in that mode; it never reports a fake send.
 
-1. In the Supabase project, run `supabase/schema.sql` in the SQL editor.
-2. Create/confirm the owner's Supabase Auth user and copy its user UUID.
-3. Add these **Production** environment variables in the existing Vercel project:
+1. In the Supabase project, run `supabase/schema.sql`, then every file in
+   `supabase/migrations/` in name order (they are additive and safe to re-run).
+2. Add these **Production** environment variables in the existing Vercel project
+   (names only; never commit values):
    - `SUPABASE_URL`: the project's HTTPS URL.
    - `SUPABASE_ANON_KEY`: the public anon API key (not a secret/admin key).
    - `SUPABASE_SERVICE_ROLE_KEY`: the project's server-only service-role key.
-   - `RIGO_OWNER_USER_ID`: the owner's confirmed Supabase Auth user UUID.
    - `RIGO_APP_URL`: the canonical production HTTPS origin, without a trailing slash.
-4. In Supabase Authentication > URL Configuration, set Site URL to that origin
+   - Optional `MAPBOX_TOKEN`: address lookup (see below).
+   `RIGO_OWNER_USER_ID` is no longer used: ownership lives in `rigo_memberships`.
+3. In Supabase Authentication > URL Configuration, set Site URL to that origin
    and add `https://YOUR-DOMAIN/?invite=1` to the redirect allowlist.
-5. Configure custom SMTP in Supabase Authentication. Supabase's default mail
+4. Configure custom SMTP in Supabase Authentication. Supabase's default mail
    service restricts recipients and is unsuitable for invitations to any email.
    Keep invitation and recovery templates linked to `{{ .ConfirmationURL }}`.
-6. Redeploy Vercel after setting the environment variables. Sign in as the owner
-   from the browser holding the existing records. Choose **Use this browser's
-   existing records** to import them once into shared storage. Keep a downloaded
-   backup beforehand. Other browsers' local records are not merged automatically.
-7. In App settings > Permissions > People & access, enter the email supplied by
-   the employee, select their role, and click **Send invitation**. The email can
-   belong to any provider; there is no company-domain restriction. Employees
-   open their email link, set a password, and use that same email to sign in.
+5. Anyone can create an account. After signing in, a person with no company sees
+   **Create my company** (they become its owner) or their pending invitations.
+   A person in several companies picks one, and switches from the account menu
+   (**Switch company**). See `docs/PLATFORM.md` for the full rules.
+6. In App settings > Permissions > People & access, enter the email supplied by
+   the employee, select their role, and click **Send invitation**. Owners can
+   grant any role, including Owner; administrators can grant Dispatcher, Field
+   employee and Viewer. The email can belong to any provider. The person opens
+   the link, signs in, and accepts the invitation for that company.
 
 An existing Supabase user receives a login link and may set a new password.
-The owner can resend an expired/failed invitation or remove membership. Sends
+Owners and administrators can resend or cancel an invitation and remove members within their authority. A company always keeps at least one owner. Sends
 are throttled to once per employee per minute, in addition to Supabase limits.
 Email acceptance by Supabase means **Invitation sent**, not guaranteed inbox
 receipt; SMTP delivery/bounces are managed by the configured mail provider.
@@ -75,7 +78,9 @@ from the job's saved service location, or can be typed into Create job. To look
 coordinates up from an address instead, add a Mapbox access token as the
 Vercel environment variable `MAPBOX_TOKEN` (Production and Preview) and
 redeploy. Without it, the lookup button is hidden and coordinates are entered
-by hand.
+by hand. Companies created after Milestone A start with lookup switched off
+(`integrations.geocoding: false`) so a new company never uses a paid service by
+default; companies that existed before keep it.
 
 ## Setup checklist, templates and demo data
 
@@ -92,13 +97,15 @@ On Site → Completed workflow if none is active. The owner can load demo data
 refresh, and the server transport. `api/rigo.js` serves the existing app actions.
 `lib/server.cjs` verifies Supabase users, enforces membership, sends invitations,
 and saves shared state using version checks. The service-role key stays on the
-server. The workspace table has RLS and grants no direct client access.
+server. The workspace, membership, invitation and request tables have RLS and grant no direct client access.
 
 `lib/domain.cjs` is generated from the standalone app's existing business rules
 by `npm run build`. Both server and browser use those rules. Keep the extractor
 in sync if replacing/rebuilding the bundled `index.html`.
 
-Run `npm test` and `npm run build` before publishing. Verify the Vercel status on
+Run `npm test` and `npm run build` before publishing. `npm test` includes
+database tests that run the real migrations on a throwaway local PostgreSQL 16
+(skipped when it is not installed); the browser checks are `tests/*.browser.cjs`. Verify the Vercel status on
 the resulting GitHub commit. Then exercise an actual invitation with a test
 employee email: inbox receipt, password setup, role access, and removal. Live
 mail delivery cannot be verified without the connected project and SMTP.

@@ -19,7 +19,10 @@
   `npm run build`; never edit `lib/domain.cjs` by hand.
 - Data model changes are versioned upgrades in the normalizer (`rigoUpgrade`),
   not SQL. Completed jobs are historical snapshots and must not be rewritten.
-- Checks: `npm test`, plus the Playwright checks in `tests/*.browser.cjs`
+- Companies (Milestone A): access is `rigo_memberships` (one row per person per
+  company); `state.members` is only a display mirror. Rules live in SQL functions
+  in `supabase/migrations/`; see `docs/PLATFORM.md` before changing access.
+- Checks: `npm test` (DB tests need local PostgreSQL 16 and root), plus the Playwright checks in `tests/*.browser.cjs`
   (run with `NODE_PATH=$(npm root -g)` and
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-*/chrome-linux/chrome`).
 - Commits that only touch `.claude/` or this file skip Vercel builds (`ignoreCommand`).

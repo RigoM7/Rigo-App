@@ -73,3 +73,45 @@ table tr > td:last-child, table tr > th:last-child { position:sticky; right:0; z
 .dispatch-table th { padding-left:8px; padding-right:8px; }
 .dispatch-table .choice { min-width:96px !important; }
 .rigo-step-move { justify-content:flex-start !important; }
+/* Companies: entry, picker, onboarding and switcher (Milestone A). */
+.rigo-actions { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-top:16px; }
+.rigo-actions button { margin-top:0; }
+.rigo-company-list { list-style:none; margin:16px 0 0; padding:0; display:grid; gap:8px; }
+.rigo-company { display:flex; width:100%; min-height:48px; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; color:#182b33; text-align:left; cursor:pointer; font:inherit; touch-action:manipulation; transition:border-color .15s, background-color .15s; }
+.rigo-company:hover { border-color:var(--primary, #b51f36); background:var(--brand-soft, #fcf0f2); }
+.rigo-company.is-current { border-color:var(--primary, #b51f36); border-width:2px; background:var(--brand-soft, #fcf0f2); }
+.rigo-company-name { font-weight:600; overflow-wrap:anywhere; min-width:0; }
+.rigo-company-role { flex:none; color:#4d5d64; font-size:14px; }
+.rigo-invite { display:grid; gap:8px; padding:12px 16px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; }
+.rigo-invite strong { display:block; overflow-wrap:anywhere; }
+.rigo-invite small { color:#4d5d64; }
+.rigo-invite .rigo-actions { margin-top:0; }
+.rigo-choices { display:grid; gap:12px; margin-top:20px; }
+.rigo-choice { display:grid; gap:4px; width:100%; padding:16px; border:1px solid #ccd5d9; border-radius:12px; background:#fff; color:#182b33; text-align:left; font:inherit; }
+button.rigo-choice { cursor:pointer; border-color:var(--primary, #b51f36); border-width:2px; touch-action:manipulation; }
+button.rigo-choice:hover { background:var(--brand-soft, #fcf0f2); }
+.rigo-choice strong { font-size:17px; }
+.rigo-choice span { color:#4d5d64; line-height:1.5; }
+.rigo-choice.is-disabled { background:#f5f7f8; color:#5b6b72; }
+.rigo-hint { padding:12px 14px; border-radius:8px; background:#f5f7f8; border:1px solid #e3e8ea; overflow-wrap:anywhere; }
+.rigo-help { display:block; margin-top:-8px; color:#4d5d64; }
+.rigo-auth input[aria-invalid="true"] { border-color:#b42318; }
+.rigo-danger { color:#b42318 !important; }
+#rigo-switcher { position:fixed; inset:0; margin:auto; height:fit-content; width:min(480px, calc(100vw - 32px)); max-height:min(80dvh, 640px); padding:20px; border:1px solid #ccd5d9; border-radius:14px; box-shadow:0 16px 40px rgba(0,0,0,.2); color:#182b33; }
+#rigo-switcher::backdrop { background:rgba(15,25,30,.45); }
+.rigo-dialog-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.rigo-dialog-head h2 { font-size:20px; margin:0; }
+.rigo-company:focus-visible, .rigo-choice:focus-visible, #rigo-switcher button:focus-visible, .rigo-auth button:focus-visible, .rigo-auth input:focus-visible { outline:3px solid var(--primary, #b51f36); outline-offset:2px; }
+@media (max-width: 480px) {
+  .rigo-auth { padding:16px; place-items:start center; }
+  .rigo-auth .panel { padding:20px; }
+  .rigo-company { flex-direction:column; align-items:flex-start; gap:2px; }
+}
+@media (prefers-reduced-motion: reduce) { .rigo-company { transition:none; } }
+/* Phones: keep the account menu (switch company, sign out) reachable as a compact button. */
+@media (max-width: 800px) {
+  .operations-header .header-tools { max-width:none; flex-wrap:nowrap; }
+  .operations-header .company-brand { min-width:0; flex:1 1 auto; }
+  .header-tools .user-menu { display:flex !important; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; justify-content:center; border-radius:8px; background:#f6f7f9; color:#545b68; }
+  .header-tools .user-menu > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+}

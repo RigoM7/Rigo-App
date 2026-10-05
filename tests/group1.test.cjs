@@ -136,9 +136,10 @@ test('server reads older workspaces with the new location fields', async () => {
   const fetchImpl = async url => {
     const path = new URL(url).pathname;
     if (path === '/auth/v1/user') return Response.json({ id: ownerId, email: 'owner@example.com', email_confirmed_at: '2026-10-05' });
+    if (path === '/rest/v1/rigo_memberships') return Response.json([{ role: 'Owner' }]);
     return Response.json([row]);
   };
-  const server = createServer({ fetchImpl, env: { SUPABASE_URL: 'https://p.supabase.co', SUPABASE_ANON_KEY: 'a', SUPABASE_SERVICE_ROLE_KEY: 's', RIGO_OWNER_USER_ID: ownerId, RIGO_APP_URL: 'https://rigo.example' } });
+  const server = createServer({ fetchImpl, env: { SUPABASE_URL: 'https://p.supabase.co', SUPABASE_ANON_KEY: 'a', SUPABASE_SERVICE_ROLE_KEY: 's', RIGO_APP_URL: 'https://rigo.example' } });
   const data = await server.run({ method: 'GET', headers: { authorization: 'Bearer t' }, query: { route: 'workspaces', id: workspaceId } });
   assert.ok(list(data.state, 'locations').fields.some(f => f.id === 'address'));
   assert.equal(list(row.state, 'locations').fields.length, 2, 'stored data is not modified by a read');
