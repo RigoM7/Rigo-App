@@ -8,5 +8,5 @@
       "maxDuration": 30
     }
   },
-  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ':(exclude).claude' ':(exclude)CLAUDE.md'"
+  "ignoreCommand": "git log -1 --format=%B | grep -qF '[checkpoint]' || git diff HEAD^ HEAD --quiet -- . ':(exclude).claude' ':(exclude)CLAUDE.md'"
 }

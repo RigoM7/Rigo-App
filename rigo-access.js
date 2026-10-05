@@ -29,6 +29,7 @@
     return session.access_token;
   }
   async function request(url, options = {}) {
+    if (demo) throw new Error('This is not available in the demo. Nothing left this browser.');
     if (!config?.configured) throw new Error('Invitations need Supabase connected and email delivery configured.');
     const original = new URL(url, location.origin);
     const route = original.pathname.split('/').pop();
@@ -240,7 +241,8 @@
   }
   function picker(mount, notice) {
     screen('Choose a company', 'You belong to more than one company. Pick the one to open. You can switch later from the account menu.',
-      `<ul class="rigo-company-list">${companyItems(companies)}</ul><div class="rigo-actions"><button class="outline" id="create-company">Create a company</button><button class="text-button" id="sign-out">Sign out</button></div>`);
+      `<ul class="rigo-company-list">${companyItems(companies)}</ul><div class="rigo-actions"><button class="outline" id="create-company">Create a company</button><button class="text-button" id="explore-demo">Explore the demo</button><button class="text-button" id="sign-out">Sign out</button></div>`);
+    document.getElementById('explore-demo').onclick = () => location.assign('/?demo=1');
     if (notice) message(notice, true);
     document.querySelectorAll('.rigo-company').forEach(button => { button.onclick = () => openCompany(mount, companies.find(w => w.id === button.dataset.id)); });
     document.getElementById('create-company').onclick = () => createCompany(mount, () => picker(mount));
@@ -250,24 +252,35 @@
     screen('Welcome to Rigo', 'Your account is ready. Create your company to start, or ask an existing company to invite you.',
       `<div class="rigo-choices">
         <button class="rigo-choice" id="create-company" type="button"><strong>Create my company</strong><span>Start an empty company. You become its owner and can invite your team.</span></button>
-        <div class="rigo-choice is-disabled" aria-disabled="true"><strong>Explore a demo</strong><span>A separate sample company to try Rigo safely. Coming soon.</span></div>
+        <button class="rigo-choice is-secondary" id="explore-demo" type="button"><strong>Explore the demo</strong><span>A fictional fuel, portable toilet and septic company that stays in this browser. Nothing is sent anywhere.</span></button>
       </div>
       <p class="rigo-hint">Joining an existing company? Ask an owner or administrator to invite <strong>${esc(account.user)}</strong>. Invitations appear here when you sign in.</p>
       <div class="rigo-actions"><button class="outline" id="check-invites">Check for invitations</button><button class="text-button" id="sign-out">Sign out</button></div>`);
     if (notice) message(notice, true);
     document.getElementById('create-company').onclick = () => createCompany(mount, () => onboarding(mount));
+    document.getElementById('explore-demo').onclick = () => location.assign('/?demo=1');
     document.getElementById('check-invites').onclick = () => enter(mount).catch(error => message(error.message, true));
     document.getElementById('sign-out').onclick = logout;
   }
+  const STRUCTURES = [
+    ['', 'Blank', 'Only the basic lists. You set up everything.'],
+    ['sanitation', 'Portable toilets', 'Unit types, service intervals, rental workflow.'],
+    ['fuel', 'Fuel delivery', 'Fuel types, tank details, delivery workflow.'],
+    ['septic', 'Septic service', 'Tank size and lid location, pump-out workflow.'],
+    ['combined', 'All three', 'The structure used by the demo.']
+  ];
   function createCompany(mount, back) {
-    screen('Create a company', 'Name the business. You can change it later in App settings. The company starts empty: no records, members, payments or paid services.',
-      '<form id="company-form" novalidate><label class="field"><span>Company name <span aria-hidden="true">*</span></span><input name="name" maxlength="120" autocomplete="organization" required aria-describedby="company-name-help"></label><small id="company-name-help" class="rigo-help">Similar names are allowed. Companies are identified internally, not by name.</small><button class="primary" type="submit">Create company</button><button class="text-button" type="button" id="cancel-company">Cancel</button></form>');
+    screen('Create a company', 'Name the business and choose a starting structure. The company starts with no customers, jobs, team, prices, payments or paid services.',
+      `<form id="company-form" novalidate><label class="field"><span>Company name <span aria-hidden="true">*</span></span><input name="name" maxlength="120" autocomplete="organization" required aria-describedby="company-name-help"></label><small id="company-name-help" class="rigo-help">Similar names are allowed. Companies are identified internally, not by name.</small>
+      <fieldset class="rigo-structures"><legend>Starting structure</legend>${STRUCTURES.map(([value, label, note], i) => `<label class="rigo-structure"><input type="radio" name="template" value="${value}"${i === 0 ? ' checked' : ''}><span><strong>${label}</strong><small>${note}</small></span></label>`).join('')}</fieldset>
+      <details class="rigo-review"><summary>What is copied and what is not</summary><p><strong>Copied:</strong> list fields, service forms, the job workflow (inactive rules stay inactive) and module choices.</p><p><strong>Never copied:</strong> customers, team, locations, jobs, invoices, payments, attachments, demo names, example prices, sender addresses, credentials and integrations. You enter your own rates.</p></details>
+      <button class="primary" type="submit">Create company</button><button class="text-button" type="button" id="cancel-company">Cancel</button></form>`);
     const form = document.getElementById('company-form');
     const input = form.elements.name;
     input.focus();
     // One request ID per attempt makes retries after a network error safe.
     let requestId = null;
-    input.oninput = () => { requestId = null; input.removeAttribute('aria-invalid'); };
+    form.oninput = () => { requestId = null; input.removeAttribute('aria-invalid'); };
     document.getElementById('cancel-company').onclick = back;
     form.onsubmit = async event => {
       event.preventDefault();
@@ -276,7 +289,7 @@
       requestId ||= crypto.randomUUID();
       busy(form, true); message('Creating your company…');
       try {
-        const { id } = await api('/api/companies', { name, requestId });
+        const { id } = await api('/api/companies', { name, requestId, template: form.elements.template.value || undefined });
         remember(id);
         location.assign('/?company=' + id);
       } catch (error) { message(error.message + ' Your entry is kept; try again.', true); busy(form, false); }
@@ -304,6 +317,7 @@
     document.getElementById('later').onclick = () => enter(mount, { skipInvitations: true }).catch(error => message(error.message, true));
   }
   async function enter(mount, { skipInvitations = false, prefer } = {}) {
+    if (isDemoUrl()) return enterDemo(mount, await auth('user', undefined, 'GET', await accessToken()));
     const data = await api('/api/workspaces');
     account = { user: data.user, userId: data.userId };
     companies = data.workspaces;
@@ -312,6 +326,7 @@
     const member = id => companies.find(w => w.id === id);
     if (isId(join) && !member(join)) { localStorage.setItem(joinKey, join); return waiting(mount, join); }
     localStorage.removeItem(joinKey);
+    if (params.get('create') === '1') { history.replaceState(null, '', '/'); return createCompany(mount, () => enter(mount, { skipInvitations })); }
     if (!skipInvitations && data.invitations?.length) return invitationsScreen(mount, data.invitations);
     if (member(prefer)) return openCompany(mount, member(prefer));
     let notice = '';
@@ -334,7 +349,7 @@
     dialog.setAttribute('aria-labelledby', 'rigo-switcher-title');
     dialog.innerHTML = `<form method="dialog" class="rigo-dialog-head"><h2 id="rigo-switcher-title">Your companies</h2><button class="text-button" value="close" aria-label="Close">Close</button></form>
       <ul class="rigo-company-list">${companyItems(companies, selected?.id)}</ul>
-      <div class="rigo-actions"><button class="outline" type="button" id="rigo-new-company">Create a company</button>${selected ? `<button class="text-button rigo-danger" type="button" id="rigo-leave">Leave ${esc(selected.name)}</button>` : ''}</div>
+      <div class="rigo-actions"><button class="outline" type="button" id="rigo-new-company">Create a company</button><button class="text-button" type="button" id="rigo-open-demo">Explore the demo</button>${selected ? `<button class="text-button rigo-danger" type="button" id="rigo-leave">Leave ${esc(selected.name)}</button>` : ''}</div>
       <p id="rigo-switcher-message" role="status" aria-live="polite"></p>`;
     document.body.append(dialog);
     const status = dialog.querySelector('#rigo-switcher-message');
@@ -354,6 +369,7 @@
         location.assign('/?company=' + button.dataset.id);
       };
     });
+    dialog.querySelector('#rigo-open-demo').onclick = () => { if (leaveWork()) location.assign('/?demo=1'); };
     dialog.querySelector('#rigo-new-company').onclick = () => {
       if (!leaveWork()) return;
       dialog.close();
@@ -413,14 +429,141 @@
     }
   }
   async function geocode(address) {
+    if (demo) throw new Error('Address lookup is off in the demo. Enter coordinates instead.');
     const response = await request('/api/geocode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, workspace: selected?.id }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
     return data;
   }
+  // ---- Demo workspace: fictional data that lives only in this browser, per account. ----
+  // Nothing in the demo reaches the server or any provider: the app runs on its local adapter,
+  // invitations, address lookup and maps are switched off, and server requests are refused here.
+  let demo = null;
+  const DEMO_ROLES = ['Owner', 'Administrator', 'Dispatcher', 'Field employee', 'Viewer'];
+  const isDemoUrl = () => new URLSearchParams(location.search).get('demo') === '1';
+  function storageWorks() { try { const k = 'rigo-storage-test'; localStorage.setItem(k, '1'); localStorage.removeItem(k); return true; } catch { return false; } }
+  function loadSeedScript() {
+    if (window.RigoDemoSeed) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = '/rigo-demo-seed.js'; tag.onload = resolve; tag.onerror = () => reject(new Error('The demo could not load. Refresh and try again.'));
+      document.head.append(tag);
+    });
+  }
+  function demoKeys(userId) { const key = 'rigo-demo:' + userId; return { key, role: key + ':role', pending: key + ':pending' }; }
+  function clearDemo(keys) { for (const k of Object.values(keys)) localStorage.removeItem(k); }
+  function demoView(row) {
+    const role = demo.role;
+    const state = structuredClone(row.state);
+    if (role === 'Field employee') {
+      const employee = window.RigoDomain.employeeFor(state, window.RigoDemoSeed.FIELD_EMAIL);
+      state.jobs = state.jobs.filter(j => employee && j.employeeId === employee.id);
+      const keep = { employees: new Set(employee ? [employee.id] : []), clients: new Set(state.jobs.map(j => j.clientId)),
+        services: new Set(state.jobs.map(j => j.serviceId)), locations: new Set(state.jobs.map(j => j.locationId)),
+        equipment: new Set(state.jobs.flatMap(j => j.equipmentIds?.length ? j.equipmentIds : [j.equipmentId])),
+        vehicles: new Set(state.jobs.map(j => j.vehicleId)), jobs: new Set(state.jobs.map(j => j.id)) };
+      state.lists = state.lists.map(l => ({ ...l, rows: l.rows.filter(r => keep[l.id]?.has(r.id)) }));
+      for (const k of ['invoices', 'imports', 'views', 'notifications', 'inquiries', 'stockMoves']) state[k] = [];
+    }
+    if (!['Owner', 'Administrator'].includes(role)) { state.members = []; state.accessRequests = []; }
+    return { ...row, state, role, user: demoUser(), audit: ['Owner', 'Administrator'].includes(role) ? row.audit : [] };
+  }
+  function demoUser() { return demo?.role === 'Field employee' ? window.RigoDemoSeed.FIELD_EMAIL : 'you@demo.invalid'; }
+  async function enterDemo(mount, user) {
+    if (!storageWorks()) {
+      screen('The demo needs browser storage', 'Your browser is blocking site storage (for example in a private window), so the demo cannot keep its sample data. Allow storage for this site, or create your company instead.',
+        '<div class="rigo-actions"><button class="outline" id="demo-back">Back</button></div>');
+      document.getElementById('demo-back').onclick = () => location.assign('/');
+      return;
+    }
+    await loadSeedScript();
+    const keys = demoKeys(user.id);
+    let notice = '';
+    try {
+      const stored = JSON.parse(localStorage.getItem(keys.key) || 'null');
+      if (stored && stored.state?.demoSeed !== window.RigoDemoSeed.VERSION) { clearDemo(keys); notice = 'The demo was refreshed with new sample data.'; }
+    } catch { clearDemo(keys); }
+    const role = localStorage.getItem(keys.role);
+    demo = { keys, role: DEMO_ROLES.includes(role) ? role : 'Owner', notice };
+    document.documentElement.classList.add('rigo-demo-mode');
+    mount();
+    demoBanner();
+  }
+  function demoSeed() {
+    const row = { state: window.RigoDemoSeed.build(window.RigoDomain), version: 1, audit: [] };
+    // Saved at once so every read in this session sees the same records.
+    localStorage.setItem(demo.keys.key, JSON.stringify(row));
+    return row;
+  }
+  function demoBanner() {
+    document.getElementById('rigo-demo-bar')?.remove();
+    const bar = document.createElement('aside');
+    bar.id = 'rigo-demo-bar';
+    bar.setAttribute('aria-label', 'Demo controls');
+    bar.innerHTML = `<div class="rigo-demo-text"><strong>Demo workspace — fictional data.</strong><span>Changes stay in this browser. Don't enter real or confidential information.</span></div>
+      <button class="outline rigo-demo-toggle" type="button" id="rigo-demo-toggle" aria-expanded="false" aria-controls="rigo-demo-controls">Demo options</button>
+      <div class="rigo-demo-controls" id="rigo-demo-controls">
+        <label class="rigo-demo-role"><span>View as</span><select id="rigo-demo-role">${DEMO_ROLES.map(r => `<option${r === demo.role ? ' selected' : ''}>${r}</option>`).join('')}</select></label>
+        <button class="outline" type="button" id="rigo-demo-modes">Automation modes</button>
+        <button class="outline" type="button" id="rigo-demo-reset">Reset demo</button>
+        <button class="primary" type="button" id="rigo-demo-create">Create my company</button>
+        <button class="text-button" type="button" id="rigo-demo-exit">Exit demo</button>
+      </div><p id="rigo-demo-message" class="rigo-demo-message" role="status" aria-live="polite"></p>`;
+    document.body.append(bar);
+    // Keep page content clear of the fixed bar at any width.
+    const fit = () => document.documentElement.style.setProperty('--rigo-demo-bar', bar.offsetHeight + 'px');
+    fit(); new ResizeObserver(fit).observe(bar);
+    const say = text => { bar.querySelector('#rigo-demo-message').textContent = text; };
+    if (demo.notice) say(demo.notice);
+    bar.querySelector('#rigo-demo-toggle').onclick = event => {
+      const open = bar.classList.toggle('is-open');
+      event.currentTarget.setAttribute('aria-expanded', String(open));
+    };
+    bar.querySelector('#rigo-demo-role').onchange = event => {
+      localStorage.setItem(demo.keys.role, event.target.value);
+      location.reload();
+    };
+    bar.querySelector('#rigo-demo-reset').onclick = () => {
+      if (!confirm('Reset the demo? All changes you made in the demo are discarded. Your real companies are not affected.')) return;
+      clearDemo(demo.keys);
+      location.reload();
+    };
+    bar.querySelector('#rigo-demo-create').onclick = () => location.assign('/?create=1');
+    bar.querySelector('#rigo-demo-exit').onclick = () => location.assign('/');
+    bar.querySelector('#rigo-demo-modes').onclick = automationModes;
+  }
+  // Prepared examples only: nothing is executed. Shows what each mode would do for sample work.
+  function automationModes() {
+    document.getElementById('rigo-modes')?.remove();
+    const dialog = document.createElement('dialog');
+    dialog.id = 'rigo-modes';
+    dialog.className = 'rigo-dialog';
+    dialog.setAttribute('aria-labelledby', 'rigo-modes-title');
+    const rows = [
+      ['A new request: weekly service at Maple Event Hall', 'A dispatcher picks the driver and truck.', 'Rigo suggests Sam Ortiz and Truck 902 (free, nearest). A dispatcher confirms.', 'Rigo assigns Sam Ortiz and Truck 902 if every required detail is present and no approval rule applies.'],
+      ['Completed work: event units at Maple Event Hall', 'Someone prepares the invoice by hand.', 'Rigo drafts the invoice from the recorded quantity and the confirmed rate. A person approves it.', 'Rigo drafts it; if your rules require approval it waits for that approval. It is then sent through the configured service.'],
+      ['A driver declines an assignment', 'A dispatcher is told and reassigns.', 'Rigo proposes the next available driver for a dispatcher to confirm.', 'Rigo reassigns within the rules you set, or escalates to you with the options if none fits.']
+    ];
+    dialog.innerHTML = `<div class="rigo-dialog-head"><h2 id="rigo-modes-title">How much Rigo handles</h2><button class="text-button" type="button" data-close>Close</button></div>
+      <p>Owners choose Manual, Assisted or Automatic, per company and per process. Automatic never skips required approvals or missing information. These are prepared examples; the demo does not run automation or send anything.</p>
+      ${rows.map(([title, manual, assisted, automatic]) => `<section class="rigo-mode-example"><h3>${esc(title)}</h3><dl>
+        <div><dt>Manual</dt><dd>${esc(manual)}</dd></div><div><dt>Assisted</dt><dd>${esc(assisted)}</dd></div><div><dt>Automatic</dt><dd>${esc(automatic)}</dd></div></dl></section>`).join('')}
+      <p class="rigo-help">Owners can pause automation, take over any job, or change the rules at any time. Pausing cannot undo a message already sent.</p>`;
+    document.body.append(dialog);
+    dialog.querySelector('[data-close]').onclick = () => dialog.close();
+    dialog.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dialog.close(); } });
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.showModal();
+    dialog.querySelector('[data-close]').focus();
+  }
   // The bundle opens exactly the company chosen at entry; there is no default company when connected.
-  const pickWorkspace = list => config?.configured ? list.find(w => w.id === selected?.id) || null : list[0];
-  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher,
-    get workspaceId() { return config?.configured ? selected?.id || null : null; },
-    get connected() { return Boolean(config?.configured); }, get geocoding() { return Boolean(config?.geocoding); } };
+  const pickWorkspace = list => config?.configured && !demo ? list.find(w => w.id === selected?.id) || null : list[0];
+  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher, demoSeed, demoView,
+    get workspaceId() { return config?.configured && !demo ? selected?.id || null : null; },
+    get demoKey() { return demo ? demo.keys.key : null; },
+    get demoRole() { return demo ? demo.role : null; },
+    get demoUser() { return demo ? demoUser() : null; },
+    demoActor() { return demo ? 'Demo · ' + demo.role : null; },
+    get demo() { return Boolean(demo); },
+    get connected() { return Boolean(config?.configured) && !demo; }, get geocoding() { return Boolean(config?.geocoding) && !demo; } };
 })();

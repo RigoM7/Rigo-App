@@ -197,6 +197,29 @@ test('milestone A: accounts, companies, invitations and isolation', { skip: !loc
     assert.equal((await post('owner', 'geocode', { workspace: LIVE, address: '1 Main St' })).label, 'Simulated place');
   });
 
+  await t.test('a company can start from a reviewed structure; nothing else is copied', async () => {
+    await denied(post('newbie', 'companies', { name: 'Bad', requestId: 'create-tpl-0', template: 'everything' }), 400);
+    const { id: ws } = await post('newbie', 'companies', { name: 'Structured Co', requestId: 'create-tpl-1', template: 'combined', state: { jobs: [{ id: 'smuggled' }] } });
+    const { state } = await open('newbie', ws);
+    assert.equal(state.workflow.retired, false, 'the reviewed workflow is ready');
+    assert.equal(state.workflow.autoInvoice, false, 'automatic actions stay off');
+    assert.ok(state.lists.find(l => l.id === 'services').fields.some(f => f.id === 'fuelType'));
+    assert.ok(state.lists.every(l => l.rows.length === 0), 'no records, rates or people');
+    assert.deepEqual([state.jobs.length, state.invoices.length], [0, 0], 'client-sent data is ignored');
+    assert.deepEqual(state.integrations, { geocoding: false });
+  });
+
+  await t.test('demo identifiers are not companies on the server', async () => {
+    const paidBefore = fake.calls.filter(c => c.host === 'api.mapbox.com').length;
+    for (const ws of ['demo-workspace', 'standalone-app']) {
+      const refused = e => [400, 403].includes(e.status);
+      await assert.rejects(post('newbie', 'workspaces', { id: ws, version: 1, requestId: 'demo-' + ws, action: { type: 'configure', name: 'x' } }), refused);
+      await assert.rejects(post('newbie', 'geocode', { workspace: ws, address: '1 Main St' }), refused);
+      await assert.rejects(open('newbie', ws), refused);
+    }
+    assert.equal(fake.calls.filter(c => c.host === 'api.mapbox.com').length, paidBefore, 'no paid lookup for a demo id');
+  });
+
   await t.test('access requests are scoped to the company in the sign-up link', async () => {
     await denied(call('outsider', 'requests', { method: 'POST', body: { op: 'request' } }), 400);
     assert.equal((await post('outsider', 'requests', { op: 'request', workspace: acme, name: 'Out Sider' })).status, 'pending');
@@ -211,6 +234,6 @@ test('milestone A: accounts, companies, invitations and isolation', { skip: !loc
     const data = await open('owner', LIVE);
     assert.equal(data.state.name, '370 Enviro LLC');
     assert.equal(data.state.lists.find(l => l.id === 'clients').rows.length, 1);
-    assert.equal(db.sql(`select count(*) from public.rigo_workspaces`), '3');
+    assert.equal(db.sql(`select count(*) from public.rigo_workspaces`), '4');
   });
 });

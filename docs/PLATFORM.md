@@ -149,15 +149,66 @@ or real recipients. Screenshots: `docs/screenshots/rigo-a-*.png`.
 - Supabase advisor: **leaked password protection** is off (Auth setting, not
   changed). Turning it on is recommended.
 
-## 4. Progress
+## 4. Milestone B — isolated free demo
+
+### What changed
+
+- **Explore the demo** from onboarding, the company picker or the switcher
+  (`/?demo=1`). It is a fictional company, *Prairie Services Co. (demo)*,
+  with fuel delivery, portable toilets and septic. It includes customers,
+  locations, drivers, trucks, units, example rates, jobs in every stage,
+  completion examples, and an unpaid and a paid invoice.
+- **Built by the app's own rules.** `lib/demo-seed.js` is a versioned recipe
+  of ordinary actions run through the same business rules as real companies.
+  It is served as `/rigo-demo-seed.js`.
+- **Local only.** The app runs on its built-in local adapter, namespaced per
+  account (`rigo-demo:<userId>`). In the demo:
+  - `window.Rigo.request` refuses every server call.
+  - Invitations, address lookup and map previews are off.
+  - Nothing is uploaded, and no analytics run.
+- **Persistent banner:** "Demo workspace — fictional data". The banner offers:
+  - a warning not to enter confidential information;
+  - **View as** (role preview);
+  - **Automation modes** (prepared examples only);
+  - **Reset demo**, **Create my company** and **Exit demo**.
+  On phones, the controls sit behind **Demo options**.
+- **Role preview** filters the local view like the server does. The field view
+  shows only one fictional driver's work. The preview never touches
+  memberships or the server.
+- **Seed version changes** replace an outdated demo, with a notice. Blocked
+  storage shows an explanation.
+- **Create my company** offers a choice of starting structure: blank,
+  portable toilets, fuel, septic, or all three.
+  - The server generates the structure from the reviewed templates: fields,
+    forms, workflow and modules.
+  - It never accepts state from the client.
+  - Records, people, prices, attachments, credentials and integrations are
+    never copied.
+
+### Decisions
+
+- Demo storage is per account in the browser. Clearing it or using another
+  device starts a fresh demo. Local separation is not protection against
+  someone who controls the same browser.
+- A company created from a structure gets fresh identifiers. Nothing is
+  remapped from the demo because nothing is copied from it.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `tests/demo.test.cjs`: the recipe runs through the rules, is fictional, covers all three trades, and gives the same structure every time | pass |
+| `tests/companies-server.test.cjs`: structure-only creation ignores client-sent data; demo ids are refused by every protected route; no paid calls | pass |
+| `tests/demo.browser.cjs`: no server or third-party requests, reset touches only demo storage, role preview, separate accounts, an account with a real company, outdated seed, blocked storage, structure-only creation, keyboard, phone | pass |
+
+Screenshots: `docs/screenshots/rigo-b-*.png`.
+
+## 5. Progress
 
 - [x] Milestone A — accounts and company foundation
-- [ ] Milestone B — isolated demo company (next)
-- [ ] Later — per-company integrations settings (address lookup switch),
-      AI, messaging, routing, payments, billing
-
-## 5. Next milestone: B — isolated demo
-
-A separate demo company per account, created on request from the onboarding
-screen, clearly labelled, with fictional records, no real recipients and all
-paid services off; removable in one step without touching real companies.
+- [x] Milestone B — isolated free demo
+- [ ] Milestone C — reliable service-specific operations (next)
+- [ ] Milestone D — dashboard, exceptions, approvals, recurring work
+- [ ] Milestone E — configuration, imports, communication, templates
+- [ ] Milestone F — authorized cross-company sharing
+- [ ] Milestone G — native distribution and billing (needs approval)

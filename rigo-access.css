@@ -115,3 +115,50 @@ button.rigo-choice:hover { background:var(--brand-soft, #fcf0f2); }
   .header-tools .user-menu { display:flex !important; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; justify-content:center; border-radius:8px; background:#f6f7f9; color:#545b68; }
   .header-tools .user-menu > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 }
+/* Demo workspace (Milestone B). */
+button.rigo-choice.is-secondary { border-width:1px; border-color:#ccd5d9; }
+button.rigo-choice.is-secondary:hover { border-color:var(--primary, #b51f36); }
+.rigo-demo-mode body { padding-bottom:var(--rigo-demo-bar, 96px); }
+#rigo-demo-bar { position:fixed; left:0; right:0; bottom:0; z-index:40; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:10px 16px; background:#fff8e6; border-top:2px solid #d9a400; color:#3d2e00; box-shadow:0 -4px 16px rgba(0,0,0,.08); }
+.rigo-demo-mode .operations-header { bottom:var(--rigo-demo-bar, 96px); height:auto; }
+.rigo-demo-text { display:grid; gap:2px; min-width:0; }
+.rigo-demo-text strong { font-size:15px; }
+.rigo-demo-text span { font-size:13px; color:#5c4500; }
+.rigo-demo-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.rigo-demo-controls button { min-height:40px; margin:0; }
+.rigo-demo-role { display:flex; align-items:center; gap:6px; font-size:14px; }
+.rigo-demo-role select { min-height:40px; padding:6px 8px; border:1px solid #c9b16b; border-radius:8px; background:#fff; }
+.rigo-demo-message { flex-basis:100%; margin:0; font-size:13px; }
+.rigo-demo-message:empty { display:none; }
+.rigo-demo-mode .html-toolbar { display:none !important; }
+#rigo-demo-bar .rigo-demo-toggle { display:none; }
+.rigo-demo-mode iframe[src^="about:blank"] { background:#eef2f3 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='40'%3E%3Ctext x='0' y='25' font-family='Arial' font-size='14' fill='%235b6b72'%3EMap preview is off in the demo%3C/text%3E%3C/svg%3E") center no-repeat; }
+.rigo-structures { display:grid; gap:8px; margin:0; padding:0; border:0; }
+.rigo-structures legend { font-weight:600; margin-bottom:8px; }
+.rigo-structure { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; cursor:pointer; }
+.rigo-structure:has(input:checked) { border-color:var(--primary, #b51f36); background:var(--brand-soft, #fcf0f2); }
+.rigo-structure input { width:auto; margin-top:4px; accent-color:var(--primary, #b51f36); }
+.rigo-structure span { display:grid; gap:2px; }
+.rigo-structure small { color:#4d5d64; }
+.rigo-review { padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#f5f7f8; }
+.rigo-review summary { cursor:pointer; font-weight:600; }
+.rigo-review p { margin:8px 0 0; font-size:14px; }
+.rigo-dialog { position:fixed; inset:0; margin:auto; height:fit-content; width:min(640px, calc(100vw - 32px)); max-height:min(85dvh, 760px); overflow:auto; padding:20px; border:1px solid #ccd5d9; border-radius:14px; box-shadow:0 16px 40px rgba(0,0,0,.2); color:#182b33; }
+.rigo-dialog::backdrop { background:rgba(15,25,30,.45); }
+.rigo-dialog p { line-height:1.55; }
+.rigo-mode-example { margin-top:14px; padding-top:12px; border-top:1px solid #e3e8ea; }
+.rigo-mode-example h3 { font-size:16px; margin:0 0 8px; }
+.rigo-mode-example dl { display:grid; gap:8px; margin:0; }
+.rigo-mode-example dl > div { display:grid; grid-template-columns:96px 1fr; gap:8px; }
+.rigo-mode-example dt { font-weight:600; }
+.rigo-mode-example dd { margin:0; color:#33434a; }
+.rigo-dialog button:focus-visible, #rigo-demo-bar button:focus-visible, #rigo-demo-bar select:focus-visible, .rigo-structure:has(input:focus-visible) { outline:3px solid var(--primary, #b51f36); outline-offset:2px; }
+@media (max-width: 800px) {
+  #rigo-demo-bar { padding:8px 12px; }
+  .rigo-demo-text span { display:none; }
+  #rigo-demo-bar .rigo-demo-toggle { display:inline-flex; min-height:40px; margin:0; }
+  #rigo-demo-bar:not(.is-open) .rigo-demo-controls { display:none; }
+  #rigo-demo-bar.is-open .rigo-demo-text span { display:block; }
+  .rigo-demo-mode .operations-header { bottom:auto; }
+  .rigo-mode-example dl > div { grid-template-columns:1fr; gap:2px; }
+}

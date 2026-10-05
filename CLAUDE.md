@@ -25,7 +25,9 @@
 - Checks: `npm test` (DB tests need local PostgreSQL 16 and root), plus the Playwright checks in `tests/*.browser.cjs`
   (run with `NODE_PATH=$(npm root -g)` and
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-*/chrome-linux/chrome`).
-- Commits that only touch `.claude/` or this file skip Vercel builds (`ignoreCommand`).
+- Commits that only touch `.claude/` or this file, or whose message contains
+  `[checkpoint]`, skip Vercel builds (`ignoreCommand`). Use `[checkpoint]` for
+  work-in-progress pushes; the final push must not contain it.
 
 ## Skills
 - `.claude/skills/ui-ux-pro-max`: third-party UI/UX design skill (MIT, from

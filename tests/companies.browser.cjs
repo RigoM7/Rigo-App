@@ -86,7 +86,7 @@ const companyOf = page => page.evaluate(() => window.Rigo.workspaceId);
       await page.goto(origin);
       await page.getByRole('heading', { name: 'Welcome to Rigo' }).waitFor();
       assert.equal(await page.locator('.operations-content').count(), 0, 'no company is opened by default');
-      assert.equal(await page.getByText('Coming soon.', { exact: false }).count(), 1, 'demo is shown as not yet available');
+      assert.equal(await page.getByRole('button', { name: /Explore the demo/ }).count(), 1, 'the demo is offered next to company creation');
       assert(await noSideScroll(page), 'onboarding fits a phone screen');
       await page.screenshot({ path: shots + '/rigo-a-onboarding-mobile.png', fullPage: true });
       await page.getByRole('button', { name: /Create my company/ }).click();
