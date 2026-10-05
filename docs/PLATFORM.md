@@ -203,12 +203,59 @@ or real recipients. Screenshots: `docs/screenshots/rigo-a-*.png`.
 
 Screenshots: `docs/screenshots/rigo-b-*.png`.
 
-## 5. Progress
+## 5. Milestone C — reliable service-specific operations
+
+### What changed
+
+- **Quantities kept apart.** Completing a job records:
+  - `requestedQuantity`: what was booked, captured before completion;
+  - `actualQuantity`: what was delivered or done;
+  - `billableQuantity`: what is charged; the job's `quantity` stays the billed
+    amount for compatibility;
+  - `equipmentQuantity`: units on the job.
+  Invoices keep the requested and actual amounts next to the billed amount.
+- **Billing a different quantity** is an explicit owner or administrator
+  choice at completion, with a required reason that is stored on the job.
+  Fixed-price services always bill 1. Without an override, billed equals
+  actual.
+- **No $0 invoices.** Completed work booked without a price shows **Needs a
+  price** in Ready to invoice. An owner or administrator confirms a price and
+  a reason, which are recorded in `priceHistory`. Invoicing is then
+  available. Rigo never guesses prices, and confirmed prices can't change
+  once invoiced.
+- **Completion form** shows the requested amount. A completed job summarizes
+  requested, delivered and billed amounts, plus units.
+- **Demo:** billing is enabled, a diesel job delivered less than requested,
+  and one job has no price yet.
+
+### Preserved
+
+- Completed jobs and invoices are snapshots. Service price changes never
+  recalculate them.
+- Jobs completed before this change are not given invented requested amounts.
+- Workflow versions are unchanged.
+
+### Verification
+
+- `tests/operations.test.cjs` (5 tests): quantities, authority and reasons,
+  price confirmation, no recalculation, the demo example.
+- `tests/operations.browser.cjs`: the needs-a-price dialog with validation,
+  the requested amount and the billable override.
+- Screenshots: `docs/screenshots/rigo-c-*.png`.
+
+### Not in this milestone
+
+- Per-trade unit names beyond the existing service units (each, gallon,
+  hour, visit). Owners can already add options to the unit field.
+- Fees, taxes, minimums and cancellation charges. These need owner decisions
+  and are not invented.
+
+## 6. Progress
 
 - [x] Milestone A — accounts and company foundation
 - [x] Milestone B — isolated free demo
-- [ ] Milestone C — reliable service-specific operations (next)
-- [ ] Milestone D — dashboard, exceptions, approvals, recurring work
+- [x] Milestone C — reliable service-specific operations
+- [ ] Milestone D — dashboard, exceptions, approvals, recurring work (next)
 - [ ] Milestone E — configuration, imports, communication, templates
 - [ ] Milestone F — authorized cross-company sharing
 - [ ] Milestone G — native distribution and billing (needs approval)

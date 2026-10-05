@@ -169,3 +169,9 @@ button.rigo-choice.is-secondary:hover { border-color:var(--primary, #b51f36); }
 .rigo-integration-row small { display:block; color:#4d5d64; margin-top:2px; }
 .rigo-integration-row button { min-height:44px; }
 .rigo-link-hint { display:block; margin-top:4px; color:#8a4b00 !important; white-space:normal; }
+.rigo-billable { margin:4px 0 16px; padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#fafbfc; }
+.rigo-billable summary { cursor:pointer; font-weight:600; min-height:24px; }
+.rigo-billable .field { margin-top:10px; }
+#rigo-price .field { display:grid; gap:6px; margin-top:12px; }
+#rigo-price input { min-height:44px; padding:10px; border:1px solid #ccd5d9; border-radius:8px; }
+.rigo-demo-mode [role="dialog"] { padding-bottom:calc(var(--rigo-demo-bar, 96px) + 16px); }

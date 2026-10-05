@@ -472,6 +472,37 @@
     const target = document.getElementById('rigo-integrations');
     if (target && selected && !demo) integrationsPanel(target);
   }).observe(document.documentElement, { childList: true, subtree: true });
+  // Completed work booked without a price: an owner or administrator confirms the price, with a reason.
+  function confirmPrice(job, act) {
+    document.getElementById('rigo-price')?.remove();
+    const dialog = document.createElement('dialog');
+    dialog.id = 'rigo-price';
+    dialog.className = 'rigo-dialog';
+    dialog.setAttribute('aria-labelledby', 'rigo-price-title');
+    dialog.innerHTML = `<form method="dialog" id="rigo-price-form" novalidate><div class="rigo-dialog-head"><h2 id="rigo-price-title">Confirm a price</h2><button class="text-button" type="button" data-close>Cancel</button></div>
+      <p><strong>${esc(job.title)}</strong><br>${esc(job.clientName || '')} · ${esc(job.quantity)} ${esc(job.unit || '')}. This job was booked without a price, so it cannot be invoiced yet. Rigo never guesses prices.</p>
+      <label class="field"><span>Unit price ($) <span aria-hidden="true">*</span></span><input name="rate" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>
+      <label class="field"><span>Reason <span aria-hidden="true">*</span></span><input name="reason" maxlength="300" required placeholder="For example: price quoted to the customer"></label>
+      <p class="rigo-help">The price and reason are recorded on the job. Owners and administrators can confirm prices.</p>
+      <div class="rigo-actions"><button class="primary" type="submit">Confirm price</button></div><p id="rigo-price-message" role="status" aria-live="polite"></p></form>`;
+    document.body.append(dialog);
+    const form = dialog.querySelector('form'), note = dialog.querySelector('#rigo-price-message');
+    dialog.querySelector('[data-close]').onclick = () => dialog.close();
+    dialog.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dialog.close(); } });
+    dialog.addEventListener('close', () => dialog.remove());
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const rate = Number(form.elements.rate.value), reason = form.elements.reason.value.trim();
+      if (!(rate > 0)) { note.className = 'error-text'; note.textContent = 'Enter a price greater than zero.'; return form.elements.rate.focus(); }
+      if (!reason) { note.className = 'error-text'; note.textContent = 'Give a reason for the price.'; return form.elements.reason.focus(); }
+      form.querySelectorAll('button,input').forEach(el => { el.disabled = true; });
+      const ok = await act({ type: 'confirmPrice', jobId: job.id, rate, reason });
+      if (ok) dialog.close();
+      else { form.querySelectorAll('button,input').forEach(el => { el.disabled = false; }); note.className = 'error-text'; note.textContent = 'The price was not saved. See the message above and try again.'; }
+    };
+    dialog.showModal();
+    form.elements.rate.focus();
+  }
   // ---- Demo workspace: fictional data that lives only in this browser, per account. ----
   // Nothing in the demo reaches the server or any provider: the app runs on its local adapter,
   // invitations, address lookup and maps are switched off, and server requests are refused here.
@@ -595,7 +626,7 @@
   }
   // The bundle opens exactly the company chosen at entry; there is no default company when connected.
   const pickWorkspace = list => config?.configured && !demo ? list.find(w => w.id === selected?.id) || null : list[0];
-  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher, demoSeed, demoView, teamLinked,
+  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher, demoSeed, demoView, teamLinked, confirmPrice,
     get workspaceId() { return config?.configured && !demo ? selected?.id || null : null; },
     get demoKey() { return demo ? demo.keys.key : null; },
     get demoRole() { return demo ? demo.role : null; },

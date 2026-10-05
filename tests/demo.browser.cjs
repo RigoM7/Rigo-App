@@ -58,7 +58,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.getByText('Demo workspace — fictional data.').waitFor();
       await page.getByText('Prairie Services Co. (demo)').first().waitFor();
       assert.equal(await page.locator('.html-toolbar').count() ? await page.locator('.html-toolbar').isVisible() : false, false);
-      assert.equal(await count(page, 'All Jobs'), '7');
+      assert.equal(await count(page, 'All Jobs'), '8');
       await page.screenshot({ path: shots + '/rigo-b-demo.png' });
       const apiBefore = log.api.length;
       // A real write in the demo: dispatch the new request, through the app's own rules.
@@ -104,7 +104,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.locator('#rigo-demo-role').selectOption('Viewer');
       await page.getByText('Demo workspace — fictional data.').waitFor();
       await page.waitForFunction(() => /All Jobs/.test(document.body.innerText));
-      assert.equal(await count(page, 'All Jobs'), '7');
+      assert.equal(await count(page, 'All Jobs'), '8');
       assert.ok(log.api.every(a => a === 'GET config' || a === 'GET workspaces'), 'role preview never calls membership endpoints: ' + log.api.join(', '));
       assert.deepEqual(errors, []);
       await context.close();
@@ -156,7 +156,7 @@ const noSideScroll = page => page.evaluate(() => document.documentElement.scroll
       await page.goto(origin + '/?demo=1');
       await page.getByText('The demo was refreshed with new sample data.').waitFor();
       await page.waitForFunction(() => /All Jobs/.test(document.body.innerText));
-      assert.equal(await count(page, 'All Jobs'), '7');
+      assert.equal(await count(page, 'All Jobs'), '8');
       assert.deepEqual(errors, []);
       await context.close();
     }
