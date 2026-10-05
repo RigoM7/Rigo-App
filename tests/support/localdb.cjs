@@ -50,4 +50,9 @@ function start() {
   sql(SUPABASE_STUB);
   return { sql, file, sqlAsync, stop };
 }
-module.exports = { available, start };
+// Every migration in name order, as production receives them.
+function migrations() {
+  const dir = path.join(__dirname, '../../supabase/migrations');
+  return fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort().map(f => path.join(dir, f));
+}
+module.exports = { available, start, migrations };

@@ -38,7 +38,7 @@ test('invitations and access requests', { skip: !localdb.available && 'local Pos
   const db = localdb.start();
   t.after(() => db.stop());
   db.file(path.join(__dirname, '../supabase/schema.sql'));
-  db.file(path.join(__dirname, '../supabase/migrations/20261005120000_companies.sql'));
+  for (const file of localdb.migrations()) db.file(file);
   db.sql(`insert into auth.users values ${Object.values(people).map(p => `('${p.id}','${p.email}')`).join(',')}`);
   const users = Object.fromEntries(Object.entries(people).map(([k, p]) => [k, { id: p.id, email: p.email, email_confirmed_at: '2026-10-05' }]));
   const fake = createFakeSupabase(db, users);

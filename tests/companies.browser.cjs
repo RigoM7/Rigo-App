@@ -13,9 +13,10 @@ const UNKNOWN = '0e000000-0000-4000-8000-000000000005';
 function company(id, name) { const state = domain.createState(name); state.id = id; return state; }
 // An in-memory stand-in for /api/rigo with per-account memberships.
 function fakeApi() {
-  const states = { [A]: company(A, '370 Enviro LLC'), [B]: company(B, 'Acme Septic'), [C]: company(C, 'Bay Pumping') };
+  const withField = state => { state.members = [{ email: 'driver@example.com', role: 'Field employee', invitation: { status: 'active' } }]; return state; };
+  const states = { [A]: withField(company(A, '370 Enviro LLC')), [B]: company(B, 'Acme Septic'), [C]: company(C, 'Bay Pumping') };
   const api = {
-    states, posts: [], creates: [], leaves: [], failNextCreate: false,
+    states, posts: [], creates: [], leaves: [], integrationPosts: [], geocoding: false, failNextCreate: false,
     members: { [A]: 'Owner', [B]: 'Dispatcher' },
     invitations: [{ id: 'inv-c', workspace: C, company: 'Bay Pumping', role: 'Viewer', expiresAt: '2026-10-19T00:00:00Z' }],
     async handle(route) {
@@ -35,6 +36,10 @@ function fakeApi() {
         api.invitations = api.invitations.filter(i => i.id !== body.id);
         if (body.op === 'accept') { api.members[invite.workspace] = invite.role; return json({ status: 'accepted', workspace: invite.workspace }); }
         return json({ status: 'declined' });
+      }
+      if (name === 'integrations') {
+        if (body) { api.geocoding = body.geocoding; api.integrationPosts.push(body); }
+        return json({ geocoding: { available: true, enabled: api.geocoding } });
       }
       if (name === 'leave') { api.leaves.push(body); delete api.members[body.workspace]; return json({ ok: true }); }
       if (name !== 'workspaces') return json({ error: 'Unknown request.' }, 404);
@@ -194,6 +199,17 @@ const companyOf = page => page.evaluate(() => window.Rigo.workspaceId);
       await first.getByRole('combobox').filter({ hasText: /Dispatcher|Administrator|Field employee|Viewer|Owner/ }).first().click();
       assert.equal(await first.getByRole('option', { name: 'Owner', exact: true }).count(), 1);
       await first.keyboard.press('Escape');
+      // Field employees without a linked Team record are flagged.
+      await first.getByText(/Not linked to a Team record yet/).first().waitFor();
+      // Owners switch paid services per company.
+      await first.getByRole('tab', { name: 'Capabilities' }).click();
+      await first.getByText('Paid services for this company').waitFor();
+      await first.getByText(/Off: coordinates are entered by hand/).waitFor();
+      first.once('dialog', d => d.accept());
+      await first.getByRole('button', { name: 'Turn on' }).click();
+      await first.getByText(/On: Create job can look up/).waitFor();
+      assert.deepEqual(api.integrationPosts, [{ workspace: A, geocoding: true }]);
+      await first.screenshot({ path: shots + '/rigo-a-paid-services.png' });
       // Leave a company from the switcher (with confirmation).
       second.once('dialog', d => d.accept());
       await second.locator('.user-menu').click();

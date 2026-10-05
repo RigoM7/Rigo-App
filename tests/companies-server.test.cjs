@@ -34,7 +34,7 @@ test('milestone A: accounts, companies, invitations and isolation', { skip: !loc
   db.sql(`insert into public.rigo_workspaces (id, owner_id, state, version) values ('${LIVE}', '${people.owner.id}', '${liveJson}', 60)`);
   const fingerprint = () => db.sql(`select md5(state::text) || ':' || version || ':' || md5(audit::text) from public.rigo_workspaces where id = '${LIVE}'`);
   const before = fingerprint();
-  db.file(path.join(__dirname, '../supabase/migrations/20261005120000_companies.sql'));
+  for (const file of localdb.migrations()) db.file(file);
   assert.equal(fingerprint(), before, 'migration leaves the live company unchanged');
 
   const fake = createFakeSupabase(db, users);
@@ -207,6 +207,20 @@ test('milestone A: accounts, companies, invitations and isolation', { skip: !loc
     assert.ok(state.lists.every(l => l.rows.length === 0), 'no records, rates or people');
     assert.deepEqual([state.jobs.length, state.invoices.length], [0, 0], 'client-sent data is ignored');
     assert.deepEqual(state.integrations, { geocoding: false });
+  });
+
+  await t.test('only owners switch paid services, per company, with an audit entry', async () => {
+    assert.deepEqual(await call('admin', 'integrations', { query: { workspace: LIVE } }), { geocoding: { available: true, enabled: true } });
+    await denied(post('admin', 'integrations', { workspace: LIVE, geocoding: false }));
+    await denied(post('newbie', 'integrations', { workspace: LIVE, geocoding: false }));
+    assert.equal((await post('owner', 'integrations', { workspace: LIVE, geocoding: false })).geocoding.enabled, false);
+    await assert.rejects(post('owner', 'geocode', { workspace: LIVE, address: '1 Main St' }), e => e.status === 503);
+    assert.equal((await post('owner', 'integrations', { workspace: LIVE, geocoding: true })).geocoding.enabled, true);
+    const audit = JSON.parse(db.sql(`select audit::text from public.rigo_workspaces where id = '${LIVE}'`));
+    assert.equal(audit.filter(a => a.action === 'integrationChanged').length, 2);
+    // Without a platform token nothing can be turned on.
+    const bare = createServer({ env: { ...env, MAPBOX_TOKEN: '' }, fetchImpl: fake.fetchImpl });
+    await assert.rejects(bare.run({ method: 'POST', headers: { authorization: 'Bearer newbie' }, query: { route: 'integrations' }, body: { workspace: acme, geocoding: true } }), e => e.status === 409);
   });
 
   await t.test('demo identifiers are not companies on the server', async () => {

@@ -162,3 +162,10 @@ button.rigo-choice.is-secondary:hover { border-color:var(--primary, #b51f36); }
   .rigo-demo-mode .operations-header { bottom:auto; }
   .rigo-mode-example dl > div { grid-template-columns:1fr; gap:2px; }
 }
+/* Paid services switch and Team-link hint (Milestone A follow-ups). */
+.rigo-integrations:not(:empty) { margin:0 0 16px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-integrations h3 { margin:0 0 4px; font-size:16px; }
+.rigo-integration-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
+.rigo-integration-row small { display:block; color:#4d5d64; margin-top:2px; }
+.rigo-integration-row button { min-height:44px; }
+.rigo-link-hint { display:block; margin-top:4px; color:#8a4b00 !important; white-space:normal; }

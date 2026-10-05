@@ -147,3 +147,18 @@ test('companies, memberships and invitations', { skip: !localdb.available && 'lo
     assert.equal(q(`select has_function_privilege('authenticated','public.rigo_create_company(uuid,text,text,text,jsonb)','execute')`), 'f');
   });
 });
+
+test('free company creation is limited per account per day; retries still work', { skip: !localdb.available && 'local PostgreSQL not available' }, async t => {
+  const db = localdb.start();
+  t.after(() => db.stop());
+  db.file(SCHEMA);
+  for (const file of localdb.migrations()) db.file(file);
+  db.sql(`insert into auth.users values ('${NEWBIE}','new@example.com'),('${OWNER2}','partner@example.com')`);
+  const create = (user, n) => db.sql(`select public.rigo_create_company('${user}', 'x@example.com', 'req-${n}', 'Co ${n}', '{}'::jsonb)`);
+  const first = create(NEWBIE, 0);
+  for (let n = 1; n < 10; n++) create(NEWBIE, n);
+  assert.throws(() => create(NEWBIE, 10), e => String(e.stderr || e.message).includes('rigo:too_many_companies'));
+  assert.equal(create(NEWBIE, 0), first, 'a retry of an earlier request still returns its company');
+  assert.ok(create(OWNER2, 0), 'other accounts are unaffected');
+  assert.equal(db.sql(`select count(*) from public.rigo_workspaces where owner_id = '${NEWBIE}'`), '10');
+});

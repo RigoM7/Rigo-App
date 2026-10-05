@@ -236,6 +236,8 @@
     url.searchParams.delete('join');
     url.searchParams.set('company', company.id);
     history.replaceState(null, '', url.pathname + url.search);
+    api('/api/integrations?workspace=' + encodeURIComponent(company.id))
+      .then(data => { companyGeocoding = data.geocoding.available && data.geocoding.enabled; }).catch(() => {});
     mount();
     if (['Owner', 'Administrator'].includes(company.role)) ownerRequests(company.id, company.role).catch(() => {});
   }
@@ -435,6 +437,41 @@
     if (!response.ok) throw new Error(data.error);
     return data;
   }
+  // Field employees see only work assigned to their Team record, so People & access flags missing links.
+  function teamLinked(email) {
+    const state = window.rigoCurrentBackup?.state;
+    const rows = state?.lists?.find(l => l.id === 'employees')?.rows || [];
+    return rows.some(r => !r.archived && (r.accountEmail === email || (r.accountEmail === undefined && String(r.values?.email || '').toLowerCase() === email)));
+  }
+  // Owner switch for paid services in App settings › Capabilities. Rendered into the app's placeholder.
+  async function integrationsPanel(target) {
+    if (target.dataset.ready) return;
+    target.dataset.ready = '1';
+    const company = selected;
+    target.innerHTML = '<h3>Paid services for this company</h3><p class="rigo-help">Paid services stay off until an owner turns them on. Each lookup may cost the platform money.</p><div class="rigo-integration-row"><div><strong>Address lookup</strong><small id="rigo-geo-status">Checking…</small></div><button class="outline" type="button" id="rigo-geo-toggle" disabled>…</button></div><p id="rigo-geo-message" role="status" aria-live="polite"></p>';
+    const button = target.querySelector('#rigo-geo-toggle'), status = target.querySelector('#rigo-geo-status'), note = target.querySelector('#rigo-geo-message');
+    const show = data => {
+      const g = data.geocoding;
+      companyGeocoding = g.available && g.enabled;
+      status.textContent = !g.available ? 'Not available on this platform yet (needs a Mapbox token).' : g.enabled ? 'On: Create job can look up coordinates from an address.' : 'Off: coordinates are entered by hand.';
+      button.textContent = g.enabled ? 'Turn off' : 'Turn on';
+      button.disabled = company.role !== 'Owner' || (!g.available && !g.enabled);
+      button.title = company.role !== 'Owner' ? 'Only owners can change paid services.' : '';
+      button.onclick = async () => {
+        if (!g.enabled && !confirm('Turn on address lookup for ' + company.name + '? Lookups use a paid map service.')) return;
+        button.disabled = true;
+        try { show(await api('/api/integrations', { workspace: company.id, geocoding: !g.enabled })); note.className = 'success-text'; note.textContent = 'Saved.'; }
+        catch (error) { note.className = 'error-text'; note.textContent = error.message; button.disabled = false; }
+      };
+    };
+    try { show(await api('/api/integrations?workspace=' + encodeURIComponent(company.id))); }
+    catch (error) { status.textContent = error.message; }
+  }
+  let companyGeocoding = false;
+  new MutationObserver(() => {
+    const target = document.getElementById('rigo-integrations');
+    if (target && selected && !demo) integrationsPanel(target);
+  }).observe(document.documentElement, { childList: true, subtree: true });
   // ---- Demo workspace: fictional data that lives only in this browser, per account. ----
   // Nothing in the demo reaches the server or any provider: the app runs on its local adapter,
   // invitations, address lookup and maps are switched off, and server requests are refused here.
@@ -558,12 +595,12 @@
   }
   // The bundle opens exactly the company chosen at entry; there is no default company when connected.
   const pickWorkspace = list => config?.configured && !demo ? list.find(w => w.id === selected?.id) || null : list[0];
-  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher, demoSeed, demoView,
+  window.Rigo = { start, request, logout, geocode, pickWorkspace, openSwitcher, demoSeed, demoView, teamLinked,
     get workspaceId() { return config?.configured && !demo ? selected?.id || null : null; },
     get demoKey() { return demo ? demo.keys.key : null; },
     get demoRole() { return demo ? demo.role : null; },
     get demoUser() { return demo ? demoUser() : null; },
     demoActor() { return demo ? 'Demo · ' + demo.role : null; },
     get demo() { return Boolean(demo); },
-    get connected() { return Boolean(config?.configured) && !demo; }, get geocoding() { return Boolean(config?.geocoding) && !demo; } };
+    get connected() { return Boolean(config?.configured) && !demo; }, get geocoding() { return Boolean(config?.geocoding) && !demo && companyGeocoding; } };
 })();
