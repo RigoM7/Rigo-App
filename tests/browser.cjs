@@ -120,7 +120,14 @@ const domain = require('../lib/domain.cjs');
     await page.getByText('No pending requests.').waitFor();
     assert.deepEqual(decisions[0], { op: 'approve', requestId: 'req-1', role: 'Dispatcher' });
     assert.equal(errors.length, 0, errors.join('\n'));
-    console.log('Browser checks passed: employee sign-up, approval queue.');
+    // Signing out from the account menu returns to the sign-in page and clears the session.
+    await page.locator('.user-menu').click();
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
+    await page.getByRole('heading', { name: 'Sign in to Rigo' }).waitFor();
+    assert.equal(await page.evaluate(() => localStorage.getItem('rigo-auth-session-v1')), null);
+    await page.screenshot({ path: '/tmp/rigo-signed-out.png' });
+    assert.equal(errors.length, 0, errors.join('\n'));
+    console.log('Browser checks passed: employee sign-up, approval queue, sign out.');
     console.log('Browser checks passed: standalone fallback, owner invitation, password setup, token removal.');
   } finally { if (browser) await browser.close();  }
 })().catch(error => { console.error(error); process.exitCode = 1; });
