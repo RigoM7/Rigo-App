@@ -62,9 +62,10 @@
   }
   function busy(form, value) { form.querySelectorAll('button,input').forEach(el => { el.disabled = value; }); }
   function login(mount) {
-    screen('Sign in to Rigo', 'Use the email the owner invited. New employees can set their password through their invitation email.',
-      '<form id="login-form"><label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Sign in</button><button class="text-button" type="button" id="reset-password">Send password reset link</button></form>');
+    screen('Sign in to Rigo', 'New employee? Create an account, and the owner will approve your access.',
+      '<form id="login-form"><label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Sign in</button><button class="outline" type="button" id="create-account">Create an account</button><button class="text-button" type="button" id="reset-password">Send password reset link</button></form>');
     const form = document.getElementById('login-form');
+    document.getElementById('create-account').onclick = () => signup(mount);
     form.onsubmit = async event => {
       event.preventDefault(); const data = new FormData(form); busy(form, true); message('Signing in…');
       try {
@@ -82,6 +83,110 @@
       } catch (error) { message(error.message, true); }
       finally { busy(form, false); }
     };
+  }
+  function signup(mount) {
+    screen('Create your Rigo account', 'After you confirm your email, the owner chooses your role and approves your access.',
+      '<form id="signup-form"><label class="field"><span>Full name</span><input name="name" autocomplete="name" maxlength="80" required></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="8" required></label><label class="field"><span>Confirm password</span><input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label><button class="primary" type="submit">Create account</button><button class="text-button" type="button" id="have-account">I already have an account</button></form>');
+    document.getElementById('have-account').onclick = () => { history.replaceState(null, '', '/'); login(mount); };
+    const form = document.getElementById('signup-form');
+    form.onsubmit = async event => {
+      event.preventDefault(); const data = new FormData(form);
+      if (data.get('password') !== data.get('confirm')) return message('Passwords must match.', true);
+      busy(form, true); message('Creating your account…');
+      try {
+        const result = await auth('signup?redirect_to=' + encodeURIComponent(location.origin + '/'), {
+          email: String(data.get('email')).trim(), password: data.get('password'), data: { full_name: String(data.get('name')).trim() }
+        });
+        history.replaceState(null, '', '/');
+        // Supabase returns a session only when email confirmation is turned off.
+        if (result.access_token) { saveSession(result); return await enter(mount); }
+        screen('Check your email', 'Open the confirmation link we sent to finish creating your account. Then the owner can approve your access.', '<button class="outline" id="back-to-sign-in">Back to sign in</button>');
+        document.getElementById('back-to-sign-in').onclick = () => login(mount);
+      } catch (error) { message(error.message, true); busy(form, false); }
+    };
+  }
+  async function requestAccess() {
+    const user = await auth('user', undefined, 'GET', await accessToken());
+    const response = await request('/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'request', name: user.user_metadata?.full_name || '' }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    return data.status;
+  }
+  async function waiting(mount) {
+    const status = await requestAccess();
+    if (status === 'approved') return enter(mount);
+    const text = {
+      pending: 'Your request was sent to the owner. You can open Rigo as soon as they approve it and choose your role.',
+      declined: 'The owner declined this access request. Contact them if you think this is a mistake.',
+      removed: 'Your access was removed. Ask the owner to invite you again.'
+    }[status] || 'Ask the owner to approve the email you used to sign in.';
+    screen(status === 'pending' ? 'Waiting for approval' : 'No access yet', text,
+      '<button class="primary" id="check-again">Check again</button><button class="text-button" id="sign-out">Sign out</button>');
+    document.getElementById('sign-out').onclick = logout;
+    document.getElementById('check-again').onclick = async event => {
+      event.target.disabled = true;
+      try { await waiting(mount); } catch (error) { message(error.message, true); event.target.disabled = false; }
+    };
+  }
+  async function ownerRequests() {
+    document.getElementById('rigo-requests')?.remove();
+    const box = document.createElement('aside');
+    box.id = 'rigo-requests';
+    box.innerHTML = '<button class="primary" id="rigo-requests-toggle" aria-expanded="false"></button><section class="panel" hidden><h2>Employee access requests</h2><p>Share the sign-up link with employees. Approve each request and choose their role.</p><button class="outline" id="rigo-copy-link">Copy sign-up link</button><div id="rigo-request-list" class="review-list"></div><p id="rigo-request-message" role="status" aria-live="polite"></p></section>';
+    document.body.append(box);
+    const toggle = box.querySelector('#rigo-requests-toggle'), panel = box.querySelector('section');
+    const list = box.querySelector('#rigo-request-list'), status = box.querySelector('#rigo-request-message');
+    let link = location.origin + '/?signup=1';
+    async function load() {
+      const response = await request('/api/requests');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      link = data.signupUrl || link;
+      toggle.textContent = 'Access requests (' + data.requests.length + ')';
+      list.replaceChildren(...data.requests.map(item => {
+        const row = document.createElement('div');
+        const who = document.createElement('div');
+        const name = document.createElement('strong'); name.textContent = item.name || item.email;
+        const detail = document.createElement('small'); detail.textContent = item.email + ' · requested ' + new Date(item.at).toLocaleDateString();
+        who.append(name, detail);
+        const role = document.createElement('select');
+        role.setAttribute('aria-label', 'Role for ' + item.email);
+        for (const value of ['Field employee', 'Dispatcher', 'Viewer', 'Administrator']) role.add(new Option(value, value));
+        const approve = document.createElement('button'); approve.className = 'primary'; approve.textContent = 'Approve';
+        const decline = document.createElement('button'); decline.className = 'text-button'; decline.textContent = 'Decline';
+        const decide = op => async () => {
+          if (op === 'decline' && !confirm('Decline access for ' + item.email + '?')) return;
+          approve.disabled = decline.disabled = true;
+          try {
+            const response = await request('/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ op, requestId: item.id, role: role.value }) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error);
+            status.className = 'success-text';
+            status.textContent = op === 'approve' ? item.email + ' can now sign in as ' + role.value + '. Reload to see them in People & access.' : 'Request declined.';
+            await load();
+          } catch (error) { status.className = 'error-text'; status.textContent = error.message; approve.disabled = decline.disabled = false; }
+        };
+        approve.onclick = decide('approve'); decline.onclick = decide('decline');
+        const actions = document.createElement('div'); actions.className = 'rigo-request-actions';
+        actions.append(role, approve, decline);
+        row.append(who, actions);
+        return row;
+      }));
+      if (!data.requests.length) list.textContent = 'No pending requests.';
+    }
+    toggle.onclick = () => {
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute('aria-expanded', String(!panel.hidden));
+      if (!panel.hidden) load().catch(error => { status.className = 'error-text'; status.textContent = error.message; });
+    };
+    box.querySelector('#rigo-copy-link').onclick = async () => {
+      try { await navigator.clipboard.writeText(link); status.className = 'success-text'; status.textContent = 'Sign-up link copied: ' + link; }
+      catch { status.className = ''; status.textContent = link; }
+    };
+    toggle.textContent = 'Access requests';
+    await load().catch(() => {});
   }
   function passwordSetup(mount, email) {
     screen('Set your Rigo password', 'Choose a password for the email the owner invited.',
@@ -103,12 +208,12 @@
     const response = await request('/api/workspaces');
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
-    if (data.workspaces.length) return mount();
-    if (!data.owner) {
-      screen('Waiting for access', 'This account has no active invitation. Ask the owner to invite the email you used to sign in.', '<button class="outline" id="sign-out">Sign out</button>');
-      document.getElementById('sign-out').onclick = logout;
+    if (data.workspaces.length) {
+      mount();
+      if (data.owner) ownerRequests().catch(() => {});
       return;
     }
+    if (!data.owner) return waiting(mount);
     let backup;
     try { backup = JSON.parse(localStorage.getItem('fieldbase-standalone-v1')); } catch {}
     screen('Set up shared Rigo', backup?.state ? 'Move this browser’s existing Rigo records into your shared workspace so invited employees can access their work.' : 'Create your shared workspace, then invite employees from People & access.',
@@ -120,6 +225,7 @@
         const response = await request('/api/bootstrap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: backup?.state }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error);
         mount();
+        ownerRequests().catch(() => {});
       } catch (error) { message(error.message, true); event.target.disabled = false; }
     };
   }
@@ -148,7 +254,8 @@
         saveSession({ access_token: hash.get('access_token'), refresh_token: hash.get('refresh_token'), expires_in: Number(hash.get('expires_in') || 3600) });
         history.replaceState(null, '', location.pathname + location.search);
       }
-      if (!session) { login(mount); return; }
+      if (!session) return new URLSearchParams(location.search).get('signup') === '1' ? signup(mount) : login(mount);
+      if (new URLSearchParams(location.search).get('signup') === '1') history.replaceState(null, '', '/');
       const user = await auth('user', undefined, 'GET', await accessToken());
       if (new URLSearchParams(location.search).get('invite') === '1') return passwordSetup(mount, user.email);
       await enter(mount);

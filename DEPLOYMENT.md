@@ -40,6 +40,34 @@ For a **Field employee**, link their Team row's account email to the invited
 address. This determines which assignments they can see and update. Other
 employees' assignments and billing history are filtered on the server.
 
+## Employee self sign-up and approval
+
+Employees can also create their own account instead of waiting for an invitation.
+
+1. In Supabase Authentication > Providers > Email, keep **Enable email signups**
+   and **Confirm email** turned on. Add `https://YOUR-DOMAIN/` to the redirect
+   allowlist (the confirmation link returns there).
+2. The owner opens **Access requests** (bottom-right button after signing in)
+   and clicks **Copy sign-up link** (`https://YOUR-DOMAIN/?signup=1`). Share it
+   by text, email, or a QR code.
+3. The employee creates an account, confirms their email, and signs in. Their
+   request appears in the owner's **Access requests** list. Until it is
+   approved they see a "Waiting for approval" screen and no business data.
+4. The owner chooses a role and clicks **Approve** (no email is sent; access
+   is tied to that verified account) or **Decline**. Declined or removed
+   employees cannot re-request; the owner can still invite them by email.
+5. For a **Field employee**, link their Team row's account email as above.
+
+Signing up alone never grants access. Approved members appear in People &
+access and can be removed there as before.
+
+## Install as a phone app
+
+The app includes a web app manifest and icons. On iPhone, open the site in
+Safari, tap Share > **Add to Home Screen**. On Android, open it in Chrome and
+choose **Install app** / **Add to Home screen**. It then opens full screen with
+its own icon, signed in as that employee, showing only what their role allows.
+
 ## Architecture and checks
 
 `rigo-access.js` provides sign-in, recovery, invitation password setup, session
