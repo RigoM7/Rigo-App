@@ -13,3 +13,7 @@
 #rigo-request-list small { display:block; color:#5b6b72; }
 .rigo-request-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .rigo-request-actions select { padding:8px; border:1px solid #ccd5d9; border-radius:8px; }
+.rigo-undo { display:grid; gap:6px; justify-items:start; width:320px; max-width:100%; white-space:normal; }
+.rigo-undo button { width:auto; }
+.rigo-undo small { line-height:1.4; white-space:normal; overflow-wrap:anywhere; color:#5b6b72; }
+.rigo-team-notes p { white-space:pre-wrap; margin:4px 0 0; padding:10px 12px; border-radius:8px; background:#f5f7f8; border:1px solid #e3e8ea; }
