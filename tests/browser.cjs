@@ -23,6 +23,7 @@ const domain = require('../lib/domain.cjs');
     await local.getByRole('tab', { name: 'Permissions' }).click();
     await local.getByPlaceholder('name@company.com').fill('employee@gmail.com');
     assert(await local.getByRole('button', { name: 'Send invitation', exact: true }).isDisabled());
+    assert.equal(await local.getByRole('button', { name: 'Download backup' }).count(), 1);
     assert.equal(errors.length, 0, errors.join('\n'));
     await local.close();
 
@@ -52,6 +53,8 @@ const domain = require('../lib/domain.cjs');
     await page.getByLabel('Password', { exact: true }).fill('owner-password');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'App settings', exact: true }).click();
+    // Shared data lives in Supabase, so the browser-backup toolbar is hidden once connected.
+    assert.equal(await page.locator('.html-toolbar').count(), 0);
     await page.getByRole('tab', { name: 'Permissions' }).click();
     await page.getByPlaceholder('name@company.com').fill('employee@gmail.com');
     await page.getByRole('button', { name: 'Send invitation', exact: true }).click();
