@@ -439,10 +439,12 @@ export async function isEligibleApprover(q: Q, ap: any, actor: Actor) {
 
 async function isNamedApprover(q: Q, ap: any, actor: Actor) {
   if (!canDecideFor({ isOwner: actor.isOwner, permissions: [...actor.perms] }, ap.subject_type)) return false;
+  // Named people and roles count only while the person is still an active member (a removed
+  // approver's delegation ends with them).
   const direct = async (uid: string) => {
-    if (ap.approver_user_ids.includes(uid)) return true;
-    const { rows } = await q.query(`select 1 from rigo.memberships where company_id = $1 and user_id = $2 and status = 'active' and role_key = any($3)`, [ap.company_id, uid, ap.approver_roles]);
-    return rows.length > 0;
+    const { rows } = await q.query<{ role_key: string }>(`select role_key from rigo.memberships where company_id = $1 and user_id = $2 and status = 'active'`, [ap.company_id, uid]);
+    if (!rows[0]) return false;
+    return ap.approver_user_ids.includes(uid) || ap.approver_roles.includes(rows[0].role_key);
   };
   if (actor.isDemo) return true; // the demo visitor plays every approver; still bound by all other checks
   if (await direct(actor.userId)) return true;

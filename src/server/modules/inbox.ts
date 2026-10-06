@@ -35,6 +35,15 @@ export async function notifyPermission(q: Q, companyId: string, perm: string, n:
   await notifyUsers(q, companyId, rows.map((r) => r.user_id).filter(Boolean), n);
 }
 
+/** Notify members whose role has every one of these permissions (owners always). */
+export async function notifyPermissions(q: Q, companyId: string, perms: string[], n: NoticeInput) {
+  const { rows } = await q.query<{ user_id: string }>(
+    `select m.user_id from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+      where m.company_id = $1 and m.status = 'active' and not m.is_fictional and (r.is_owner or r.permissions @> $2::text[])
+     union select c.demo_user_id from rigo.companies c where c.id = $1 and c.kind = 'demo'`, [companyId, perms]);
+  await notifyUsers(q, companyId, rows.map((r) => r.user_id).filter(Boolean), n);
+}
+
 /** Resolve outstanding notices about a record (e.g. once an approval is decided). */
 export async function resolveNotices(q: Q, companyId: string, refType: string, refId: string) {
   await q.query(`update rigo.notifications set resolved_at = now() where company_id = $1 and ref_type = $2 and ref_id = $3 and resolved_at is null`, [companyId, refType, refId]);

@@ -16,12 +16,12 @@ function Preview({ m }: { m: any }) {
     <article className="email-preview" aria-label="Email preview">
       <div className="ep-head">
         <CompanyChip cid={c.cid} name={c.company.name} logo={c.company.branding?.logoFileId} accent={c.company.branding?.accent} />
-        <div style={{ minWidth: 0 }}><strong>{c.company.name}</strong><div className="xsmall">To {m.recipient || '(no address)'}</div></div>
+        <div style={{ minWidth: 0 }}><strong>{c.company.name}</strong><div className="xsmall">To {m.recipient || (c.can('customers.contact') ? '(no address)' : 'the customer')}</div></div>
       </div>
       <div style={{ height: 3, background: c.company.accent.light }} aria-hidden />
       <div className="ep-body">
         <h3>{m.subject}</h3>
-        <p className="pre" style={{ margin: 0 }}>{m.body}</p>
+        {m.bodyHidden ? <p className="muted" style={{ margin: 0 }}>This message states amounts, so only people who can see prices and payments can read it.</p> : <p className="pre" style={{ margin: 0 }}>{m.body}</p>}
       </div>
       <div className="ep-foot">Sent by {c.company.name} with Rigo</div>
     </article>
@@ -55,7 +55,7 @@ export function Messages() {
     const n = new URLSearchParams(sp); n.delete('open'); setSp(n, { replace: true });
   }, [openId, q.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const markSent = useSubmit(async (m: any) => { await post(`/c/${c.cid}/messages/${m.id}/mark-sent`); toast('Recorded as sent outside Rigo'); setSel(null); refresh(); });
-  const save = useSubmit(async () => { await patch(`/c/${c.cid}/messages/${edit.id}`, { subject: edit.subject, body: edit.body, recipient: edit.recipient }); setEdit(null); toast('Message updated'); refresh(); });
+  const save = useSubmit(async () => { await patch(`/c/${c.cid}/messages/${edit.id}`, { subject: edit.subject, body: edit.body, recipient: edit.recipient ?? undefined }); setEdit(null); toast('Message updated'); refresh(); });
   const logReply = useSubmit(async () => { await post(`/c/${c.cid}/messages/${sel.id}/reply`, { body: reply }); setReplyOpen(false); setReply(''); setSel(null); toast('Reply logged'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
@@ -78,8 +78,8 @@ export function Messages() {
       )}
       <Dialog open={!!sel} onClose={() => setSel(null)} title={sel?.subject ?? ''} footer={sel && <>
         {sel.status === 'prepared' && c.can('messages.send') && <>
-          <Button icon={<Pencil aria-hidden />} onClick={() => { setEdit({ ...sel }); setSel(null); }}>Edit</Button>
-          <Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(`${sel.subject}\n\n${sel.body}`).then(() => toast('Copied'), () => toast('Copy failed', 'error'))}>Copy text</Button>
+          {!sel.bodyHidden && <Button icon={<Pencil aria-hidden />} onClick={() => { setEdit({ ...sel }); setSel(null); }}>Edit</Button>}
+          {!sel.bodyHidden && <Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(`${sel.subject}\n\n${sel.body}`).then(() => toast('Copied'), () => toast('Copy failed', 'error'))}>Copy text</Button>}
           {!c.demo && <Button icon={<CheckCheck aria-hidden />} busy={markSent.busy} onClick={() => markSent.run(sel)}>I sent it myself</Button>}
           <GuideTarget id="send-simulated"><Button variant="primary" icon={<Send aria-hidden />} busy={send.busy} onClick={() => send.run(sel)}>{cap.state === 'simulated' ? 'Send (simulated)' : 'Send'}</Button></GuideTarget>
         </>}
@@ -89,7 +89,7 @@ export function Messages() {
       </Dialog>
       <Dialog open={!!edit} onClose={() => setEdit(null)} title="Edit prepared message" footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" busy={save.busy} onClick={() => save.run()}>Save</Button></>}>
         {edit && <div className="stack"><ErrorSummary error={save.error} />
-          <Field label="To" id="f-recipient">{(p) => <Input {...p} maxLength={254} type="email" value={edit.recipient} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
+          <Field label="To" id="f-recipient">{(p) => <Input {...p} maxLength={254} type="email" value={edit.recipient ?? ""} disabled={edit.recipient === null} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
           <Field label="Subject" id="f-subject">{(p) => <Input {...p} maxLength={200} value={edit.subject} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} />}</Field>
           <Field label="Message" id="f-body">{(p) => <Textarea {...p} maxLength={10000} rows={10} value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />}</Field></div>}
       </Dialog>

@@ -56,6 +56,9 @@ export function refreshMe(qc: QueryClient) {
 
 /** Signs out and forgets everything cached, so the next person on this device sees nothing of it. */
 export async function signOutAndForget(qc: QueryClient) {
+  // Every sign-out clears what this phone kept for the person (unsent records stay, under their name only).
+  const uid = qc.getQueryData<Me>(['me'])?.user?.id ?? (await (await import('./offline')).cachedMe<Me>())?.uid;
+  if (uid) await (await import('./offline')).clearUserData(uid, { keepDrafts: true }).catch(() => {});
   await post('/auth/signout').catch(() => {});
   qc.clear();
   qc.setQueryData(['me'], { user: null } as Me);

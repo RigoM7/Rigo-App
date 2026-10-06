@@ -11,7 +11,7 @@ import { paymentState } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
-import { notifyPermission, notifyRoles } from './inbox.js';
+import { notifyPermission, notifyPermissions, notifyRoles } from './inbox.js';
 import { storeFile, sniffImage, readStoredFile } from '../adapters/index.js';
 
 export const jobRoutes = new Hono<AppEnv>();
@@ -155,7 +155,9 @@ jobRoutes.get('/jobs/:id', async (c) => {
     current_address: snap && snap.address !== live.address ? live.address : null } : null;
   const resources = (await cc.db.query(`select r.id, r.name, r.kind, r.identifier from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = $1`, [job.id])).rows;
   const events = (await cc.db.query(`select e.id, e.type, e.data, e.created_at, e.actor_label, u.name as actor_name from rigo.job_events e left join rigo.users u on u.id = e.actor_user_id where e.job_id = $1 order by e.created_at`, [job.id])).rows;
-  const files = (await cc.db.query(`select id, name, mime, size, created_at from rigo.files where company_id = $1 and subject_type = 'job' and subject_id = $2 order by created_at`, [cc.company.id, job.id])).rows;
+  // A photo of a check shows the amount and bank details: only people who see money get it.
+  const files = (await cc.db.query(`select id, name, mime, size, created_at from rigo.files f where company_id = $1 and subject_type = 'job' and subject_id = $2
+      ${can(cc, 'finance.view') ? '' : 'and not exists (select 1 from rigo.payments p where p.company_id = f.company_id and p.photo_file_id = f.id)'} order by created_at`, [cc.company.id, job.id])).rows;
   // The invoice that bills this job is the newest one that isn't void; voided ones are listed for history.
   const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, delivery_status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor, paid_minor, credited_minor' : 'null as total_minor'}, currency, hold_reasons, void_reason, replaces_invoice_id
       from rigo.invoices where job_id = $1 and company_id = $2 order by created_at desc`, [job.id, cc.company.id])).rows.map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, localDate(new Date(), cc.company.timezone)) })) : [];
@@ -166,7 +168,7 @@ jobRoutes.get('/jobs/:id', async (c) => {
   const assignee = job.assigned_user_id ? (await cc.db.query<any>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = $1`, [job.assigned_user_id, cc.company.id])).rows[0]?.name : null;
   const customFields = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).jobs;
   return c.json({
-    job: { ...job, details: publicDetails(job.details), billing_status: can(cc, 'invoices.view') ? job.billing_status : undefined, assignee_name: assignee, nextAction: nextAction(job),
+    job: { ...job, details: publicDetails(job.details), billing_status: can(cc, 'invoices.view') ? job.billing_status : undefined, booked_rates: can(cc, 'finance.view') ? job.booked_rates : undefined, assignee_name: assignee, nextAction: nextAction(job),
       missing: job.status === 'draft' ? missingForOpen(job, svc?.fields ?? null) : [] },
     service: svc ? { id: svc.id, name: svc.name, category: svc.category, fields: svc.fields, requiresPhoto: svc.requires_photo, requiresSignature: svc.requires_signature } : null,
     customer, location, resources, events, files, invoice, voidedInvoices, collected, messages, customFields,
@@ -517,7 +519,7 @@ export async function recordCollected(q: Q, cc: CompanyCtx, job: any, input: Com
   if (!pay.rows[0]) return;
   await event(q, cc, job.id, 'payment_collected', { method: c2.method });
   const what = c2.method === 'check' ? `check #${c2.reference}` : c2.method === 'cash' ? 'cash' : `card on the terminal${c2.reference ? ` (${c2.reference})` : ''}`;
-  await notifyPermission(q, cc.company.id, 'payments.record', { category: 'needs_action', title: `Payment collected at job #${job.number}: ${formatMoney(c2.amountMinor, cc.company.currency)}`, body: `Paid by ${what}. Confirm it so it counts toward the invoice.`, link: 'collections', refType: 'payment', refId: pay.rows[0].id });
+  await notifyPermissions(q, cc.company.id, ['payments.record', 'finance.view'], { category: 'needs_action', title: `Payment collected at job #${job.number}: ${formatMoney(c2.amountMinor, cc.company.currency)}`, body: `Paid by ${what}. Confirm it so it counts toward the invoice.`, link: 'collections', refType: 'payment', refId: pay.rows[0].id });
 }
 
 /**
@@ -687,7 +689,8 @@ jobRoutes.post('/jobs/:id/invoice', async (c) => {
 jobRoutes.get('/jobs/:id/files/:fid', async (c) => {
   const cc = c.get('cc');
   const job = await loadJob(cc, cc.db, c.req.param('id'));
-  const { rows } = await cc.db.query<any>(`select * from rigo.files where id = $1 and company_id = $2 and subject_type = 'job' and subject_id = $3`, [c.req.param('fid'), cc.company.id, job.id]);
+  const { rows } = await cc.db.query<any>(`select * from rigo.files f where id = $1 and company_id = $2 and subject_type = 'job' and subject_id = $3
+      ${can(cc, 'finance.view') ? '' : 'and not exists (select 1 from rigo.payments p where p.company_id = f.company_id and p.photo_file_id = f.id)'}`, [c.req.param('fid'), cc.company.id, job.id]);
   const data = rows[0] && readStoredFile(rows[0]);
   if (!data) throw notFound('File');
   return c.body(new Uint8Array(data), 200, { 'content-type': rows[0].mime, 'cache-control': 'private, max-age=600', 'x-content-type-options': 'nosniff', 'content-disposition': `inline; filename="${rows[0].name.replace(/[^\w.-]/g, '_')}"` });

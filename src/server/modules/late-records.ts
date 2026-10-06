@@ -18,6 +18,7 @@ import { completionInput, validateCompletion, saveImage, finishJob, recordCollec
 // 7 days after removal (D12), and only for jobs they were assigned.
 
 export const LATE_RECORD_DAYS = 7;
+const MAX_PENDING_PER_PERSON = 20;
 export type HoldReason = 'reassigned' | 'finished' | 'removed';
 
 const REASON_TEXT: Record<HoldReason, string> = {
@@ -30,6 +31,13 @@ const REASON_TEXT: Record<HoldReason, string> = {
 export async function holdForReview(q: Q, a: { companyId: string; isDemo: boolean; userId: string; userName: string }, job: any, input: CompletionInput, reason: HoldReason) {
   const dup = (await q.query<any>(`select id from rigo.pending_submissions where company_id = $1 and submission_id = $2`, [a.companyId, input.submissionId])).rows[0];
   if (dup) return { accepted: false, pendingReview: true, duplicate: true, message: 'Already sent to the office for review.' };
+  // One record per person and job waits at a time, and at most 20 per person: enough for any real
+  // day, and no way to fill the office's inbox or storage.
+  const mine = (await q.query<{ same: number; total: number }>(`select count(*) filter (where job_id = $3)::int as same, count(*)::int as total from rigo.pending_submissions where company_id = $1 and user_id = $2 and status = 'pending'`, [a.companyId, a.userId, job.id])).rows[0];
+  if (mine.same > 0) return { accepted: false, pendingReview: true, duplicate: true, message: 'You already sent a record for this job. The office is reviewing it.' };
+  if (mine.total >= MAX_PENDING_PER_PERSON) throw conflict('The office has not reviewed your earlier records yet. Ask them to review those first.');
+  await limitCalls(q, `late-record:${a.userId}`, 60, 60, 'records');
+  await recordCall(q, `late-record:${a.userId}`);
   // Check the record the same way a normal submission is checked, but keep it even when something is
   // missing: the driver may no longer be able to fix it, and the office decides.
   let checked: { values: Record<string, unknown>; quantityReview: string | null } = { values: input.values, quantityReview: null };
@@ -79,8 +87,6 @@ latePublic.post('/late-records/:cid/jobs/:jid', async (c) => {
         where m.company_id = $1 and m.user_id = $2 and m.status = 'removed' and m.removed_at > now() - ($3 || ' days')::interval`,
       [cid, user.id, String(LATE_RECORD_DAYS)])).rows[0];
     if (!m || !m.can_work) throw notFound('Job');
-    await limitCalls(q, `late-record:${user.id}`, 60, 60, 'records');
-    await recordCall(q, `late-record:${user.id}`);
     const job = (await q.query<any>(`select * from rigo.jobs where id = $1 and company_id = $2 for update`, [jid, cid])).rows[0];
     if (!job || !(await wasAssigned(q, job, user.id))) throw notFound('Job');
     if (job.completion_submission_id === input.submissionId) return { accepted: true, duplicate: true };
@@ -105,7 +111,8 @@ function shape(cc: CompanyCtx, r: any) {
     id: r.id, jobId: r.job_id, values, jobNumber: r.job_number, jobStatus: r.job_status, customerName: r.customer_name, driverName: r.driver_name, reason: r.reason, status: r.status,
     createdAt: r.created_at, decidedAt: r.decided_at, decidedBy: r.decided_by_name, decisionNote: r.decision_note, problems: r.problems ?? {},
     outcome: p.outcome, notes: p.notes ?? '', reasonText: p.reason ?? '', reasonCode: p.reasonCode ?? null, problem: p.problem ?? '',
-    signerName: p.signerName ?? '', signatureTyped: !!p.signatureTyped, collected, files: p.files ?? { photoIds: [], signatureId: null, checkPhotoId: null },
+    signerName: p.signerName ?? '', signatureTyped: !!p.signatureTyped, collected,
+    files: { photoIds: p.files?.photoIds ?? [], signatureId: p.files?.signatureId ?? null, checkPhotoId: can(cc, 'finance.view') ? p.files?.checkPhotoId ?? null : null },
   };
 }
 
@@ -125,7 +132,9 @@ lateRoutes.get('/pending-submissions/:id/files/:fid', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.assign');
   // Once a record is accepted its files belong to the job and are served from there.
-  const { rows } = await cc.db.query<any>(`select * from rigo.files where id = $1 and company_id = $2 and subject_type = 'pending_submission' and subject_id = $3`, [c.req.param('fid'), cc.company.id, c.req.param('id')]);
+  const { rows } = await cc.db.query<any>(`select f.* from rigo.files f join rigo.pending_submissions s on s.id = f.subject_id and s.company_id = f.company_id
+      where f.id = $1 and f.company_id = $2 and f.subject_type = 'pending_submission' and s.id = $3
+        ${can(cc, 'finance.view') ? '' : `and f.id::text is distinct from s.payload->'files'->>'checkPhotoId'`}`, [c.req.param('fid'), cc.company.id, c.req.param('id')]);
   const f = rows[0];
   const data = f && readStoredFile(f);
   if (!data) throw notFound('File');

@@ -100,7 +100,7 @@ billingRoutes.get('/invoices/:id', async (c) => {
   const credits = fin ? (await cc.db.query<any>(`select ic.*, u.name as created_by_name from rigo.invoice_credits ic left join rigo.users u on u.id = ic.created_by where ic.invoice_id = $1 order by ic.created_at`, [inv.id])).rows
     .map((r) => ({ id: r.id, amountMinor: Number(r.amount_minor), source: r.source, note: r.note, createdAt: r.created_at, createdByName: r.created_by_name })) : [];
   const approvals = (await cc.db.query(`select a.id, a.status, a.title, a.created_at, a.decided_at, a.decision_note, a.subject_version, x.type as action_type, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id left join rigo.users u on u.id = a.decided_by where a.subject_type = 'invoice' and a.subject_id = $1 order by a.created_at`, [inv.id])).rows;
-  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, status_detail, recipient, created_at from rigo.messages where invoice_id = $1 order by created_at desc`, [inv.id])).rows : [];
+  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, status_detail, ${can(cc, 'customers.contact') ? 'recipient' : 'null as recipient'}, created_at from rigo.messages where invoice_id = $1 and company_id = $2 order by created_at desc`, [inv.id, cc.company.id])).rows : [];
   const replaces = inv.replaces_invoice_id ? (await cc.db.query<any>(`select id, number, status from rigo.invoices where id = $1 and company_id = $2`, [inv.replaces_invoice_id, cc.company.id])).rows[0] ?? null : null;
   const replacedBy = (await cc.db.query<any>(`select id, number, status from rigo.invoices where replaces_invoice_id = $1 and company_id = $2 order by created_at desc limit 1`, [inv.id, cc.company.id])).rows[0] ?? null;
   const credit = fin && inv.customer_id ? await creditBalance(cc.db, cc.company.id, inv.customer_id) : 0;
@@ -253,6 +253,13 @@ billingRoutes.post('/invoices', async (c) => {
   return c.json(out);
 });
 
+/** Who may decide a waiting approval, in words. */
+async function approverNames(q: Q, ap: any) {
+  const people = ap.approver_user_ids?.length ? (await q.query<{ name: string }>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = any($1)`, [ap.approver_user_ids, ap.company_id])).rows.map((r) => r.name) : [];
+  const roles = ap.approver_roles?.length ? (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = any($2)`, [ap.company_id, ap.approver_roles])).rows.map((r) => r.name) : [];
+  return [...people, ...roles].join(' or ') || 'an owner';
+}
+
 billingRoutes.post('/invoices/:id/approve', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.approve');
@@ -262,6 +269,13 @@ billingRoutes.post('/invoices/:id/approve', async (c) => {
     if (inv.version !== input.version) throw conflict('This invoice changed since you reviewed it. Review the latest version before approving.');
     if (inv.status === 'held') throw conflict('Held invoices cannot be approved until the hold reasons are fixed.');
     if (!['draft', 'pending_approval'].includes(inv.status)) throw conflict(`This invoice is ${inv.status} and does not need approval.`);
+    // A workflow step that names who approves (say, the owner over $5,000) can't be skipped by approving here.
+    const waiting = (await q.query<any>(`select * from rigo.approvals where company_id = $1 and subject_type = 'invoice' and subject_id = $2 and status = 'pending'`, [cc.company.id, inv.id])).rows;
+    const { isEligibleApprover } = await import('../automation/engine.js');
+    const actor = { db: cc.db, companyId: cc.company.id, userId: cc.user.id, perms: cc.perms, isOwner: cc.isOwner, isDemo: cc.isDemo };
+    for (const ap of waiting) {
+      if (!(await isEligibleApprover(q, ap, actor))) throw forbidden(`This invoice is waiting for approval from ${await approverNames(q, ap)}. You can't approve it.`);
+    }
     await q.query(`update rigo.invoices set status = 'approved', approved_by = $2, approved_at = now(), updated_at = now() where id = $1`, [inv.id, cc.user.id]);
     if (inv.job_id) await q.query(`update rigo.jobs set billing_status = 'approved' where id = $1`, [inv.job_id]);
     // A workflow approval waiting on this same version is satisfied by this decision.
@@ -509,14 +523,23 @@ billingRoutes.get('/messages', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.view');
   const { rows } = await cc.db.query(`select m.*, c.name as customer_name, j.number as job_number, i.number as invoice_number from rigo.messages m left join rigo.customers c on c.id = m.customer_id left join rigo.jobs j on j.id = m.job_id left join rigo.invoices i on i.id = m.invoice_id where m.company_id = $1 order by m.created_at desc limit 300`, [cc.company.id]);
-  return c.json({ messages: rows, capability: capabilities(cc.company).email });
+  // Invoice emails, reminders and statements state amounts and carry a link to the priced invoice:
+  // their text goes only to people who see money. Addresses only to people who see contact details.
+  const fin = can(cc, 'finance.view'), contact = can(cc, 'customers.contact');
+  const messages = rows.map((m: any) => {
+    const hidden = !fin && (!!m.invoice_id || !!m.statement_id);
+    return { ...m, body: hidden ? null : m.body, bodyHidden: hidden, recipient: contact ? m.recipient : null };
+  });
+  return c.json({ messages, capability: capabilities(cc.company).email });
 });
 
 billingRoutes.patch('/messages/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.send');
   const input = await body(c, z.object({ subject: z.string().max(200).optional(), body: z.string().min(1).max(10000).optional(), recipient: z.string().max(254).optional() }));
-  const { rows } = await cc.db.query(`update rigo.messages set subject = coalesce($3, subject), body = coalesce($4, body), recipient = coalesce($5, recipient), updated_at = now() where id = $1 and company_id = $2 and status = 'prepared' returning id`,
+  // Messages about money are edited only by people who can read them.
+  const money = can(cc, 'finance.view') ? '' : ' and invoice_id is null and statement_id is null';
+  const { rows } = await cc.db.query(`update rigo.messages set subject = coalesce($3, subject), body = coalesce($4, body), recipient = coalesce($5, recipient), updated_at = now() where id = $1 and company_id = $2 and status = 'prepared'${money} returning id`,
     [c.req.param('id'), cc.company.id, input.subject ?? null, input.body ?? null, input.recipient ?? null]);
   if (!rows.length) throw conflict('Only prepared messages can be edited.');
   return c.json({ ok: true });

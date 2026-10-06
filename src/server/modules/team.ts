@@ -31,6 +31,8 @@ async function activeOwnerCount(q: Q, companyId: string) {
 /** Ends a membership. Open work assigned to the person returns to the unassigned queue, with history. */
 export async function removeMember(q: Q, companyId: string, m: { id: string; user_id: string }, actorId: string, reason = 'Assignee was removed from the company') {
   await q.query(`update rigo.memberships set status = 'removed', removed_at = now(), updated_at = now() where id = $1`, [m.id]);
+  // Approval authority they gave or were given in this company ends with the membership.
+  await q.query(`update rigo.approval_delegations set ends_at = now() where company_id = $1 and (from_user_id = $2 or to_user_id = $2) and (ends_at is null or ends_at > now())`, [companyId, m.user_id]);
   const jobs = await q.query<{ id: string }>(`update rigo.jobs set assigned_user_id = null, version = version + 1, updated_at = now() where company_id = $1 and assigned_user_id = $2 and status in ('draft','open','in_progress') returning id`, [companyId, m.user_id]);
   for (const j of jobs.rows) {
     await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason, from: m.user_id })]);
@@ -73,6 +75,8 @@ teamRoutes.patch('/members/:mid', async (c) => {
       throw conflict('A company must keep at least one active owner. Add another owner first.');
     }
     await q.query(`update rigo.memberships set role_key = $2, updated_at = now() where id = $1`, [m.id, input.role]);
+    // Authority delegated under the old role doesn't carry over to the new one.
+    if (m.role_key !== input.role) await q.query(`update rigo.approval_delegations set ends_at = now() where company_id = $1 and from_user_id = $2 and (ends_at is null or ends_at > now())`, [cc.company.id, m.user_id]);
     await audit(q, cc, 'member.role_changed', { memberId: m.id, from: m.role_key, to: input.role });
     await warnOrphanedApprovals(q, cc.company.id);
   });

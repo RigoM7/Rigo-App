@@ -173,7 +173,7 @@ collectionRoutes.get('/collections', async (c) => {
       from rigo.messages m left join rigo.invoices i on i.id = m.invoice_id left join rigo.customers c on c.id = m.customer_id
       where m.company_id = $1 and m.status = 'prepared' and (m.source_key like 'reminder:%' or m.source_key like 'statement:%') order by m.created_at`, [cc.company.id])).rows
     .map((m) => ({ id: m.id, kind: m.source_key.startsWith('statement:') ? 'statement' : 'reminder', stage: m.source_key.startsWith('reminder:') ? REMINDER_LABEL[m.source_key.split(':')[2] as ReminderStage] : null,
-      subject: m.subject, recipient: m.recipient, createdAt: m.created_at, invoiceId: m.invoice_id, invoiceNumber: m.invoice_number, customerName: m.customer_name })) : [];
+      subject: m.subject, recipient: can(cc, 'customers.contact') ? m.recipient : null, createdAt: m.created_at, invoiceId: m.invoice_id, invoiceNumber: m.invoice_number, customerName: m.customer_name })) : [];
   return c.json({
     asOf: t, currency: cc.company.currency, buckets: AGING_BUCKETS, totals, totalMinor: Object.values(totals).reduce((a, b) => a + b, 0),
     customers: [...byCustomer.values()].sort((a, b) => b.balanceMinor - a.balanceMinor),

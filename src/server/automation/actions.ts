@@ -37,7 +37,9 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
 
   async 'invoice.issue'(i) {
     const { rows } = await i.q.query<any>(`select i.status, i.hold_reasons, c.settings from rigo.invoices i join rigo.companies c on c.id = i.company_id where i.id = $1`, [i.subject.id]);
-    if (rows[0]?.status === 'draft' && rows[0].settings?.invoiceApprovalRequired !== false) {
+    // Same rule as issuing by hand: with the company approval rule on, only an approved invoice is issued
+    // (a draft or one still waiting for approval is not).
+    if (['draft', 'pending_approval'].includes(rows[0]?.status) && rows[0].settings?.invoiceApprovalRequired !== false) {
       // The company-wide approval rule applies even when a workflow step has no approval of its own.
       return { status: 'blocked', explanation: 'Not issued: company settings require invoice approval before issuing. Add an approval to this step or approve the invoice.', link: `invoices/${i.subject.id}` };
     }

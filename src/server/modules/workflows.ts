@@ -29,12 +29,19 @@ async function env(q: Q, cc: CompanyCtx) {
   return { roles: roles.map((r) => r.key), roleNames: Object.fromEntries(roles.map((r) => [r.key, r.name])), emailAvailable: capabilities(cc.company).email.state === 'available', isDemo: cc.isDemo, members };
 }
 
-function versionView(v: any, e: Awaited<ReturnType<typeof env>>) {
+/** A dry run's sample can come from a real invoice: its money facts are shown only to people who see money. */
+function withoutMoney(result: any, fin: boolean) {
+  if (fin || !result?.sample) return result;
+  const sample = Object.fromEntries(Object.entries(result.sample).filter(([k]) => (CONDITION_FIELDS as Record<string, { type: string }>)[k]?.type !== 'money'));
+  return { ...result, sample };
+}
+
+function versionView(v: any, e: Awaited<ReturnType<typeof env>>, fin: boolean) {
   const def = v.definition as Definition;
   const validation = validateDefinition(def, e);
   return {
     id: v.id, version: v.version, status: v.status, source: v.source, definition: def, explanation: explainDefinition(def, e.roleNames), validation,
-    testResult: v.test_result, testedCurrent: v.tested_hash === v.definition_hash, createdAt: v.created_at, testedAt: v.tested_at, activatedAt: v.activated_at,
+    testResult: withoutMoney(v.test_result, fin), testedCurrent: v.tested_hash === v.definition_hash, createdAt: v.created_at, testedAt: v.tested_at, activatedAt: v.activated_at,
     createdByName: v.created_by_name, activatedByName: v.activated_by_name,
   };
 }
@@ -67,7 +74,7 @@ workflowRoutes.get('/workflows/:id', async (c) => {
   const versions = await cc.db.query<any>(`select v.*, u.name as created_by_name, a.name as activated_by_name from rigo.workflow_versions v left join rigo.users u on u.id = v.created_by left join rigo.users a on a.id = v.activated_by where v.workflow_id = $1 order by v.version desc`, [rows[0].id]);
   const e = await env(cc.db, cc);
   const runs = await cc.db.query(`select r.id, r.status, r.summary, r.created_at, r.updated_at, r.subject_type, r.subject_id, v.version from rigo.automation_runs r join rigo.workflow_versions v on v.id = r.workflow_version_id where r.workflow_id = $1 order by r.created_at desc limit 30`, [rows[0].id]);
-  return c.json({ workflow: rows[0], versions: versions.rows.map((v) => versionView(v, e)), runs: runs.rows, roleNames: e.roleNames, capabilities: capabilities(cc.company) });
+  return c.json({ workflow: rows[0], versions: versions.rows.map((v) => versionView(v, e, can(cc, 'finance.view'))), runs: runs.rows, roleNames: e.roleNames, capabilities: capabilities(cc.company) });
 });
 
 workflowRoutes.post('/workflows', async (c) => {
@@ -162,7 +169,7 @@ workflowRoutes.post('/workflows/:id/versions/:vid/test', async (c) => {
     const result = { ranAt: new Date().toISOString(), sample: { ...facts, serviceName: sample.serviceName }, sampleSource: sample.source, currentMode: v.mode_override ?? cc.company.automation_mode, modes, note: `A dry run using ${sample.source}. Nothing was created, sent or changed.` };
     const newStatus = v.status === 'draft' ? 'tested' : v.status;
     await q.query(`update rigo.workflow_versions set test_result = $2, validation = $3, tested_hash = definition_hash, tested_at = now(), status = $4 where id = $1`, [v.id, JSON.stringify(result), JSON.stringify(validation), newStatus]);
-    return { ok: true, validation, result };
+    return { ok: true, validation, result: withoutMoney(result, can(cc, 'finance.view')) };
   });
   return c.json(out);
 });

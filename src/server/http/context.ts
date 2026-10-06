@@ -76,7 +76,7 @@ export async function loadCompanyCtx(db: Db, user: User, companyId: string): Pro
     // Someone removed from this company is told so (only they can see it), so their phone can send
     // records still waiting on it and then clear the company's data (R12-M1). Everyone else gets the
     // same answer as for a company that does not exist.
-    const gone = (await db.query<{ until: string }>(`select (removed_at + interval '7 days') as until from rigo.memberships where company_id = $1 and user_id = $2 and status = 'removed'`, [companyId, user.id])).rows[0];
+    const gone = (await db.query<{ until: string }>(`select (removed_at + interval '7 days') as until from rigo.memberships where company_id = $1 and user_id = $2 and status = 'removed' and removed_at > now() - interval '7 days'`, [companyId, user.id])).rows[0];
     if (gone) throw new HttpError(403, 'not_member', 'You are no longer a member of this company.', { lateRecordsUntil: gone.until });
     throw notFound('Company');
   }

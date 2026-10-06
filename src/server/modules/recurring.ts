@@ -50,7 +50,7 @@ function serializePlan(cc: CompanyCtx, p: any) {
     billing_rule: fin ? rule : { ...rule, rateMinor: undefined, lines: rentalLines(rule, p.units).map((l) => ({ ...l, rateE4: undefined, rateSet: l.rateE4 !== null })), visitPrices: {}, deposit: rule.deposit ? { type: rule.deposit.type } : null },
     ratesSet: rentalLines(rule, p.units).every((l) => l.rateE4 !== null),
     depositDueMinor: fin ? depositDue(rule, p.units) : undefined, deposit_received_minor: fin ? Number(p.deposit_received_minor ?? 0) : undefined,
-    pending_credits: fin ? p.pending_credits : undefined,
+    pending_credits: fin ? p.pending_credits : undefined, tax_rate_bp: fin ? p.tax_rate_bp : undefined,
   };
 }
 
@@ -267,7 +267,7 @@ recurringRoutes.post('/recurring/:id/pause', async (c) => {
       credits = await creditIssuedPeriods(q, cc, paused, range, false);
     }
     await audit(q, cc, 'plan.paused', { id: plan.id, from: input.from, until: input.until, credits });
-    return { cancelledVisits: cancelled.rows.length, rebuiltInvoices: rebuilt, creditMinor: credits };
+    return { cancelledVisits: cancelled.rows.length, rebuiltInvoices: rebuilt, creditMinor: can(cc, 'finance.view') ? credits : undefined };
   });
   return c.json(out);
 });
@@ -309,7 +309,7 @@ recurringRoutes.post('/recurring/:id/end', async (c) => {
     // Collecting the units is a job too (R8-m4).
     const pickup = input.createPickup ? await planJob(q, cc.company.id, ended, input.endsOn, 'pickup', cc.user.id, cc.company.timezone) : null;
     await audit(q, cc, 'plan.ended', { id: plan.id, endsOn: input.endsOn, credits });
-    return { cancelledVisits: cancelled.rows.length, rebuiltInvoices: rebuilt, creditMinor: credits, pickupJob: pickup };
+    return { cancelledVisits: cancelled.rows.length, rebuiltInvoices: rebuilt, creditMinor: can(cc, 'finance.view') ? credits : undefined, pickupJob: pickup };
   });
   return c.json(out);
 });
