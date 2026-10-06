@@ -43,7 +43,7 @@ editor, recurring plan form, job form) in light and dark themes; `npm run typech
 | Tab titles | Verified | "Page · Company · Rigo" (with "(Demo)" in the demo) |
 | Company isolation and 404 for non-members | Verified | `access.test.ts` |
 | Role model and server-side permissions | Verified | Driver/office/owner checks in `operations.test.ts` |
-| Field-level filtering (rates, contact, amounts) | Verified | Driver gets no rates; amounts removed without `finance.view` |
+| Field-level filtering (rates, contact, amounts) | Verified | Driver gets no rates; amounts removed without `finance.view`. Phase 1 review: booked prices on jobs, check photos (job files and held records), invoice emails, reminders and statements in Messages (shown as "states amounts"), a workflow dry run's real invoice total, plan credits and tax rates are also removed without `finance.view`; message addresses without `customers.contact`. `field-filtering.test.ts` |
 | Design tokens (primitive → semantic → component), both themes, System theme | Verified | axe light+dark; theme persisted to account + device |
 | "Light command center" UI: black chrome, Geist / Geist Mono, every screen restyled | Verified | axe on 18 pages, overflow at 4 widths and 200% text; before/after screenshots in the pull request |
 | Responsive shell (grouped sidebar / bottom nav ≤5 / More) | Verified | Overflow checks at 4 widths; nav count check |
@@ -149,6 +149,8 @@ editor, recurring plan form, job form) in light and dark themes; `npm run typech
 | Spreadsheet (XLSX) imports | Deferred | Users are told to save as CSV |
 | Templates: system, private, shared, public; apply as drafts; no upstream drift | Verified | `expansion.test.ts` |
 | Recurring service and rentals: separate billing, idempotent, pause, change, missed visits | Verified | `expansion.test.ts`, `rentals.test.ts` |
+| Rental credits by the day (Phase 1 review, D5) | Verified | Each issued rent invoice's credited days are kept, so a pause followed by an early end never credits a day twice; credits larger than the next rent invoice carry over instead of being lost; credits on a draft rent invoice survive a rebuild; resuming a pause bills again from today (credits for the days after today are taken back, and a period skipped while fully paused is billed for its active days). A rejected payment takes back credit it created that already paid other invoices (they are owed again), and a rejected deposit lowers the plan's received amount; money taken at a visit that isn't billed on its own goes to the customer's credit and pays their open invoices; statements use the company's calendar day. Migration `011_rent_credit_ledger.sql`. `money-review.test.ts` |
+| Approvals can't be skipped (Phase 1 security review) | Verified | A workflow step never issues an invoice still waiting for approval; approving on the invoice page is refused while a workflow approval names someone else ("waiting for approval from Owner"); delegated authority ends when the delegator is removed or changes role, and a removed named approver no longer counts; held driver records are limited to one per person and job and 20 per person, rate-limited; every sign-out clears the phone's saved company data. `security-review.test.ts` |
 | Rental visits covered by the rent (R8-C1) | Verified | Routine plan visits, and delivery and pickup without a plan price, are not billed again ("Covered by the plan"); an extra visit bills at the plan's extra price or the service pricing. The billing workflow ends quietly for covered visits; Home doesn't count them as unbilled |
 | Rental pricing (R8-M1, R2-M4) | Verified | Plans hold several unit lines (standard, ADA, hand-wash) with their own quantity and rate per period; billed every 4 weeks (28 days), monthly, weekly or once for an event; prices for delivery, pickup and extra visits; an optional deposit, fixed or percent of one period, recorded as customer credit that pays the rent (D22). Rental units (PT-101…) are placed on site with a plan, back in the yard, or missing; one plan at a time. Older plans' single rate reads as one line |
 | Pause and early end adjust the rent (R8-M2, D5) | Verified | Prorated by the day on the period's length: draft rent invoices are rebuilt with fewer days ("23 of 28 days: paused Oct 10 – Oct 14, 2026"), rent already issued is credited on the next rent invoice, and an early end credits the issued invoice (any excess becomes customer credit). The plan's banner says exactly this |
@@ -208,5 +210,9 @@ editor, recurring plan form, job form) in light and dark themes; `npm run typech
 - Priority does not change automation yet (a workflow can test it as a condition); whether it
   should, for example never auto-approving an emergency invoice, is an owner decision.
 - The walkthrough follows demo job #3; a visitor who deletes or cancels it can reset the demo.
-- Next: email provider adapter, customer-facing invoice link or PDF (needs the provider), configurable dashboard widgets and job stages, XLSX import,
+- Self-approval: the Office preset can edit, approve and issue invoices, so one person can approve
+  an invoice they changed. Owners can always approve. Requiring a second person is an owner
+  decision; a workflow step that names its approver (for example the owner over $5,000) can't be
+  skipped by approving on the invoice page (`security-review.test.ts`).
+- Next: email provider adapter (the invoice view link is built; sending it needs the provider), configurable dashboard widgets and job stages, XLSX import,
   map links/geocoding adapter (disabled by default), per-field permissions beyond contact/finance.

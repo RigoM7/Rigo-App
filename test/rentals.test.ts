@@ -128,7 +128,7 @@ describe('rental plans with the fixture company', () => {
     // Paused for 5 days inside the issued period: $410 × 5/28 = $73.21 credit, kept for the next invoice.
     const p = await t.dana.post(`/c/${t.cid}/recurring/${plan.id}/pause`, { from: addDays(start, 12), until: addDays(start, 16) });
     expect(p.body.creditMinor).toBe(4464 + 2857);
-    await t.dana.post(`/c/${t.cid}/recurring/${plan.id}/resume`);
+    // The pause has an end date, so it ends on its own (resuming before it starts would cancel it and its credit).
     d = (await t.dana.get(`/c/${t.cid}/recurring/${plan.id}`)).body;
     expect(d.plan.pending_credits).toHaveLength(1);
     // The next period's rent invoice carries the credit.

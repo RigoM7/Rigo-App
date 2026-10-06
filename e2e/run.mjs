@@ -18,7 +18,8 @@ const axeSource = readFileSync(require.resolve('axe-core/axe.min.js', { paths: [
 const results = [];
 const fail = (name, detail) => { results.push({ name, ok: false, detail }); console.log(`✗ ${name}: ${typeof detail === 'string' ? detail : JSON.stringify(detail).slice(0, 600)}`); };
 const pass = (name, detail = '') => { results.push({ name, ok: true, detail }); console.log(`✓ ${name}${detail ? ` (${detail})` : ''}`); };
-async function step(name, fn) { try { const d = await fn(); pass(name, d ?? ''); } catch (e) { fail(name, String(e?.message ?? e).split('\n')[0]); } }
+// E2E_VERBOSE=1 prints the locator a timeout was waiting for.
+async function step(name, fn) { try { const d = await fn(); pass(name, d ?? ''); } catch (e) { fail(name, String(e?.message ?? e).split('\n').slice(0, process.env.E2E_VERBOSE ? 4 : 1).join(' | ')); } }
 
 const browser = await chromium.launch({ executablePath: exe });
 const consoleErrors = [];
@@ -545,10 +546,11 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('button', { name: 'Start job' }).click();
     await p.getByText('Job started').waitFor();
     await highlighted(p, 'driver-record').waitFor();
+    await p.getByLabel('Completed successfully').check();
     await p.getByLabel(/Delivered quantity/).fill('187.4');
     await p.getByRole('button', { name: 'Submit to office' }).click();
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
-    await p.getByText('Accepted. The office has your record.').waitFor();
+    await p.getByText('Sent. The office has your record.').waitFor();
     await guide.getByText(/Done\. The office has the driver's record/).waitFor();
     await guide.getByRole('button', { name: 'Next step' }).click();
     // Step 5: back to the Owner, approve from a card that shows the bill.
@@ -712,7 +714,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     if (!(await p.getByLabel('Bill', { exact: true }).locator('option:checked').innerText()).startsWith('Every 4 weeks (28 days)')) throw new Error('28-day billing is not offered first');
     await p.screenshot({ path: `${OUT}/r2-recurring-form-1366.png`, fullPage: true });
     await p.goto(`${v.C}/recurring`);
-    await p.getByText(/every 4 weeks \(28 days\)/).waitFor();
+    await p.getByText(/every 4 weeks/).first().waitFor();
     await p.goto(`${v.C}/jobs?status=all`);
     await p.locator('tr', { hasText: '#3' }).getByText('Urgent').waitFor();
     await p.goto(`${v.C}/invoices?status=all`);
@@ -1326,12 +1328,13 @@ await step('driver (simulated): completes a job with offline-capable draft and s
   await page.locator('a.driver-job', { hasText: 'Fuel delivery' }).first().click();
   await page.getByRole('button', { name: 'Start job' }).click();
   await page.getByText('Job started').waitFor();
+  await page.getByLabel('Completed successfully').check();
   await page.getByLabel(/Delivered quantity/).fill('432.5');
-  await page.getByText('Saved on this device').first().waitFor();
+  await page.getByText('Saved on this phone').first().waitFor();
   await page.screenshot({ path: `${OUT}/driver-job-390.png`, fullPage: true });
   await page.getByRole('button', { name: 'Submit to office' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
-  await page.getByText('Accepted. The office has your record.').waitFor();
+  await page.getByText('Sent. The office has your record.').waitFor();
   await page.getByText(/Recorded as completed successfully/i).waitFor();
 });
 
@@ -1350,7 +1353,9 @@ await step('owner approves the prepared invoice from the inbox', async () => {
   const cards = page.locator('article.card');
   await cards.first().waitFor();
   const before = await cards.count();
-  await cards.first().getByRole('button', { name: 'Approve' }).click();
+  await cards.first().getByRole('button', { name: /^Approve/ }).first().click();
+  // Approving asks first, with the total (R14-m4).
+  await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
   await page.getByText(/Approved\. Rigo will continue/).waitFor();
   return `${before} approval(s) were waiting`;
 });
@@ -1386,7 +1391,7 @@ await step('assistant: prepared response labeled, proposal stays separate', asyn
 await step('invoice preview renders branded document and print control', async () => {
   await page.goto(`${BASE}${cidPath()}/invoices?status=all`);
   await page.locator('a.row-link').first().click();
-  await page.getByRole('article', { name: 'Invoice preview' }).waitFor();
+  await page.getByRole('article', { name: 'Invoice' }).waitFor();
   await page.getByRole('button', { name: /Print/ }).waitFor();
   await page.screenshot({ path: `${OUT}/invoice.png`, fullPage: true });
 });
