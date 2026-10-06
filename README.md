@@ -54,8 +54,17 @@ npm run dev        # API on :8787, web app on http://localhost:5173 (proxies /ap
 ```
 
 Then open the app, create an account, and either **Explore the demo** or **Create a company**.
-Locally, invitation and password-reset emails are not sent: they appear in the
-**simulated mailbox** at `/dev/mailbox`.
+Locally, invitation, password-reset and email-confirmation emails are not sent: they appear in
+the **simulated mailbox** at `/dev/mailbox`. Set `APP_URL=http://localhost:8787` when using
+`npm start`, or the emailed links point to the dev server on port 5173.
+
+To try the live site's behavior (no email service), run a production-like copy:
+
+```bash
+NODE_ENV=production PORT=8788 RIGO_DATA_DIR=data/prodlike APP_URL=http://localhost:8788 npm start
+```
+
+There, password recovery works through reset links an owner creates from Team.
 
 ### Use PostgreSQL instead of the embedded database
 
@@ -78,23 +87,33 @@ All optional; see `.env.example`.
 | `RIGO_DEV_MAILBOX` | `1` shows simulated emails at `/dev/mailbox` (default on outside production). |
 | `RIGO_AI_PROVIDER`, `ANTHROPIC_API_KEY`, `RIGO_AI_MODEL`, `RIGO_AI_DAILY_LIMIT` | Turn on real AI for real (non-demo) companies. Off by default. |
 | `CRON_SECRET` | Protects `/api/cron/tick` when set. |
+| `RIGO_SUPPORT_EMAIL` | Shown on the password recovery page for owners who have no other owner to ask. Not set: that line is left out. |
+| `RIGO_TERMS_URL`, `RIGO_PRIVACY_URL` | Terms of service and privacy policy, linked at sign-up. Not set: no agreement line is shown. |
+| `RIGO_EMAIL_PROVIDER` | Account email service for password reset, invitation and email confirmation emails. No provider is implemented yet, so recovery uses owner-created reset links. |
+| `RIGO_TRUST_PROXY` | `1` trusts `X-Forwarded-For` for client addresses (sign-in limits). Automatic on Vercel, which overwrites the header. |
 
 ## Tests
 
 ```bash
 npm run typecheck
-npm test                                   # 37 API/domain tests on embedded PostgreSQL
+npm test                                   # 63 API/domain tests on embedded PostgreSQL
 DATABASE_URL=postgres://… npm test         # the same tests on a real PostgreSQL server
 
 # Browser checks against a running server (uses the pre-installed Chromium):
 npm run build && npm start &
 BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) npm run test:browser
+# Add NOEMAIL_URL=http://localhost:8788 (the production-like copy above) to also check recovery
+# without email; E2E_ONLY=auth runs only the account and sign-in checks.
 ```
 
-The browser checks run real flows (sign-up, demo, live timeline and job panel, command menu,
+The browser checks run real flows (the landing page, sign-in and sign-up from any entry point,
+lockout warnings, password recovery by mailbox and by an owner's reset link, email change,
+demo, live timeline and job panel, command menu,
 sidebar collapse, dispatch, driver completion, approval,
 workflow edit/test, assistant proposal, company creation, employee invitation), an axe
-WCAG 2.2 AA scan of 18 pages in light and dark themes, horizontal-overflow checks at 375,
+WCAG 2.2 AA scan of 18 app pages plus the landing, sign-in, sign-up, forgot, reset,
+workspaces and account pages and the Team reset-link dialog in light and dark themes,
+horizontal-overflow checks at 375,
 768, 1024 and 1440 px, 200% text, reduced motion and keyboard skip link. Screenshots go to
 `e2e/output/`.
 

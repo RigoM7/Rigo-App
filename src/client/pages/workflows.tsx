@@ -47,7 +47,7 @@ export function Workflows() {
         </Card>
       )}
       <Dialog open={open} onClose={() => setOpen(false)} title="New workflow" footer={<><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" busy={create.busy} onClick={() => create.run()}>Create draft</Button></>}>
-        <div className="stack"><ErrorSummary error={create.error} /><Field label="Name" id="f-name" error={create.fieldError('name')}>{(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} />}</Field><p className="muted small">It starts as a draft with one example step. Nothing runs until you test and activate it.</p></div>
+        <div className="stack"><ErrorSummary error={create.error} /><Field label="Name" id="f-name" error={create.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />}</Field><p className="muted small">It starts as a draft with one example step. Nothing runs until you test and activate it.</p></div>
       </Dialog>
     </div>
   );
@@ -87,7 +87,7 @@ function StepEditor({ step, index, onChange }: { step: Step; index: number; onCh
       {step.action === 'notify' && <>
         <RoleChecks legend="Notify roles" roles={c.roles} value={step.params.roles ?? []} onChange={(roles) => onChange({ ...step, params: { ...step.params, roles } })} />
         <Checkbox label="Notify the assigned driver" checked={!!step.params.assignee} onChange={(e) => onChange({ ...step, params: { ...step.params, assignee: e.target.checked } })} />
-        <Field label="Message" id={`${idp}-text`}>{(p) => <Input {...p} value={step.params.text ?? ''} onChange={(e) => onChange({ ...step, params: { ...step.params, text: e.target.value } })} />}</Field>
+        <Field label="Message" id={`${idp}-text`}>{(p) => <Input {...p} maxLength={300} value={step.params.text ?? ''} onChange={(e) => onChange({ ...step, params: { ...step.params, text: e.target.value } })} />}</Field>
       </>}
       <Field label="Automation mode for this step" id={`${idp}-mode`} hint="Inherit uses the workflow or company setting.">{(p) => <Select {...p} value={step.mode ?? ''} onChange={(e) => onChange({ ...step, mode: (e.target.value || null) as any })}><option value="">Inherit</option><option value="manual">Always manual</option><option value="assisted">Always assisted</option><option value="automatic">Always automatic</option></Select>}</Field>
       <fieldset className="card" style={{ padding: 12 }}>

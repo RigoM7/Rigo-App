@@ -23,20 +23,20 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
     <Dialog open={open} onClose={onClose} title={existing ? 'Edit customer' : 'New customer'} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={s.busy} onClick={() => s.run()}>{existing ? 'Save' : 'Add customer'}</Button></>}>
       <div className="stack">
         <ErrorSummary error={s.error} labels={{ 'location.address': 'f-address' }} />
-        <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+        <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={120} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
         {c.can('customers.contact') && <>
           <div className="grid-2">
-            <Field label="Email" optionalText id="f-email" error={s.fieldError('email')} hint="Used for invoices and updates.">{(p) => <Input {...p} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
-            <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
+            <Field label="Email" optionalText id="f-email" error={s.fieldError('email')} hint="Used for invoices and updates.">{(p) => <Input {...p} maxLength={254} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+            <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
           </div>
-          <Field label="Billing address" optionalText id="f-billingAddress">{(p) => <Input {...p} value={v.billingAddress} onChange={(e) => setV({ ...v, billingAddress: e.target.value })} />}</Field>
+          <Field label="Billing address" optionalText id="f-billingAddress">{(p) => <Input {...p} maxLength={300} value={v.billingAddress} onChange={(e) => setV({ ...v, billingAddress: e.target.value })} />}</Field>
         </>}
         {!existing && <>
-          <Field label="First service address" optionalText id="f-address" error={s.fieldError('location.address')}>{(p) => <Input {...p} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
-          {v.address && <Field label="Access instructions" optionalText id="f-access">{(p) => <Textarea {...p} value={v.access} onChange={(e) => setV({ ...v, access: e.target.value })} />}</Field>}
+          <Field label="First service address" optionalText id="f-address" error={s.fieldError('location.address')}>{(p) => <Input {...p} maxLength={300} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
+          {v.address && <Field label="Access instructions" optionalText id="f-access">{(p) => <Textarea {...p} maxLength={1000} value={v.access} onChange={(e) => setV({ ...v, access: e.target.value })} />}</Field>}
         </>}
         {defs.map((f: any) => <DynamicField key={f.key} f={f} idPrefix="custom" value={v.custom[f.key]} error={s.fieldError(`custom.${f.key}`)} onChange={(x) => setV({ ...v, custom: { ...v.custom, [f.key]: x } })} />)}
-        <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />}</Field>
+        <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={2000} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />}</Field>
       </div>
     </Dialog>
   );
@@ -131,10 +131,10 @@ export function CustomerDetail() {
       <Dialog open={!!loc} onClose={() => setLoc(null)} title={loc?.id ? 'Edit location' : 'Add location'} footer={<><Button onClick={() => setLoc(null)}>Cancel</Button><Button variant="primary" busy={saveLoc.busy} onClick={() => saveLoc.run()}>Save location</Button></>}>
         {loc && <div className="stack">
           <ErrorSummary error={saveLoc.error} />
-          <Field label="Label" optionalText id="f-label" hint="For example: Main yard, North lot">{(p) => <Input {...p} value={loc.label} onChange={(e) => setLoc({ ...loc, label: e.target.value })} />}</Field>
-          <Field label="Address" id="f-address" error={saveLoc.fieldError('address')}>{(p) => <Input {...p} value={loc.address} onChange={(e) => setLoc({ ...loc, address: e.target.value })} />}</Field>
-          <Field label="Access instructions" optionalText id="f-accessInstructions">{(p) => <Textarea {...p} value={loc.accessInstructions} onChange={(e) => setLoc({ ...loc, accessInstructions: e.target.value })} />}</Field>
-          <Field label="Site contact" optionalText id="f-siteContact">{(p) => <Input {...p} value={loc.siteContact} onChange={(e) => setLoc({ ...loc, siteContact: e.target.value })} />}</Field>
+          <Field label="Label" optionalText id="f-label" hint="For example: Main yard, North lot">{(p) => <Input {...p} maxLength={80} value={loc.label} onChange={(e) => setLoc({ ...loc, label: e.target.value })} />}</Field>
+          <Field label="Address" id="f-address" error={saveLoc.fieldError('address')}>{(p) => <Input {...p} maxLength={300} value={loc.address} onChange={(e) => setLoc({ ...loc, address: e.target.value })} />}</Field>
+          <Field label="Access instructions" optionalText id="f-accessInstructions">{(p) => <Textarea {...p} maxLength={1000} value={loc.accessInstructions} onChange={(e) => setLoc({ ...loc, accessInstructions: e.target.value })} />}</Field>
+          <Field label="Site contact" optionalText id="f-siteContact">{(p) => <Input {...p} maxLength={200} value={loc.siteContact} onChange={(e) => setLoc({ ...loc, siteContact: e.target.value })} />}</Field>
           <p className="small muted">Addresses are stored as text. Maps and geocoding are not connected.</p>
         </div>}
       </Dialog>

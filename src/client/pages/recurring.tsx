@@ -72,7 +72,7 @@ export function RecurringNew() {
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <Card id="b" title="What and where"><div className="stack">
-          <Field label="Plan name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+          <Field label="Plan name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
           <Field label="Type" id="f-kind">{(p) => <Select {...p} value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value })}><option value="rental">Rental (units on site, serviced and billed on a schedule)</option><option value="service">Recurring service</option></Select>}</Field>
           <Field label="Customer" id="f-customerId" error={s.fieldError('customerId')}>{(p) => <Select {...p} value={v.customerId} onChange={(e) => setV({ ...v, customerId: e.target.value, locationId: '' })}><option value="">Choose…</option>{customers.data?.customers.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>}</Field>
           <Field label="Location" id="f-locationId">{(p) => <Select {...p} value={v.locationId} disabled={!v.customerId} onChange={(e) => setV({ ...v, locationId: e.target.value })}><option value="">Choose…</option>{cust.data?.locations.map((l: any) => <option key={l.id} value={l.id}>{l.address}</option>)}</Select>}</Field>
@@ -90,7 +90,7 @@ export function RecurringNew() {
         <Card id="bill" title="Billing schedule"><div className="stack">
           <Field label="Bill" id="f-bfreq">{(p) => <Select {...p} value={billing.frequency} onChange={(e) => setBilling({ ...billing, frequency: e.target.value })}><option value="monthly">Monthly, per unit</option><option value="weekly">Weekly, per unit</option><option value="per_visit">Per visit, using the service pricing</option><option value="none">Not billed by this plan</option></Select>}</Field>
           {(billing.frequency === 'monthly' || billing.frequency === 'weekly') && c.can('finance.view') && <div className="grid-2">
-            <Field label="Line description" id="f-bdesc">{(p) => <Input {...p} value={billing.description} onChange={(e) => setBilling({ ...billing, description: e.target.value })} />}</Field>
+            <Field label="Line description" id="f-bdesc">{(p) => <Input {...p} maxLength={120} value={billing.description} onChange={(e) => setBilling({ ...billing, description: e.target.value })} />}</Field>
             <Field label={`Rate per unit (${c.company.currency})`} optionalText id="f-rate" hint="Empty means invoices are held until you set it.">{(p) => <Input {...p} inputMode="decimal" value={v.rate} onChange={(e) => setV({ ...v, rate: e.target.value })} />}</Field>
           </div>}
         </div></Card>

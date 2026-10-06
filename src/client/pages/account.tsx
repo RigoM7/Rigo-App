@@ -160,7 +160,7 @@ export function Account() {
         )}
         <Card title="Theme" id="theme">
           <div className="segmented" role="radiogroup" aria-label="Theme">
-            {([['light', 'Light', <Sun key="l" aria-hidden />], ['dark', 'Dark', <Moon key="d" aria-hidden />], ['system', 'System', <Monitor key="s" aria-hidden />]] as const).map(([k, l, i]) => <button key={k} role="radio" aria-checked={pref === k} aria-pressed={pref === k} onClick={() => setTheme(k)}>{i}{l}</button>)}
+            {([['light', 'Light', <Sun key="l" aria-hidden />], ['dark', 'Dark', <Moon key="d" aria-hidden />], ['system', 'System', <Monitor key="s" aria-hidden />]] as const).map(([k, l, i]) => <button key={k} role="radio" aria-checked={pref === k} onClick={() => setTheme(k)}>{i}{l}</button>)}
           </div>
           <p className="hint" style={{ marginTop: 8 }}>Saved to your account and this device. System follows your device setting.</p>
         </Card>

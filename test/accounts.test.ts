@@ -282,6 +282,50 @@ describe('C2: recovery without email', () => {
     expect(r.status).toBe(409);
   });
 
+  it('re-checks an owner-created link when it is used, and counts invitations to other companies', async () => {
+    const owner = await signup('Olivia Owner');
+    const cid = await newCompany(owner);
+    const dispatcher = await signup('Dee Dispatcher');
+    const driver = await signup('Luis Driver');
+    const helper = await signup('Hal Helper');
+    await invite(owner, cid, dispatcher, 'dispatcher');
+    await invite(owner, cid, driver, 'driver');
+    await invite(owner, cid, helper, 'driver');
+    const roles = (await owner.get(`/c/${cid}/roles`)).body.roles;
+    const disp = roles.find((r: any) => r.key === 'dispatcher');
+    await owner.patch(`/c/${cid}/roles/dispatcher`, { permissions: [...disp.permissions, 'members.manage'] });
+    const members = (await owner.get(`/c/${cid}/members`)).body.members;
+    const mid = (name: string) => members.find((m: any) => m.name === name).id;
+    const reuse = async (link: string) => new Client('x').post('/auth/reset', { token: tokenOf(link), password: 'river-stone-lamp-77' });
+
+    // (a) A non-owner's link stops working once its target becomes an owner.
+    const forDriver = (await dispatcher.post(`/c/${cid}/members/${mid('Luis Driver')}/reset-link`)).body.link;
+    await owner.patch(`/c/${cid}/members/${mid('Luis Driver')}`, { role: 'owner' });
+    expect((await new Client('x').get(`/auth/reset/${tokenOf(forDriver)}`)).body.valid).toBe(false);
+    expect((await reuse(forDriver)).status).toBe(400);
+
+    // (b) A pending invitation to another company blocks creating a link, and joining one later voids it.
+    const other = await signup('Other Owner');
+    const otherCid = await newCompany(other, ['fuel'], 'Other Co');
+    const forHelper = (await owner.post(`/c/${cid}/members/${mid('Hal Helper')}/reset-link`)).body.link;
+    expect((await new Client('x').get(`/auth/reset/${tokenOf(forHelper)}`)).body.valid).toBe(true);
+    await other.post(`/c/${otherCid}/invitations`, { email: helper.email, role: 'dispatcher' });
+    expect((await owner.post(`/c/${cid}/members/${mid('Hal Helper')}/reset-link`)).status).toBe(409);
+    expect((await new Client('x').get(`/auth/reset/${tokenOf(forHelper)}`)).body.valid).toBe(false);
+    expect((await reuse(forHelper)).status).toBe(400);
+
+    // (c) A link stops working when the person who created it is removed.
+    const dispLink = (await dispatcher.post(`/c/${cid}/members/${mid('Luis Driver')}/reset-link`));
+    expect(dispLink.status).toBe(403); // Luis is an owner now
+    const fresh = await signup('Fay Fresh');
+    await invite(owner, cid, fresh, 'driver');
+    const freshMid = (await owner.get(`/c/${cid}/members`)).body.members.find((m: any) => m.name === 'Fay Fresh').id;
+    const byDispatcher = (await dispatcher.post(`/c/${cid}/members/${freshMid}/reset-link`)).body.link;
+    await owner.del(`/c/${cid}/members/${mid('Dee Dispatcher')}`);
+    expect((await new Client('x').get(`/auth/reset/${tokenOf(byDispatcher)}`)).body.valid).toBe(false);
+    expect((await reuse(byDispatcher)).status).toBe(400);
+  });
+
   it('demo reset links are simulated and make no external call', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const visitor = await signup('Demo Visitor');

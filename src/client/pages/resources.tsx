@@ -48,12 +48,12 @@ export function Resources() {
             <Field label="Type" id="f-kind">{(p) => <Select {...p} value={edit.kind} onChange={(e) => setEdit({ ...edit, kind: e.target.value })}><option value="truck">Truck</option><option value="equipment">Equipment</option><option value="unit">Rental unit</option></Select>}</Field>
             <Field label="Status" id="f-status">{(p) => <Select {...p} value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>{Object.entries(STATUS).map(([k, [, l]]) => <option key={k} value={k}>{l}</option>)}</Select>}</Field>
           </div>
-          <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />}</Field>
+          <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />}</Field>
           <div className="grid-2">
-            <Field label="Identifier or plate" optionalText id="f-identifier">{(p) => <Input {...p} value={edit.identifier} onChange={(e) => setEdit({ ...edit, identifier: e.target.value })} />}</Field>
-            <Field label="Capacity" optionalText id="f-capacity" hint="For example: 3,000 gal">{(p) => <Input {...p} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
+            <Field label="Identifier or plate" optionalText id="f-identifier">{(p) => <Input {...p} maxLength={60} value={edit.identifier} onChange={(e) => setEdit({ ...edit, identifier: e.target.value })} />}</Field>
+            <Field label="Capacity" optionalText id="f-capacity" hint="For example: 3,000 gal">{(p) => <Input {...p} maxLength={60} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
           </div>
-          <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />}</Field>
+          <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={1000} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />}</Field>
         </div>}
       </Dialog>
     </div>

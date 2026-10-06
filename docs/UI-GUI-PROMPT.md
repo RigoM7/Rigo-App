@@ -100,9 +100,19 @@ that share customers, service locations, employees, trucks and equipment.
 
 ## 6. Screens
 
+0. Landing page (`/`, signed out): black top bar with Sign in and "Create a free account"; a hero
+   that names fuel delivery, portable toilets and septic, says "Free to start" and offers
+   "Create a free account" and "Try the demo"; what Rigo does for the office, drivers and the owner
+   beside real demo screenshots (labeled as demo data); an honest "what Rigo doesn't do yet" list;
+   how to start. No testimonials, logos or invented numbers. Signed-in visitors go to Workspaces.
 1. Sign in / sign up / forgot / reset: a calm centered card on the canvas with the black Rigo
-   wordmark. Password show/hide, autofill and paste allowed. Recovery explains honestly when
-   email isn't configured.
+   wordmark. Password show/hide, autofill and paste allowed. Sign-in has "Forgot your password?"
+   and a full-width "Create a free account" button; failed tries are counted before a pause, and
+   a pause names the wait and links to reset. Sign-up suggests fixes for email typos and explains
+   the password rule ("three or four unrelated words"). The forgot page says how recovery works
+   before anyone types: by email when it's set up, otherwise by a reset link an owner creates
+   from Team. Reset and email links are checked first; used or expired links say so and offer a
+   new one. Never the word "installation".
 2. Workspaces: my companies (chip with logo or accent), pending invitations, free demo, create a
    company. New company flow.
 3. Invitation page: company, role, masked intended email; valid, expired, revoked, replaced and
@@ -151,7 +161,8 @@ that share customers, service locations, employees, trucks and equipment.
 16. Recurring & rentals (visit schedule separate from billing), Imports (map, review, confirm),
     Templates (apply, share), Messages (prepared / simulated / sent / replied, with a branded
     email preview), Settings (company, branding with live preview, custom fields, connected
-    services), Account (theme, password).
+    services), Account (theme, name, email with confirmation status and change, password, sign
+    out, delete account).
 17. Assistant, its own full screen: conversation with distinct states (Proposed, Waiting for
     approval, Running, Completed, Failed, Simulated); prepared answers labeled "Prepared
     response (not AI)", AI output labeled as AI; workflow proposals as a card with the

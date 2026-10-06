@@ -9,10 +9,12 @@ Deployment: the Vercel preview of this branch connects to Supabase through the t
 (`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
 public API roles cannot access.
 
-Latest results (local, "Light command center" redesign): `npm test` 37/37 passed on embedded
-PostgreSQL (PGlite); `e2e/run.mjs` 27/27 browser checks passed; axe found 0 violations on 18
-pages in light and dark themes; `npm run typecheck` clean. The redesign changed only the web
-client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before the redesign).
+Latest results (local, Round 1 account fixes): `npm test` 63/63 passed on embedded PostgreSQL
+(PGlite) and 63/63 on PostgreSQL 16; `e2e/run.mjs` 51/51 browser checks passed against a local
+copy with the simulated mailbox plus a production-like copy with no email service
+(`NOEMAIL_URL`); axe found no violations on the 18 app pages and on the landing, sign-in, sign-up,
+forgot, reset, workspaces and account pages and the Team reset-link dialog, in light and dark
+themes; `npm run typecheck` clean.
 
 ## A. Foundation
 
@@ -22,14 +24,28 @@ client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before t
 | PostgreSQL support and migrations | Verified | Suite passes on PostgreSQL 16; advisory-locked SQL migrations |
 | Accounts, sessions, password hashing | Verified | bcrypt cost 12; hashed session tokens; httpOnly cookies |
 | CSRF protection | Verified | Custom-header requirement (`access.test.ts`) |
-| Sign-in rate limiting | Implemented | Per email/IP window in the database |
-| Password reset | Implemented | Simulated mailbox locally; honest "not configured" in production |
+| Signing in or up lands on the right page the first time, from any entry point | Verified | Fixed a stale "signed out" cache (Round 1, C1). Browser checks from `/`, sign-up, bookmarks and a driver's `/c/…/today` link, at 1440 and 390px |
+| Signing out forgets everything cached on the device | Verified | Browser check: a second person signing in on the same tab sees none of the first person's data |
+| Signed-in people skip the sign-in and sign-up forms | Verified | Browser check; they go to `?next=` (same-site paths only) or Workspaces |
+| Sign-in limits | Verified | Only failed sign-ins count, keyed by email + device address (10 per 15 minutes), plus 100 failures per address across accounts. Success, reset and password change clear them. The message names the wait (`Retry-After` too) and links to reset; the last 3 tries are counted. Old records are cleaned daily. `accounts.test.ts`, browser check |
+| Client address for limits | Implemented | `X-Forwarded-For` is trusted only on Vercel (which overwrites it) or with `RIGO_TRUST_PROXY=1`; otherwise the connection address |
+| Password rule | Verified | `src/shared/password.ts`: 10+ characters; rejects the 10,000 most common passwords (server-side list), repeated characters, sequences and keyboard rows, and the person's name or email. Applied at sign-up, reset and change; existing accounts keep working. `accounts.test.ts` |
+| Password reset by email | Verified | Through the account email boundary (`sendSystemEmail`): the simulated mailbox locally; not available on the live site until an email service is chosen. The reset page checks the link first and signs the person in afterwards |
+| Recovery without email: owner-created reset links | Verified | Team → "Reset link" (needs `members.manage`; only owners for an owner; never for yourself). Single use, 24 hours, audited, other owners notified, shown once. Re-checked when used: the person must still belong to the company, the creator must still be allowed, and anyone who also belongs to or is invited to another company is refused. Demo: simulated, no real link. `accounts.test.ts`, browser checks |
+| Recovery page says what works before anyone types | Verified | `GET /api/auth/recovery`; without email it shows the owner-link path and, if `RIGO_SUPPORT_EMAIL` is set, a support address. Browser check on the no-email copy |
+| Email typo suggestions | Verified | Sign-up and change email suggest fixes for common domain typos (gmial.com → gmail.com); never blocks |
+| Email confirmation | Verified (mailbox) · Not available on the live site | Link sent at sign-up and on request; single use, 7 days. Optional: nothing is blocked on it. Hidden where email can't be sent |
+| Change email | Verified | Needs the current password; refuses an address in use. With email: confirmed by a link to the new address, the old address is told. Without email: changes at once. Other devices are signed out; invitations to the new address appear. Browser walkthrough on both copies |
+| Delete account | Verified | Needs the password; refused while you are the only owner of a company. Memberships end (open jobs return to the queue), the demo is deleted, sessions and links are revoked, and the row is anonymized so company history stays intact |
+| Plain-language validation messages | Verified | A global zod error map (`src/server/lib/zod-messages.ts`); a test checks no message uses developer wording. Inputs carry `maxLength` matching the server limits |
+| Tab titles | Verified | "Page · Company · Rigo" (with "(Demo)" in the demo) |
 | Company isolation and 404 for non-members | Verified | `access.test.ts` |
 | Role model and server-side permissions | Verified | Driver/office/owner checks in `operations.test.ts` |
 | Field-level filtering (rates, contact, amounts) | Verified | Driver gets no rates; amounts removed without `finance.view` |
 | Design tokens (primitive → semantic → component), both themes, System theme | Verified | axe light+dark; theme persisted to account + device |
 | "Light command center" UI: black chrome, Geist / Geist Mono, every screen restyled | Verified | axe on 18 pages, overflow at 4 widths and 200% text; before/after screenshots in the pull request |
 | Responsive shell (grouped sidebar / bottom nav ≤5 / More) | Verified | Overflow checks at 4 widths; nav count check |
+| Public landing page at `/` for signed-out visitors | Verified | Names the three industries, what it does for office, drivers and owners, "Free to start", what isn't connected yet, and real demo screenshots (WebP, both themes, regenerated by `scripts/landing-shots.mjs`). Browser checks: content, redirect when signed in, "Try the demo" opens the demo after sign-up, axe in both themes, no overflow at 4 widths and 200% text |
 | Sidebar collapses to icons and remembers it | Verified | Browser check |
 | Command menu (Ctrl/⌘ K): screens, jobs, customers, invoices, quick actions | Verified | Browser check finds job #3 and opens it; results filtered by permission, server checks again |
 
@@ -109,7 +125,7 @@ client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before t
 | Capability | Behavior |
 |---|---|
 | Customer email/SMS delivery | No provider implemented. Real companies: messages stay **Prepared** and the send step is **Blocked** with an explanation; people can copy and mark "sent outside Rigo". Demo: **Simulated**. |
-| System email (invitations, resets) | Local simulated mailbox at `/dev/mailbox`. In production the inviter gets a copyable link; password reset reports that email is not configured. |
+| Account email (password reset, invitations, email confirmation and change) | All of it goes through `sendSystemEmail`. Locally: the simulated mailbox at `/dev/mailbox`. On the live site (no provider yet): invitations give the inviter a copyable link, password recovery uses owner-created reset links, email changes apply at once, and confirmation isn't offered. |
 | AI | Off by default; prepared responses clearly labeled. Anthropic adapter exists behind `RIGO_AI_PROVIDER=anthropic` + key, real companies only, daily limit. Not exercised against the live API in tests. |
 | Payments | Not processed. Payments received can be recorded. |
 | Maps, routing, geocoding | Not connected. Addresses are text; "Copy address" on the driver screen. |
@@ -119,7 +135,9 @@ client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before t
 
 | Item | Dependency |
 |---|---|
-| Real email delivery | Choose and configure a provider (e.g. an SMTP/API service), then implement its adapter in `src/server/adapters/index.ts`. |
+| Real email delivery | Choose an email service, then add its adapter to `PROVIDERS` in `src/server/adapters/index.ts` (keyed by `RIGO_EMAIL_PROVIDER`). Reset, invitation, confirmation and email-change emails all start working at once. |
+| Support address for owners with no other owner | Set `RIGO_SUPPORT_EMAIL` (not set: the forgot page leaves that line out). |
+| Terms of service and privacy policy | Publish them and set `RIGO_TERMS_URL` and `RIGO_PRIVACY_URL` (not set: no agreement line at sign-up). |
 | Real AI answers | An Anthropic API key in `ANTHROPIC_API_KEY` with `RIGO_AI_PROVIDER=anthropic`. |
 
 ## Known limitations and next steps
@@ -137,5 +155,11 @@ client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before t
   automation steps).
 - Customer emails are plain text (no email provider yet); the branded layout is the in-app
   preview in Messages.
+- Owner-created reset links rely on trust in the company's managers: whoever holds the link can
+  set the person's password until it is used or expires. Rigo refuses them for anyone who also
+  belongs to or is invited to another company, notifies the other owners, and signs the person
+  out elsewhere when it's used.
+- Without an email service, a mistyped address can be fixed only while signed in (Account →
+  Change your email). Someone who can't sign in needs an owner's reset link first.
 - Next: email provider adapter, configurable dashboard widgets and job stages, XLSX import,
   map links/geocoding adapter (disabled by default), per-field permissions beyond contact/finance.

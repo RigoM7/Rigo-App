@@ -273,9 +273,9 @@ export function DriverJob() {
                 {(Object.keys(OUTCOMES) as (keyof typeof OUTCOMES)[]).map((o) => <label key={o}><input type="radio" name="outcome" checked={d.outcome === o} onChange={() => update({ outcome: o })} />{OUTCOMES[o]}</label>)}
               </div>
             </fieldset>
-            {d.outcome !== 'completed' && <Field label="What happened?" id="f-details-reason" error={localErrors.reason}>{(p) => <Textarea {...p} value={d.reason} onChange={(e) => update({ reason: e.target.value })} />}</Field>}
+            {d.outcome !== 'completed' && <Field label="What happened?" id="f-details-reason" error={localErrors.reason}>{(p) => <Textarea {...p} maxLength={2000} value={d.reason} onChange={(e) => update({ reason: e.target.value })} />}</Field>}
             {compFields.map((f: any) => <DynamicField key={f.key} f={{ ...f, required: f.required && d.outcome === 'completed' }} value={d.values[f.key]} error={localErrors[f.key]} onChange={(x) => update({ values: { ...d.values, [f.key]: x } })} />)}
-            <Field label="Notes" optionalText id="f-details-notes">{(p) => <Textarea {...p} value={d.notes} onChange={(e) => update({ notes: e.target.value })} />}</Field>
+            <Field label="Notes" optionalText id="f-details-notes">{(p) => <Textarea {...p} maxLength={4000} value={d.notes} onChange={(e) => update({ notes: e.target.value })} />}</Field>
             <div className="field" id="f-details-photos">
               <span className="label">Photos{job.requires_photo && d.outcome === 'completed' ? '' : <span className="muted" style={{ fontWeight: 400 }}> (optional)</span>}</span>
               {job.requires_photo && <span className="hint">At least one photo is required for this service.</span>}
@@ -288,10 +288,10 @@ export function DriverJob() {
                 <span className="label">Customer signature</span>
                 <SignaturePad value={d.signature} onChange={(v) => update({ signature: v })} />
                 {localErrors.signature && <div className="field-error"><AlertTriangle aria-hidden />{localErrors.signature}</div>}
-                <Field label="Name of person signing" id="f-details-signerName" error={localErrors.signerName}>{(p) => <Input {...p} value={d.signerName} onChange={(e) => update({ signerName: e.target.value })} />}</Field>
+                <Field label="Name of person signing" id="f-details-signerName" error={localErrors.signerName}>{(p) => <Input {...p} maxLength={120} value={d.signerName} onChange={(e) => update({ signerName: e.target.value })} />}</Field>
               </div>
             )}
-            <Field label="Problem to report" optionalText id="f-details-problem" hint="Dispatch is alerted when you submit.">{(p) => <Textarea {...p} value={d.problem} onChange={(e) => update({ problem: e.target.value })} />}</Field>
+            <Field label="Problem to report" optionalText id="f-details-problem" hint="Dispatch is alerted when you submit.">{(p) => <Textarea {...p} maxLength={2000} value={d.problem} onChange={(e) => update({ problem: e.target.value })} />}</Field>
           </section>
           <div className="sticky-actions stack-sm">
             <div className="row-between"><SyncState state={draft ? d.state : null} /><span className="small muted">{draft ? `Saved ${relTime(d.updatedAt)}` : 'Changes save on this device as you type'}</span></div>

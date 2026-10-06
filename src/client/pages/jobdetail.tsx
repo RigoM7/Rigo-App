@@ -192,18 +192,18 @@ export function JobDetail() {
       <Dialog open={cancelOpen} onClose={() => setCancelOpen(false)} title={`Cancel job #${job.number}?`} footer={<><Button onClick={() => setCancelOpen(false)}>Keep job</Button><Button variant="danger" busy={status.busy} onClick={() => status.run('cancelled', reason)}>Cancel job</Button></>}>
         <div className="stack"><p>The job is marked cancelled and will not be billed. {job.assigned_user_id ? 'The assigned driver is notified.' : ''} This cannot be undone; create a new job if plans change.</p>
           <ErrorSummary error={status.error} />
-          <Field label="Reason" id="f-reason" error={status.fieldError('reason')}>{(p) => <Textarea {...p} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field></div>
+          <Field label="Reason" id="f-reason" error={status.fieldError('reason')}>{(p) => <Textarea {...p} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field></div>
       </Dialog>
       <Dialog open={problemOpen} onClose={() => setProblemOpen(false)} title="Report a problem" footer={<><Button onClick={() => setProblemOpen(false)}>Cancel</Button><Button variant="primary" busy={report.busy} onClick={() => report.run()}>Send to dispatch</Button></>}>
-        <div className="stack"><ErrorSummary error={report.error} /><Field label="What is the problem?" id="f-text" error={report.fieldError('text')}>{(p) => <Textarea {...p} value={problem} onChange={(e) => setProblem(e.target.value)} />}</Field></div>
+        <div className="stack"><ErrorSummary error={report.error} /><Field label="What is the problem?" id="f-text" error={report.fieldError('text')}>{(p) => <Textarea {...p} maxLength={2000} value={problem} onChange={(e) => setProblem(e.target.value)} />}</Field></div>
       </Dialog>
       <Dialog open={correctOpen} onClose={() => setCorrectOpen(false)} title="Correct the recorded information" footer={<><Button onClick={() => setCorrectOpen(false)}>Cancel</Button><Button variant="primary" icon={<ShieldCheck aria-hidden />} busy={correct.busy} onClick={() => correct.run()}>Save correction</Button></>}>
         <div className="stack">
           <p className="muted">The original values stay in the job history. A draft invoice is rebuilt and needs approval again; an issued invoice is not changed.</p>
           <ErrorSummary error={correct.error} />
           {compFields.map((f: any) => <DynamicField key={f.key} f={f} value={corr.values[f.key]} error={correct.fieldError(f.key)} onChange={(x) => setCorr({ ...corr, values: { ...corr.values, [f.key]: x } })} />)}
-          <Field label="Notes" optionalText id="f-cnotes">{(p) => <Textarea {...p} value={corr.notes} onChange={(e) => setCorr({ ...corr, notes: e.target.value })} />}</Field>
-          <Field label="Reason for the correction" id="f-reason" error={correct.fieldError('reason')}>{(p) => <Input {...p} value={corr.reason} onChange={(e) => setCorr({ ...corr, reason: e.target.value })} />}</Field>
+          <Field label="Notes" optionalText id="f-cnotes">{(p) => <Textarea {...p} maxLength={4000} value={corr.notes} onChange={(e) => setCorr({ ...corr, notes: e.target.value })} />}</Field>
+          <Field label="Reason for the correction" id="f-reason" error={correct.fieldError('reason')}>{(p) => <Input {...p} maxLength={1000} value={corr.reason} onChange={(e) => setCorr({ ...corr, reason: e.target.value })} />}</Field>
         </div>
       </Dialog>
     </div>

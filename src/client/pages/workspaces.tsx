@@ -107,7 +107,7 @@ export function CompanyBasicsForm({ onSubmit, busy, error, submitLabel, initial 
   return (
     <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); onSubmit(v); }}>
       <ErrorSummary error={error} />
-      <Field label="Company name" id="f-name" error={error?.fields?.name}>{(p) => <Input {...p} autoComplete="organization" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+      <Field label="Company name" id="f-name" error={error?.fields?.name}>{(p) => <Input {...p} maxLength={80} autoComplete="organization" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
       <div className="grid-2">
         <Field label="Time zone" id="f-timezone" hint="Schedules and recurring visits use this." error={error?.fields?.timezone}>{(p) => <Select {...p} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })}>{[...new Set([v.timezone, ...TIMEZONES])].map((t) => <option key={t}>{t}</option>)}</Select>}</Field>
         <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</Select>}</Field>

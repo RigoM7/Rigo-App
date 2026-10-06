@@ -808,11 +808,12 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .lp-top .lp-top-cta:hover { background: var(--primary-hover); }
 @media (max-width: 479px) { .lp-top .lp-top-cta { display: none; } }
 
-.lp-hero { display: grid; gap: var(--space-6); align-items: center; padding: var(--space-7) 0 var(--space-7); }
+.lp-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); align-items: center; padding: var(--space-7) 0 var(--space-7); }
 @media (min-width: 1024px) { .lp-hero { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-7); padding: var(--space-8) 0; } }
 .lp-hero h1 { font-size: clamp(2rem, 1.2rem + 3vw, 3rem); line-height: 1.08; letter-spacing: -0.03em; text-wrap: balance; margin: 0; }
 .lp-lead { font-size: var(--fs-18); margin: var(--space-4) 0 0; }
 .lp-ctas { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
+.lp-ctas .btn { white-space: normal; text-align: center; }
 @media (max-width: 479px) { .lp-ctas .btn { flex: 1 1 100%; } }
 
 .lp-shot { margin: 0; min-width: 0; }
@@ -829,7 +830,7 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .lp-points svg { width: 20px; height: 20px; margin-top: 2px; color: var(--primary-text); }
 @media (min-width: 768px) { .lp-points-2 { grid-template-columns: 1fr 1fr; gap: var(--space-6); } }
 
-.lp-split { display: grid; gap: var(--space-6); align-items: center; padding: var(--space-7) 0; border-top: 1px solid var(--border); }
+.lp-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); align-items: center; padding: var(--space-7) 0; border-top: 1px solid var(--border); }
 .lp-split-copy p { margin: var(--space-3) 0 0; }
 @media (min-width: 768px) { .lp-split { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-7); } }
 @media (min-width: 768px) { .lp-split-wide { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); } }

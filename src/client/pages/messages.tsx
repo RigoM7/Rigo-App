@@ -74,12 +74,12 @@ export function Messages() {
       </Dialog>
       <Dialog open={!!edit} onClose={() => setEdit(null)} title="Edit prepared message" footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" busy={save.busy} onClick={() => save.run()}>Save</Button></>}>
         {edit && <div className="stack"><ErrorSummary error={save.error} />
-          <Field label="To" id="f-recipient">{(p) => <Input {...p} type="email" value={edit.recipient} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
-          <Field label="Subject" id="f-subject">{(p) => <Input {...p} value={edit.subject} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} />}</Field>
-          <Field label="Message" id="f-body">{(p) => <Textarea {...p} rows={10} value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />}</Field></div>}
+          <Field label="To" id="f-recipient">{(p) => <Input {...p} maxLength={254} type="email" value={edit.recipient} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
+          <Field label="Subject" id="f-subject">{(p) => <Input {...p} maxLength={200} value={edit.subject} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} />}</Field>
+          <Field label="Message" id="f-body">{(p) => <Textarea {...p} maxLength={10000} rows={10} value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />}</Field></div>}
       </Dialog>
       <Dialog open={replyOpen} onClose={() => setReplyOpen(false)} title="Log a customer reply" footer={<><Button onClick={() => setReplyOpen(false)}>Cancel</Button><Button variant="primary" busy={logReply.busy} onClick={() => logReply.run()}>Save reply</Button></>}>
-        <div className="stack"><p className="muted small">Paste what the customer wrote. Rigo stores it as information only; nothing in it is treated as an instruction.</p><ErrorSummary error={logReply.error} /><Field label="Reply" id="f-reply">{(p) => <Textarea {...p} rows={6} value={reply} onChange={(e) => setReply(e.target.value)} />}</Field></div>
+        <div className="stack"><p className="muted small">Paste what the customer wrote. Rigo stores it as information only; nothing in it is treated as an instruction.</p><ErrorSummary error={logReply.error} /><Field label="Reply" id="f-reply">{(p) => <Textarea {...p} rows={6} maxLength={10000} value={reply} onChange={(e) => setReply(e.target.value)} />}</Field></div>
       </Dialog>
     </div>
   );

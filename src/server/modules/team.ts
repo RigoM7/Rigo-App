@@ -96,6 +96,34 @@ teamRoutes.delete('/members/:mid', async (c) => {
 // and gives it to the person, for example by text message.
 const RESET_LINK_HOURS = 24;
 
+/**
+ * Whether an owner-created reset link may still be used: checked when the link is created and
+ * again when it is redeemed, because roles and memberships can change in between. Returns the
+ * reason it may not, or null. Someone who also works for (or is invited to) another company is
+ * never reset this way, so one company's managers can't reach another company through them.
+ */
+export async function ownerResetBlocked(q: Q, a: { userId: string; companyId: string; issuerId: string }): Promise<null | 'not_member' | 'elsewhere' | 'issuer' | 'owner'> {
+  const target = await q.query<{ is_owner: boolean; email: string }>(
+    `select r.is_owner, u.email from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key join rigo.users u on u.id = m.user_id
+      where m.company_id = $1 and m.user_id = $2 and m.status = 'active' and not m.is_fictional and u.deleted_at is null`, [a.companyId, a.userId]);
+  if (!target.rows[0]) return 'not_member';
+  const elsewhere = await q.query(
+    `select 1 from rigo.memberships m join rigo.companies co on co.id = m.company_id
+      where m.user_id = $1 and m.company_id <> $2 and m.status = 'active' and co.kind = 'real'
+     union all
+     select 1 from rigo.invitations i join rigo.companies co on co.id = i.company_id
+      where lower(i.email) = $3 and i.company_id <> $2 and i.status = 'pending' and i.expires_at > now() and co.kind = 'real'
+     limit 1`, [a.userId, a.companyId, normEmail(target.rows[0].email)]);
+  if (elsewhere.rows.length) return 'elsewhere';
+  const issuer = await q.query<{ is_owner: boolean; can_manage: boolean }>(
+    `select r.is_owner, (r.is_owner or 'members.manage' = any(r.permissions)) as can_manage
+       from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+      where m.company_id = $1 and m.user_id = $2 and m.status = 'active'`, [a.companyId, a.issuerId]);
+  if (!issuer.rows[0]?.can_manage) return 'issuer';
+  if (target.rows[0].is_owner && !issuer.rows[0].is_owner) return 'owner';
+  return null;
+}
+
 teamRoutes.post('/members/:mid/reset-link', async (c) => {
   const cc = c.get('cc');
   need(cc, 'members.manage');
@@ -113,14 +141,11 @@ teamRoutes.post('/members/:mid/reset-link', async (c) => {
       // The demo stays fictional: no real link is created and nothing leaves Rigo.
       return { simulated: true, name: m.name, link: `${config.appUrl}/reset/demo-example-link-not-real`, expiresInHours: RESET_LINK_HOURS };
     }
-    // Someone who also works for another company could lose access to it if this company's owners
-    // could set their password, so only they (or email recovery) can reset it.
-    const elsewhere = await q.query(
-      `select 1 from rigo.memberships m join rigo.companies co on co.id = m.company_id
-        where m.user_id = $1 and m.company_id <> $2 and m.status = 'active' and co.kind = 'real' limit 1`, [m.user_id, cc.company.id]);
-    if (elsewhere.rows.length) {
-      throw conflict(`${first} also belongs to another company in Rigo, so for their security only they can reset their password. They can use "Forgot your password?" on the sign-in page.`);
+    const blocked = await ownerResetBlocked(q, { userId: m.user_id, companyId: cc.company.id, issuerId: cc.user.id });
+    if (blocked === 'elsewhere') {
+      throw conflict(`${first} also belongs to, or is invited to, another company in Rigo, so for their security only they can reset their password. They can use "Forgot your password?" on the sign-in page.`);
     }
+    if (blocked) throw forbidden('You can\'t create a reset link for this person.');
     const tok = token();
     // A new link replaces any earlier unused link from an owner.
     await q.query(`update rigo.password_resets set expires_at = now() where user_id = $1 and used_at is null and company_id is not null and expires_at > now()`, [m.user_id]);

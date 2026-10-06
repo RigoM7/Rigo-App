@@ -127,6 +127,287 @@ for (const [vw, vh] of [[1440, 900], [390, 844]]) {
     await c.close();
   });
 }
+// A second server started without email (like the live site): NODE_ENV=production on another port.
+const NOEMAIL = process.env.NOEMAIL_URL ?? null;
+async function themed(theme, viewport = { width: 1440, height: 900 }) {
+  const c = await browser.newContext({ viewport });
+  await c.addInitScript((t) => { try { localStorage.setItem('rigo-theme', t); } catch { /* ignore */ } }, theme);
+  return c;
+}
+
+await step('M4: "/" is the landing page when signed out and goes to workspaces when signed in', async () => {
+  const c = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const p = await c.newPage(); watch(p, 'landing');
+  await p.goto(`${BASE}/`);
+  await p.getByRole('heading', { level: 1, name: /fuel delivery, portable toilet or septic/ }).waitFor();
+  await p.getByText('Free to start.').waitFor();
+  await p.getByRole('link', { name: 'Try the demo' }).first().waitFor();
+  if (!(await p.title()).includes('Rigo')) throw new Error(`title ${await p.title()}`);
+  const imgs = await p.locator('main img').evaluateAll((els) => els.map((e) => ({ w: e.getAttribute('width'), h: e.getAttribute('height'), lazy: e.getAttribute('loading') })));
+  if (imgs.length < 3 || imgs.some((i) => !i.w || !i.h)) throw new Error(`images ${JSON.stringify(imgs)}`);
+  if (imgs.filter((i) => i.lazy === 'lazy').length < 2) throw new Error('below-the-fold screenshots should load lazily');
+  // Scroll through so the lazy-loaded screenshots load before the full-page capture.
+  for (let y = 0; y < 4000; y += 400) { await p.evaluate((v) => window.scrollTo(0, v), y); await p.waitForTimeout(60); }
+  await p.waitForLoadState('networkidle');
+  await p.screenshot({ path: `${OUT}/landing-1440.png`, fullPage: true });
+  const who = await apiAccount('Lena Landing');
+  await p.goto(`${BASE}/signin`);
+  await signInHere(p, who);
+  await p.waitForURL(/\/workspaces$/);
+  await p.goto(`${BASE}/`);
+  await p.waitForURL(/\/workspaces$/);
+  // Signed-in people skip the sign-in and sign-up forms (m4).
+  await p.goto(`${BASE}/signin`);
+  await p.waitForURL(/\/workspaces$/);
+  await p.goto(`${BASE}/signup?next=/account`);
+  await p.waitForURL(/\/account$/);
+  await c.close();
+});
+
+await step('M4: "Try the demo" signs up and opens the demo', async () => {
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage(); watch(p, 'try-demo');
+  await p.goto(`${BASE}/`);
+  await p.getByRole('link', { name: 'Try the demo' }).first().click();
+  await p.getByLabel('Your name').fill('Theo Trial');
+  await p.getByLabel('Email').fill(`theo-${Date.now()}@example.test`);
+  await p.getByLabel('Password', { exact: true }).fill(STRONG);
+  await p.getByRole('button', { name: 'Create account' }).click();
+  await p.waitForURL(/\/c\/[0-9a-f-]+$/, { timeout: 15000 });
+  await p.getByRole('region', { name: 'Demo workspace' }).waitFor();
+  await p.waitForFunction(() => /\(Demo\) · Rigo$/.test(document.title), null, { timeout: 8000 }).catch(async () => { throw new Error(`demo tab title: ${await p.title()}`); });
+  await c.close();
+});
+
+for (const width of [375, 768, 1024, 1440]) {
+  await step(`M4: landing and sign-in pages have no horizontal overflow at ${width}px`, async () => {
+    const c = await browser.newContext({ viewport: { width, height: 900 } });
+    const p = await c.newPage();
+    for (const path of ['/', '/signin', '/signup', '/forgot', '/reset/not-a-real-token-123456']) {
+      await p.goto(`${BASE}${path}`);
+      await p.waitForLoadState('networkidle');
+      await noOverflow(p, `${width} ${path}`);
+    }
+    await p.goto(`${BASE}/`);
+    await p.waitForLoadState('networkidle');
+    await p.screenshot({ path: `${OUT}/landing-${width}.png`, fullPage: width < 800 });
+    await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+    if (width === 375) await noOverflow(p, '375 / at 200% text');
+    await c.close();
+  });
+}
+
+await step('m5 and m8: tab titles, and the sign-in page has a big "Create a free account" button', async () => {
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage();
+  await p.goto(`${BASE}/signin`);
+  await p.getByRole('heading', { name: 'Sign in' }).waitFor();
+  const titled = (t) => p.waitForFunction((x) => document.title === x, t, { timeout: 5000 }).catch(async () => { throw new Error(`title ${await p.title()}, expected ${t}`); });
+  await titled('Sign in · Rigo');
+  const create = await p.getByRole('link', { name: 'Create a free account' }).boundingBox();
+  const forgot = await p.getByRole('link', { name: 'Forgot your password?' }).boundingBox();
+  if (!create || create.height < 44 || create.width < 300) throw new Error(`create button ${JSON.stringify(create)}`);
+  if (!forgot || forgot.height < 24) throw new Error(`forgot link ${JSON.stringify(forgot)}`);
+  await p.goto(`${BASE}/signup`);
+  await titled('Create your account · Rigo');
+  await c.close();
+});
+
+await step('M1: the last tries before a pause are counted, then the pause names the wait', async () => {
+  const who = await apiAccount('Wanda Wrong');
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage();
+  await p.goto(`${BASE}/signin`);
+  await p.getByLabel('Email').fill(who.email);
+  for (let i = 1; i <= 10; i++) {
+    await p.getByLabel('Password', { exact: true }).fill(`wrong-guess-${i}-xyz`);
+    await p.getByRole('button', { name: 'Sign in', exact: true }).click();
+    if (i === 8) await p.getByText('2 more tries before a 15-minute pause.').waitFor();
+  }
+  await p.getByText(/Try again in 1[45] minutes/).waitFor();
+  await p.getByRole('link', { name: 'reset your password' }).waitFor();
+  await p.screenshot({ path: `${OUT}/signin-paused-390.png` });
+  await c.close();
+});
+
+await step('M3: sign-up suggests a fix for a mistyped email domain', async () => {
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage();
+  await p.goto(`${BASE}/signup`);
+  await p.getByLabel('Email').fill('dana.reyes@gmial.com');
+  await p.getByLabel('Your name').focus();
+  await p.getByText('Did you mean').waitFor();
+  await p.getByRole('button', { name: 'Use gmail.com' }).click();
+  const v = await p.getByLabel('Email').inputValue();
+  if (v !== 'dana.reyes@gmail.com') throw new Error(`email is ${v}`);
+  await c.close();
+});
+
+await step('m3: a used or made-up reset link says so instead of showing the form', async () => {
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage();
+  await p.goto(`${BASE}/reset/not-a-real-token-123456`);
+  await p.getByText('This link has expired or was already used').waitFor();
+  if (await p.getByLabel('New password').count()) throw new Error('form shown for an invalid link');
+  await p.getByRole('link', { name: 'Send a new link' }).click();
+  await p.waitForURL(/\/forgot$/);
+  await p.goto(`${BASE}/confirm-email/not-a-real-token-123456`);
+  await p.getByText('This link has expired or was already used').waitFor();
+  await c.close();
+});
+
+if (NOEMAIL) {
+  await step('C2: without email, the forgot page shows the alternatives before anyone types', async () => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await c.newPage(); watch(p, 'forgot-noemail');
+    await p.goto(`${NOEMAIL}/forgot`);
+    await p.getByText('Ask an owner of your company to create a reset link for you from Team.').waitFor();
+    if (await p.getByLabel('Email').count()) throw new Error('email form shown with no email service');
+    if (await p.getByText(/installation/i).count()) throw new Error('"installation" shown');
+    await p.screenshot({ path: `${OUT}/forgot-noemail-390.png` });
+    await c.close();
+  });
+}
+
+// Accessibility of the changed pages, in both themes. Pages needing an account use a fresh one.
+for (const theme of ['light', 'dark']) {
+  await step(`axe: landing and account pages, ${theme} theme`, async () => {
+    const c = await themed(theme);
+    const p = await c.newPage();
+    const notes = [];
+    for (const path of ['/', '/signin', '/signup', '/forgot', '/reset/not-a-real-token-123456']) {
+      await p.goto(`${BASE}${path}`);
+      await p.waitForLoadState('networkidle');
+      await p.locator('h1').first().waitFor();
+      notes.push(`${path}: ${await axe(p, `${theme} ${path}`)}`);
+    }
+    // A valid reset link, then the signed-in pages and the Team reset-link dialog.
+    const owner = await apiAccount('Rosa Owner', { company: `Rosa Septic ${theme}` });
+    await p.goto(`${BASE}/signin`);
+    await signInHere(p, owner);
+    await p.waitForURL(/\/workspaces$/);
+    for (const path of ['/workspaces', '/account']) {
+      await p.goto(`${BASE}${path}`);
+      await p.waitForLoadState('networkidle');
+      notes.push(`${path}: ${await axe(p, `${theme} ${path}`)}`);
+    }
+    const me = await (await p.request.get(`${BASE}/api/auth/me`)).json();
+    const cid = me.companies.find((x) => x.kind === 'real').id;
+    const driver = await apiAccount('Luis Ortega');
+    const inv = await (await p.request.post(`${BASE}/api/c/${cid}/invitations`, { headers: { 'x-rigo': '1' }, data: { email: driver.email, role: 'driver' } })).json();
+    const dApi = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: { 'x-rigo': '1' } });
+    await dApi.post('/api/auth/signin', { data: { email: driver.email, password: STRONG } });
+    await dApi.post(`/api/invitations/${inv.link.split('/invite/')[1]}/accept`);
+    await dApi.dispose();
+    await p.goto(`${BASE}/c/${cid}/team`);
+    await p.getByRole('button', { name: 'Create password reset link for Luis Ortega' }).click();
+    const dlg = p.getByRole('dialog', { name: 'Password reset link for Luis' });
+    await dlg.getByText('Text this link to Luis. It works once and expires in 24 hours.').waitFor();
+    notes.push(`team dialog: ${await axe(p, `${theme} team reset dialog`)}`);
+    await p.screenshot({ path: `${OUT}/team-reset-link-${theme}.png` });
+    const link = await dlg.getByRole('textbox').inputValue();
+    await dlg.getByRole('button', { name: 'Done' }).click();
+    const c2 = await themed(theme, { width: 390, height: 844 });
+    const p2 = await c2.newPage();
+    await p2.goto(link.replace(/^https?:\/\/[^/]+/, BASE));
+    await p2.getByLabel('New password').waitFor();
+    notes.push(`reset (valid): ${await axe(p2, `${theme} reset valid`)}`);
+    await c2.close();
+    await c.close();
+    return notes.filter((n) => !n.endsWith('no violations')).join('; ') || 'no violations';
+  });
+}
+
+// Scenario S1: Dana arrives at "/", signs up with a typo, fixes it later, forgets the password and
+// recovers it: by email on the local copy, by an owner's reset link on the copy without email.
+async function scenarioS1(base, label) {
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const p = await c.newPage(); watch(p, `s1-${label}`);
+  const stamp = Date.now();
+  const typo = `dana.reyes.${stamp}@gmial.com`;
+  const fixed = `dana.reyes.${stamp}@gmail.com`;
+  await p.goto(`${base}/`);
+  await p.getByRole('link', { name: 'Create a free account' }).first().click();
+  await p.getByLabel('Your name').fill('Dana Reyes');
+  await p.getByLabel('Email').fill(typo);
+  await p.getByLabel('Password', { exact: true }).focus();
+  await p.getByText('Did you mean').waitFor();
+  // Dana ignores the suggestion at first.
+  await p.getByLabel('Password', { exact: true }).fill(STRONG);
+  await p.getByRole('button', { name: 'Create account' }).click();
+  await p.waitForURL(/\/workspaces$/, { timeout: 8000 });
+  await p.getByRole('heading', { name: 'Hello, Dana' }).waitFor();
+  await p.screenshot({ path: `${OUT}/s1-${label}-workspaces-390.png`, fullPage: true });
+  // Later, Dana fixes the email on Account.
+  await p.goto(`${base}/account`);
+  await p.getByLabel('New email').fill(fixed);
+  await p.locator('#f-password').fill(STRONG);
+  await p.getByRole('button', { name: 'Change email' }).click();
+  if (label === 'local') {
+    await p.getByText(`Check ${fixed}`).waitFor();
+    const mail = await (await p.request.get(`${base}/api/auth/dev/mailbox`)).json();
+    const link = mail.messages.find((m) => m.to_email === fixed && m.kind === 'email_change').link;
+    await p.goto(link.replace(/^https?:\/\/[^/]+/, base));
+    await p.getByRole('button', { name: 'Use this email address' }).click();
+    await p.getByText('Your account now uses this email address.').waitFor();
+  } else {
+    await p.getByText('Email changed. Other devices were signed out.').waitFor();
+  }
+  await p.goto(`${base}/account`);
+  await p.getByText(fixed).first().waitFor();
+  await p.screenshot({ path: `${OUT}/s1-${label}-account-390.png`, fullPage: true });
+  // An employer invites the corrected address, and Dana joins.
+  const owner = await pwRequest.newContext({ baseURL: base, extraHTTPHeaders: { 'x-rigo': '1' } });
+  await owner.post('/api/auth/signup', { data: { name: 'Olivia Owner', email: `olivia-${stamp}-${label}@example.test`, password: STRONG } });
+  const co = await (await owner.post('/api/companies', { data: { name: `Reyes Portable Toilets ${label}`, timezone: 'America/Chicago', currency: 'USD', categories: ['portable_toilet'], start: 'blank' } })).json();
+  await owner.post(`/api/c/${co.id}/invitations`, { data: { email: fixed, role: 'driver' } });
+  await p.goto(`${base}/workspaces`);
+  await p.getByRole('button', { name: 'Accept and open' }).click();
+  await p.waitForURL(/\/c\/[0-9a-f-]+/);
+  // Sign out, forget the password.
+  await p.goto(`${base}/workspaces`);
+  await p.getByRole('button', { name: 'Sign out' }).click();
+  await p.waitForURL(/\/signin/);
+  await p.getByRole('link', { name: 'Forgot your password?' }).click();
+  let resetLink;
+  if (label === 'local') {
+    await p.getByLabel('Email').fill(fixed);
+    await p.getByRole('button', { name: 'Send reset link' }).click();
+    await p.getByText('Check your email').waitFor();
+    const mail = await (await p.request.get(`${base}/api/auth/dev/mailbox`)).json();
+    resetLink = mail.messages.find((m) => m.to_email === fixed && m.kind === 'password_reset').link;
+  } else {
+    await p.getByText('Ask an owner of your company to create a reset link for you from Team.').waitFor();
+    await p.screenshot({ path: `${OUT}/s1-${label}-forgot-390.png`, fullPage: true });
+    const members = (await (await owner.get(`/api/c/${co.id}/members`)).json()).members;
+    const dana = members.find((m) => m.name === 'Dana Reyes');
+    resetLink = (await (await owner.post(`/api/c/${co.id}/members/${dana.id}/reset-link`)).json()).link;
+  }
+  await owner.dispose();
+  await p.goto(resetLink.replace(/^https?:\/\/[^/]+/, base));
+  await p.getByLabel('New password').fill('copper-meadow-lantern-8');
+  await p.getByRole('button', { name: 'Save password and sign in' }).click();
+  await p.waitForURL(/\/workspaces$/);
+  await p.getByText("Password changed. You're signed in.").waitFor();
+  await p.screenshot({ path: `${OUT}/s1-${label}-after-reset-390.png` });
+  // The used link now says so.
+  await p.goto(resetLink.replace(/^https?:\/\/[^/]+/, base));
+  await p.getByText('This link has expired or was already used').waitFor();
+  await c.close();
+}
+await step('S1 on the local copy (simulated mailbox), 390px', () => scenarioS1(BASE, 'local'));
+if (NOEMAIL) await step('S1 on the copy without email (owner reset link), 390px', () => scenarioS1(NOEMAIL, 'noemail'));
+
+await step('ten successful sign-ins in a row never lock the account', async () => {
+  const who = await apiAccount('Ten Times');
+  for (let i = 0; i < 10; i++) {
+    const api = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: { 'x-rigo': '1' } });
+    const r = await api.post('/api/auth/signin', { data: { email: who.email, password: STRONG } });
+    await api.dispose();
+    if (!r.ok()) throw new Error(`sign-in ${i + 1}: ${r.status()}`);
+  }
+});
+
 if (process.env.E2E_ONLY === 'auth') {
   await browser.close();
   const failed = results.filter((r) => !r.ok).length;

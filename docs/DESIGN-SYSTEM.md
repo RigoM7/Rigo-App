@@ -227,7 +227,10 @@ days** (side by side below the timeline, or a right column at ≥1680px). Record
 use a header with a mono number chip, the title, status and a metadata row, with a two-column
 detail layout. Invoices are grouped by work state and show invoice, approval, delivery,
 payment and total as separate cells. The inbox states the consequences of approve, reject and
-edit as a three-row table. Auth pages are a centered card on a dotted canvas. Standalone pages
+edit as a three-row table. Auth pages are a centered card on a dotted canvas. The signed-out
+landing page keeps the same light canvas and black top bar, with real demo screenshots in a
+rounded frame (the driver's phone in a black bezel), plain section dividers rather than cards,
+and no eyebrow labels, metric tiles or icon-card rows. Standalone pages
 (workspaces, account, dev mailbox) use the black chrome bar. Full screen list:
 `docs/UI-GUI-PROMPT.md`.
 

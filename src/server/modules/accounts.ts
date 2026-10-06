@@ -11,7 +11,7 @@ import { sendSystemEmail, systemEmailChannel } from '../adapters/index.js';
 import { checkPassword, PASSWORD_MAX, PASSWORD_MIN } from '../../shared/password.js';
 import { EMAIL_MAX } from '../../shared/email.js';
 import { COMMON_PASSWORDS } from '../data/common-passwords.js';
-import { removeMember } from './team.js';
+import { removeMember, ownerResetBlocked } from './team.js';
 import { notifyRoles } from './inbox.js';
 
 export const accounts = new Hono<AppEnv>();
@@ -160,7 +160,8 @@ accounts.post('/signup', async (c) => {
   const db = await getDb();
   const ip = clientIp(c);
   // Only accounts actually created count toward the per-device limit.
-  await limitCalls(db, `signup:${ip}`, 20, 60, 'new accounts');
+  // Production allows 20 new accounts per address per hour; local copies (tests, demos) allow more.
+  await limitCalls(db, `signup:${ip}`, config.isProd ? 20 : 500, 60, 'new accounts');
   const hash = await bcrypt.hash(input.password, 12);
   const { tok, user } = await db.tx(async (q) => {
     const exists = await q.query(`select 1 from rigo.users where lower(email) = $1`, [em]);
@@ -234,11 +235,20 @@ accounts.post('/forgot', async (c) => {
   return c.json({ ok: true, channel });
 });
 
+/** A usable reset link. Links an owner created are re-checked now, since roles and memberships may have changed. */
 async function findReset(q: Q, tok: string) {
-  const { rows } = await q.query<{ user_id: string; company_id: string | null; email: string; name: string }>(
-    `select r.user_id, r.company_id, u.email, u.name from rigo.password_resets r join rigo.users u on u.id = r.user_id
+  const { rows } = await q.query<{ user_id: string; company_id: string | null; issued_by: string | null; email: string; name: string }>(
+    `select r.user_id, r.company_id, r.issued_by, u.email, u.name from rigo.password_resets r join rigo.users u on u.id = r.user_id
       where r.token_hash = $1 and r.used_at is null and r.expires_at > now() and u.deleted_at is null`, [sha256(tok)]);
-  return rows[0] ?? null;
+  const r = rows[0];
+  if (!r) return null;
+  if (r.company_id && (!r.issued_by || (await ownerResetBlocked(q, { userId: r.user_id, companyId: r.company_id, issuerId: r.issued_by })))) return null;
+  return r;
+}
+
+async function findResetRow(q: Q, userId: string, companyId: string | null, issuedBy: string | null) {
+  if (!companyId) return true;
+  return !!issuedBy && !(await ownerResetBlocked(q, { userId, companyId, issuerId: issuedBy }));
 }
 
 /** Whether a reset link still works. Never reveals whose it is. */
@@ -260,6 +270,8 @@ accounts.post('/reset', async (c) => {
     const { rows } = await q.query<{ user_id: string; company_id: string | null }>(
       `update rigo.password_resets set used_at = now() where token_hash = $1 and used_at is null and expires_at > now() returning user_id, company_id`, [sha256(input.token)]);
     if (!rows[0]) throw badRequest('This link has expired or was already used. Ask for a new one.', { invalidLink: true });
+    // Re-check an owner's link inside the transaction too.
+    if (!(await findResetRow(q, rows[0].user_id, rows[0].company_id, found.issued_by))) throw badRequest('This link no longer works. Ask for a new one.', { invalidLink: true });
     const uid = rows[0].user_id;
     await q.query(`update rigo.users set password_hash = $1 where id = $2`, [hash, uid]);
     // A link sent to the account's email also proves that address works.
