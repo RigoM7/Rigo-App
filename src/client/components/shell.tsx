@@ -1,50 +1,53 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Home, Inbox, ClipboardList, Users, Receipt, Truck, Repeat, Workflow, Bot, MessageSquare, Wrench, Upload, LayoutTemplate, Settings, Bell as BellIcon, ChevronDown,
-  Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, Sparkles, CalendarCheck, PanelRightClose, PanelRightOpen, WifiOff, FlaskConical, RotateCcw, Check, Zap,
+  Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, CalendarCheck, WifiOff, FlaskConical, RotateCcw, Check, Zap, Search, PanelLeftClose, PanelLeftOpen,
+  UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
 import { useCompany, useMe } from '../lib/session';
 import { get, patch, post } from '../lib/api';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
 import { relTime } from '../lib/format';
-import { Button, IconButton, Pill, useToast, useConfirm } from './ui';
-import { AssistantChat } from '../pages/assistant';
+import { Button, IconButton, Pill, Wordmark, useToast, useConfirm } from './ui';
 import { DemoGuide, ResumeGuideButton } from '../pages/demo';
 import type { Permission } from '../../shared/permissions';
+import { accentVariants } from '../../shared/branding';
 
-export interface NavItem { key: string; label: string; to: string; icon: ReactNode; perm?: Permission | Permission[]; count?: number; section?: string }
+export interface NavItem { key: string; label: string; to: string; icon: ReactNode; perm?: Permission | Permission[]; count?: number; section: string }
+
+// Sidebar groups, in order. Each role sees only the items its permissions allow.
+const SECTIONS = ['Operations', 'People & places', 'Fleet', 'Money', 'Communication', 'Rigo', 'Setup'] as const;
 
 export function useNavItems(): NavItem[] {
   const c = useCompany();
   const items: NavItem[] = [
-    { key: 'home', label: 'Home', to: '', icon: <Home aria-hidden />, perm: ['jobs.view_all', 'reports.view'] },
-    { key: 'today', label: 'My jobs', to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work' },
-    { key: 'inbox', label: 'Inbox', to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined },
+    { key: 'home', label: 'Home', to: '', icon: <Home aria-hidden />, perm: ['jobs.view_all', 'reports.view'], section: 'Operations' },
+    { key: 'today', label: 'My jobs', to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work', section: 'Operations' },
+    { key: 'inbox', label: 'Inbox', to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined, section: 'Operations' },
     { key: 'jobs', label: 'Jobs', to: 'jobs', icon: <ClipboardList aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
-    { key: 'customers', label: 'Customers', to: 'customers', icon: <Users aria-hidden />, perm: 'customers.view', section: 'Operations' },
     { key: 'recurring', label: 'Recurring & rentals', to: 'recurring', icon: <Repeat aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
-    { key: 'resources', label: 'Trucks & equipment', to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Operations' },
-    { key: 'invoices', label: 'Invoices', to: 'invoices', icon: <Receipt aria-hidden />, perm: 'invoices.view', section: 'Billing' },
-    { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Billing' },
+    { key: 'customers', label: 'Customers', to: 'customers', icon: <Contact aria-hidden />, perm: 'customers.view', section: 'People & places' },
+    { key: 'team', label: 'Team', to: 'team', icon: <UsersRound aria-hidden />, perm: 'members.view', section: 'People & places' },
+    { key: 'resources', label: 'Trucks & equipment', to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
+    { key: 'invoices', label: 'Invoices', to: 'invoices', icon: <Receipt aria-hidden />, perm: 'invoices.view', section: 'Money' },
+    { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Communication' },
+    { key: 'assistant', label: 'Assistant', to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Rigo' },
     { key: 'automation', label: 'Automation', to: 'automation', icon: <Zap aria-hidden />, perm: ['workflows.view', 'automation.control'], section: 'Rigo' },
     { key: 'workflows', label: 'Workflows', to: 'workflows', icon: <Workflow aria-hidden />, perm: 'workflows.view', section: 'Rigo' },
-    { key: 'assistant', label: 'Assistant', to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Rigo' },
-    { key: 'team', label: 'Team', to: 'team', icon: <Users aria-hidden />, perm: 'members.view', section: 'Company' },
-    { key: 'services', label: 'Services & pricing', to: 'services', icon: <Wrench aria-hidden />, perm: ['services.manage', 'jobs.create'], section: 'Company' },
-    { key: 'imports', label: 'Imports', to: 'imports', icon: <Upload aria-hidden />, perm: 'imports.run', section: 'Company' },
-    { key: 'templates', label: 'Templates', to: 'templates', icon: <LayoutTemplate aria-hidden />, perm: 'templates.manage', section: 'Company' },
-    { key: 'settings', label: 'Settings', to: 'settings', icon: <Settings aria-hidden />, perm: 'company.settings', section: 'Company' },
+    { key: 'services', label: 'Services & pricing', to: 'services', icon: <Wrench aria-hidden />, perm: ['services.manage', 'jobs.create'], section: 'Setup' },
+    { key: 'imports', label: 'Imports', to: 'imports', icon: <Upload aria-hidden />, perm: 'imports.run', section: 'Setup' },
+    { key: 'templates', label: 'Templates', to: 'templates', icon: <LayoutTemplate aria-hidden />, perm: 'templates.manage', section: 'Setup' },
+    { key: 'settings', label: 'Settings', to: 'settings', icon: <Settings aria-hidden />, perm: 'company.settings', section: 'Setup' },
   ];
   return items.filter((i) => !i.perm || (Array.isArray(i.perm) ? i.perm.some((p) => c.can(p)) : c.can(i.perm)));
 }
 
-/** At most five bottom destinations; the rest live under More. */
+/** At most five bottom destinations: four plus More. */
 export function bottomItems(items: NavItem[]) {
   const pref = ['home', 'today', 'jobs', 'invoices', 'inbox', 'assistant'];
-  const picked = pref.map((k) => items.find((i) => i.key === k)).filter(Boolean).slice(0, 4) as NavItem[];
-  return picked;
+  return pref.map((k) => items.find((i) => i.key === k)).filter(Boolean).slice(0, 4) as NavItem[];
 }
 
 function useOnline() {
@@ -67,28 +70,34 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, onOut: () => 
   }, [active, onOut, ref]);
 }
 
+const initial = (name: string) => (name.replace(/[^A-Za-z0-9]/g, '').charAt(0) || '?').toUpperCase();
+
+/** Company chip: the company's logo, or its initial on its accent color (the variant that keeps white text readable). */
+export function CompanyChip({ cid, name, logo, accent }: { cid: string; name: string; logo?: string | null; accent?: string | null }) {
+  return logo ? <img className="company-logo" src={`/api/c/${cid}/branding/logo?v=${logo}`} alt="" /> : <span className="company-chip" aria-hidden data-initial={initial(name)} style={{ background: accentVariants(accent).light }} />;
+}
+
 function CompanySwitcher() {
   const c = useCompany();
   const me = useMe();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useClickOutside(ref, () => setOpen(false), open);
-  const logo = c.company.branding?.logoFileId;
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className="company-switch" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)} aria-label={`Current company: ${c.company.name}. Switch company`}>
-        {logo ? <img className="company-logo" src={`/api/c/${c.cid}/branding/logo?v=${logo}`} alt="" /> : <span className="company-dot" aria-hidden />}
-        <span className="name">{c.company.name}</span>
+    <div ref={ref} style={{ position: 'relative', minWidth: 'min(112px, 30vw)', flex: '0 1 auto', maxWidth: 'min(42vw, 360px)' }}>
+      <button className="company-switch" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <CompanyChip cid={c.cid} name={c.company.name} logo={c.company.branding?.logoFileId} accent={c.company.branding?.accent} />
+        <span className="name"><span className="sr-only">Current company: </span>{c.company.name}</span>
         <ChevronDown aria-hidden />
       </button>
       {open && (
-        <div className="menu" style={{ top: 'calc(100% + 6px)', left: 0 }}>
-          <div className="small muted" style={{ padding: '6px 12px' }}>Signed in as {me.data?.user?.email}</div>
+        <div className="menu" style={{ top: 'calc(100% + 8px)', left: 0 }}>
+          <div className="menu-label">Signed in as {me.data?.user?.email}</div>
           {me.data?.companies.map((co) => (
             <a key={co.id} href={`/c/${co.id}`} aria-current={co.id === c.cid ? 'true' : undefined}>
               {co.id === c.cid ? <Check aria-hidden /> : co.kind === 'demo' ? <FlaskConical aria-hidden /> : <Building2 aria-hidden />}
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{co.name}</span>
-              <span className="small muted">{co.kind === 'demo' ? 'Demo' : co.role_name}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{co.name}</span>
+              <span className="xsmall muted">{co.kind === 'demo' ? 'Demo' : co.role_name}</span>
             </a>
           ))}
           <hr />
@@ -126,10 +135,10 @@ function AccountMenu() {
     <div ref={ref} style={{ position: 'relative' }}>
       <IconButton label="Account and theme" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)}><UserCircle2 aria-hidden /></IconButton>
       {open && (
-        <div className="menu" style={{ top: 'calc(100% + 6px)', right: 0 }}>
-          <div style={{ padding: '6px 12px' }}><strong>{me.data?.user?.name}</strong><div className="small muted">{me.data?.user?.email}</div></div>
+        <div className="menu" style={{ top: 'calc(100% + 8px)', right: 0 }}>
+          <div style={{ padding: '6px 10px' }}><strong className="small">{me.data?.user?.name}</strong><div className="xsmall muted">{me.data?.user?.email}</div></div>
           <hr />
-          <div className="small muted" style={{ padding: '4px 12px' }} id="theme-label">Theme</div>
+          <div className="menu-label" id="theme-label">Theme</div>
           <div role="radiogroup" aria-labelledby="theme-label">
             {([['light', 'Light', <Sun key="l" aria-hidden />], ['dark', 'Dark', <Moon key="d" aria-hidden />], ['system', 'System', <Monitor key="s" aria-hidden />]] as const).map(([k, label, icon]) => (
               <button key={k} role="radio" aria-checked={pref === k} className="menu-item" onClick={() => setTheme(k)}>{icon}<span style={{ flex: 1 }}>{label}</span>{pref === k ? <Check aria-hidden /> : null}</button>
@@ -157,19 +166,19 @@ function NotificationBell() {
     <div ref={ref} style={{ position: 'relative' }}>
       <IconButton label="Notifications" badge={unread} aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)}><BellIcon aria-hidden /></IconButton>
       {open && (
-        <div className="menu" style={{ top: 'calc(100% + 6px)', right: 0, width: 360 }}>
-          <div className="row-between" style={{ padding: '6px 8px 6px 12px' }}><strong>Updates</strong>{unread ? <Button size="sm" variant="ghost" onClick={() => markAll.mutate()}>Mark all read</Button> : null}</div>
-          {q.isLoading ? <div style={{ padding: 12 }} className="muted">Loading…</div> : null}
+        <div className="menu" style={{ top: 'calc(100% + 8px)', right: 0, width: 360 }}>
+          <div className="row-between" style={{ padding: '4px 4px 4px 10px' }}><strong className="small">Updates</strong>{unread ? <Button size="sm" variant="ghost" onClick={() => markAll.mutate()}>Mark all read</Button> : null}</div>
+          {q.isLoading ? <div style={{ padding: 12 }} className="small muted">Loading…</div> : null}
           {q.data?.notifications.slice(0, 8).map((n: any) => (
             <Link key={n.id} to={n.link ? c.to(n.link) : c.to('inbox')} onClick={() => setOpen(false)} style={{ alignItems: 'flex-start', paddingTop: 8, paddingBottom: 8 }}>
-              <span aria-hidden style={{ width: 8, height: 8, borderRadius: 4, marginTop: 8, background: n.read_at ? 'transparent' : 'var(--primary)', flex: 'none' }} />
+              <span aria-hidden style={{ width: 7, height: 7, borderRadius: 4, marginTop: 7, background: n.read_at ? 'transparent' : 'var(--primary)', flex: 'none' }} />
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontWeight: n.read_at ? 500 : 700 }}>{n.title}{n.read_at ? '' : <span className="sr-only"> (unread)</span>}</span>
-                <span className="small muted">{n.category === 'needs_action' ? 'Needs action' : n.category === 'warning' ? 'Warning' : 'Update'} · {relTime(n.created_at)}</span>
+                <span style={{ display: 'block', fontWeight: n.read_at ? 500 : 650 }}>{n.title}{n.read_at ? '' : <span className="sr-only"> (unread)</span>}</span>
+                <span className="xsmall muted">{n.category === 'needs_action' ? 'Needs action' : n.category === 'warning' ? 'Warning' : 'Update'} · {relTime(n.created_at)}</span>
               </span>
             </Link>
           ))}
-          {q.data && !q.data.notifications.length ? <div style={{ padding: 12 }} className="muted">No notifications yet.</div> : null}
+          {q.data && !q.data.notifications.length ? <div style={{ padding: 12 }} className="small muted">No notifications yet.</div> : null}
           <hr />
           <Link to={c.to('inbox')} onClick={() => setOpen(false)}><Inbox aria-hidden />Open action inbox</Link>
         </div>
@@ -201,73 +210,206 @@ function DemoBar() {
     <div className="banner banner-demo" role="region" aria-label="Demo workspace">
       <FlaskConical aria-hidden />
       <strong className="nowrap">Demo workspace</strong>
-      <span className="hide-mobile small">Fictional data. Nothing is sent, charged or connected.</span>
+      <span className="hide-mobile muted-chrome">Fictional data. Nothing is sent, charged or connected.</span>
       <span className="spacer" />
-      <label className="row small" style={{ gap: 6, minWidth: 0, maxWidth: '100%', flexWrap: 'nowrap' }}>
-        <span className="hide-mobile">View as</span>
-        <select className="select" style={{ minHeight: 36, padding: '4px 8px', width: 'auto', maxWidth: '100%', minWidth: 0 }} value={c.demo.simRole} onChange={(e) => setRole(e.target.value)} aria-label="Simulated role">
+      <label className="row small" style={{ gap: 8, minWidth: 0, maxWidth: '100%', flexWrap: 'nowrap' }}>
+        <span className="hide-mobile muted-chrome">View as</span>
+        <select className="select" style={{ minHeight: 34, padding: '2px 32px 2px 10px', width: 'auto', maxWidth: '100%', minWidth: 0, fontSize: 'var(--fs-14)' }} value={c.demo.simRole} onChange={(e) => setRole(e.target.value)} aria-label="Simulated role">
           <option value="owner">Owner</option><option value="dispatcher">Dispatcher (simulated)</option><option value="driver">Driver (simulated)</option><option value="office">Office (simulated)</option>
         </select>
       </label>
       <span className="hide-mobile"><ResumeGuideButton /></span>
-      <button className="btn btn-sm btn-ghost" onClick={reset}><RotateCcw aria-hidden />Reset</button>
-      <Link className="btn btn-sm" style={{ background: 'var(--canvas)', color: 'var(--text)' }} to={c.to('setup-company')}>Set up my company</Link>
+      <button className="btn btn-sm" onClick={reset} aria-label="Reset demo"><RotateCcw aria-hidden /><span className="hide-mobile">Reset</span></button>
+      <Link className="btn btn-sm btn-invert" to={c.to('setup-company')}>Set up my company</Link>
       {node}
     </div>
   );
 }
+
+// ------------------------------------------------------------ command menu (Ctrl/Cmd+K)
+
+interface Cmd { id: string; group: string; label: string; meta?: string; icon: ReactNode; to: string }
+
+function recentKey(cid: string) { return `rigo-recent-${cid}`; }
+function readRecent(cid: string): Cmd[] {
+  try { return (JSON.parse(localStorage.getItem(recentKey(cid)) ?? '[]') as Omit<Cmd, 'icon'>[]).slice(0, 5).map((r) => ({ ...r, group: 'Recent', icon: <Clock aria-hidden /> })); } catch { return []; }
+}
+function pushRecent(cid: string, cmd: Cmd) {
+  try {
+    const list = (JSON.parse(localStorage.getItem(recentKey(cid)) ?? '[]') as Omit<Cmd, 'icon'>[]).filter((r) => r.to !== cmd.to);
+    list.unshift({ id: cmd.id, group: 'Recent', label: cmd.label, meta: cmd.meta, to: cmd.to });
+    localStorage.setItem(recentKey(cid), JSON.stringify(list.slice(0, 8)));
+  } catch { /* storage unavailable */ }
+}
+
+function useDebounced<T>(v: T, ms: number) {
+  const [d, setD] = useState(v);
+  useEffect(() => { const t = setTimeout(() => setD(v), ms); return () => clearTimeout(t); }, [v, ms]);
+  return d;
+}
+
+export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const c = useCompany();
+  const nav = useNavigate();
+  const items = useNavItems();
+  const ref = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState('');
+  const [sel, setSel] = useState(0);
+  const q = useDebounced(text.trim(), 160);
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) { d.showModal(); setText(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 0); }
+    if (!open && d.open) d.close();
+  }, [open]);
+
+  // Searches only run for what this role may see; the server checks again.
+  const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('jobs.view_all') });
+  const customers = useQuery({ queryKey: [c.cid, 'cmdk-customers', q], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('customers.view') });
+  const invoices = useQuery({ queryKey: [c.cid, 'cmdk-invoices'], queryFn: () => get(`/c/${c.cid}/invoices?status=all`), enabled: open && q.length > 0 && c.can('invoices.view'), staleTime: 30_000 });
+
+  const actions: Cmd[] = useMemo(() => {
+    const a: Cmd[] = [];
+    if (c.can('jobs.create')) a.push({ id: 'a-job', group: 'Actions', label: 'New job', icon: <Plus aria-hidden />, to: 'jobs/new' });
+    if (c.can('customers.edit')) a.push({ id: 'a-cust', group: 'Actions', label: 'New customer', icon: <UserRound aria-hidden />, to: 'customers?new=1' });
+    if (c.can('payments.record')) a.push({ id: 'a-pay', group: 'Actions', label: 'Record payment', meta: 'Issued and unpaid invoices', icon: <CreditCard aria-hidden />, to: 'invoices?status=unpaid' });
+    if (c.can('automation.control')) a.push({ id: 'a-pause', group: 'Actions', label: c.company.paused ? 'Resume automation' : 'Pause automation', icon: <PauseCircle aria-hidden />, to: 'automation' });
+    if (c.can('members.invite')) a.push({ id: 'a-invite', group: 'Actions', label: 'Invite a team member', icon: <Users aria-hidden />, to: 'team' });
+    if (c.can('assistant.use')) a.push({ id: 'a-ask', group: 'Actions', label: 'Ask Rigo', meta: 'Open the assistant', icon: <Bot aria-hidden />, to: 'assistant' });
+    return a;
+  }, [c]);
+
+  const typed = text.trim().toLowerCase();
+  const all: Cmd[] = useMemo(() => {
+    // Pages and actions filter as you type; record searches use the debounced text.
+    const needle = typed;
+    const remote = q.toLowerCase();
+    const match = (s: string) => !needle || s.toLowerCase().includes(needle);
+    const pages: Cmd[] = items.map((i) => ({ id: `p-${i.key}`, group: 'Go to', label: i.label, icon: i.icon, to: i.to }));
+    const list: Cmd[] = [];
+    if (!needle) list.push(...readRecent(c.cid));
+    list.push(...actions.filter((a) => match(a.label)));
+    list.push(...pages.filter((p) => match(p.label)));
+    if (needle && remote) {
+      for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: `jobs/${j.id}` });
+      for (const cu of (customers.data?.customers ?? []).slice(0, 5)) list.push({ id: `c-${cu.id}`, group: 'Customers', label: cu.name, meta: cu.location_count ? `${cu.location_count} location(s)` : undefined, icon: <Contact aria-hidden />, to: `customers/${cu.id}` });
+      const inv = (invoices.data?.invoices ?? []).filter((i: any) => [i.number, i.customerName, i.jobNumber && `#${i.jobNumber}`, i.jobNumber].filter(Boolean).some((v: any) => String(v).toLowerCase().includes(remote))).slice(0, 5);
+      for (const i of inv) list.push({ id: `i-${i.id}`, group: 'Invoices', label: i.number ?? `Draft for job #${i.jobNumber ?? i.job_number ?? '?'}`, meta: i.customerName ?? i.customer_name ?? undefined, icon: <FileText aria-hidden />, to: `invoices/${i.id}` });
+    }
+    return list;
+  }, [typed, q, items, actions, jobs.data, customers.data, invoices.data, c.cid]);
+
+  useEffect(() => { setSel(0); }, [typed]);
+  const go = useCallback((cmd: Cmd) => {
+    if (cmd.group !== 'Recent' && cmd.group !== 'Go to' && cmd.group !== 'Actions') pushRecent(c.cid, cmd);
+    onClose();
+    nav(c.to(cmd.to));
+  }, [c, nav, onClose]);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(all.length - 1, s + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(0, s - 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (all[sel]) go(all[sel]); }
+  };
+  useEffect(() => { document.getElementById(`cmdk-${sel}`)?.scrollIntoView({ block: 'nearest' }); }, [sel]);
+  const searching = q.length > 0 && (jobs.isFetching || customers.isFetching || invoices.isFetching);
+  let lastGroup = '';
+  return (
+    <dialog ref={ref} className="cmdk" aria-label="Command menu" onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }} onClick={(e) => { if (e.target === ref.current) onClose(); }}>
+      {open && <>
+        <div className="cmdk-input">
+          <Search aria-hidden />
+          <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} placeholder="Search jobs, customers, invoices, or jump to…" aria-label="Search or run a command"
+            role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-activedescendant={all[sel] ? `cmdk-${sel}` : undefined} autoComplete="off" />
+          {searching ? <span className="spinner" aria-hidden /> : null}
+        </div>
+        <div className="cmdk-list" id="cmdk-list" role="listbox" aria-label="Results">
+          {all.map((cmd, i) => {
+            const head = cmd.group !== lastGroup ? cmd.group : null;
+            lastGroup = cmd.group;
+            return (
+              <div key={cmd.id + i} role="presentation">
+                {head ? <div className="cmdk-group" role="presentation">{head}</div> : null}
+                <div id={`cmdk-${i}`} role="option" aria-selected={i === sel} className="cmdk-item" onMouseMove={() => setSel(i)} onClick={() => go(cmd)}>
+                  {cmd.icon}<span>{cmd.label}</span>{cmd.meta ? <span className="meta">{cmd.meta}</span> : null}
+                  {i === sel ? <ArrowRight aria-hidden style={{ marginLeft: cmd.meta ? 0 : 'auto' }} /> : null}
+                </div>
+              </div>
+            );
+          })}
+          {all.length === 0 && !searching ? <div className="cmdk-empty">No matches for “{text}”. Try a job number, a customer name or a page.</div> : null}
+        </div>
+        <div className="cmdk-foot" aria-hidden><span><kbd>↑</kbd><kbd>↓</kbd>Move</span><span><kbd>↵</kbd>Open</span><span><kbd>Esc</kbd>Close</span></div>
+        <div className="sr-only" role="status">{q ? `${all.length} result${all.length === 1 ? '' : 's'}` : ''}</div>
+      </>}
+    </dialog>
+  );
+}
+
+// ------------------------------------------------------------ shell
 
 export function AppShell({ children }: { children: ReactNode }) {
   const c = useCompany();
   const items = useNavItems();
   const online = useOnline();
   const loc = useLocation();
-  const [assistantOpen, setAssistantOpen] = useState(() => { try { return localStorage.getItem('rigo-assistant') === '1'; } catch { return false; } });
-  useEffect(() => { try { localStorage.setItem('rigo-assistant', assistantOpen ? '1' : '0'); } catch { /* ignore */ } }, [assistantOpen]);
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('rigo-nav') === 'collapsed'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('rigo-nav', collapsed ? 'collapsed' : 'open'); } catch { /* ignore */ } }, [collapsed]);
+  const [cmdk, setCmdk] = useState(false);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdk((o) => !o); } };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+  const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const bottom = bottomItems(items);
   const more = items.filter((i) => !bottom.includes(i));
-  const sections = [...new Set(items.map((i) => i.section ?? ''))];
   const isActive = (to: string) => (to === '' ? loc.pathname === c.to('') || loc.pathname === c.to('') + '/' : loc.pathname.startsWith(c.to(to)));
   const canAssistant = c.can('assistant.use');
   return (
-    <div className="shell">
+    <div className={`shell${collapsed ? ' nav-collapsed' : ''}`}>
       <a href="#main" className="skip-link">Skip to content</a>
       <DemoBar />
       <header className="topbar">
-        <Link to={c.to('')} className="brand"><span className="brand-mark" aria-hidden>R</span><span className="hide-mobile">Rigo</span><span className="sr-only hide-desktop">Rigo</span><span className="sr-only"> home</span></Link>
+        <Wordmark to={c.to('')} label="Rigo home" hideText />
+        <span className="hide-mobile" aria-hidden style={{ fontWeight: 600, letterSpacing: '-0.03em', marginLeft: -2 }}>Rigo</span>
+        <span className="topbar-sep hide-mobile" aria-hidden />
         <CompanySwitcher />
-        {c.role.simulated ? <Pill tone="demo">{c.role.name} view</Pill> : <span className="hide-mobile"><Pill tone="neutral">{c.role.name}</Pill></span>}
+        {c.role.simulated ? <Pill tone="demo">{c.role.name} view</Pill> : <span className="hide-mobile"><Pill tone="neutral" icon={<UserRound aria-hidden />}>{c.role.name}</Pill></span>}
         <span className="spacer" />
-        {canAssistant && (
-          <span className="hide-mobile">
-            <IconButton label={assistantOpen ? 'Close assistant panel' : 'Open assistant panel'} aria-pressed={assistantOpen} onClick={() => setAssistantOpen((o) => !o)}>{assistantOpen ? <PanelRightClose aria-hidden /> : <PanelRightOpen aria-hidden />}</IconButton>
-          </span>
-        )}
+        <button type="button" className="cmd-trigger" onClick={() => setCmdk(true)} aria-keyshortcuts={mac ? 'Meta+K' : 'Control+K'}>
+          <Search aria-hidden /><span>Search or jump to…</span><span aria-hidden style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}><kbd>{mac ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd></span>
+        </button>
+        <span className="hide-desktop"><IconButton label="Search and commands" onClick={() => setCmdk(true)}><Search aria-hidden /></IconButton></span>
+        {canAssistant && <span className="hide-mobile"><Link className="icon-btn" to={c.to('assistant')} aria-label="Assistant" title="Assistant" aria-current={isActive('assistant') ? 'page' : undefined}><Bot aria-hidden /></Link></span>}
         <NotificationBell />
         <AccountMenu />
       </header>
-      {!online && <div className="banner banner-warning" style={{ borderRadius: 0 }} role="status"><WifiOff aria-hidden /><span><strong>You are offline.</strong> Saved job drafts stay on this device until you reconnect. Other pages may show out-of-date information.</span></div>}
-      {c.company.paused && c.can('workflows.view') && <div className="banner banner-warning" style={{ borderRadius: 0 }} role="status"><Zap aria-hidden /><span><strong>Automation is paused.</strong> Queued steps are held; nothing new runs until it is resumed. <Link to={c.to('automation')}>Automation controls</Link></span></div>}
+      {!online && <div className="banner banner-warning banner-flat" role="status"><WifiOff aria-hidden /><span><strong>You are offline.</strong> Saved job drafts stay on this device until you reconnect. Other pages may show out-of-date information.</span></div>}
+      {c.company.paused && c.can('workflows.view') && <div className="banner banner-warning banner-flat" role="status"><PauseCircle aria-hidden /><span><strong>Automation is paused.</strong> Queued steps are held; nothing new runs until it is resumed. <Link to={c.to('automation')}>Automation controls</Link></span></div>}
       <div className="layout">
         <nav className="sidebar" aria-label="Main">
-          {sections.map((s) => (
-            <div key={s || 'top'}>
-              {s ? <div className="nav-section">{s}</div> : null}
-              {items.filter((i) => (i.section ?? '') === s).map((i) => (
-                <NavLink key={i.key} to={c.to(i.to)} end={i.to === ''} className={() => `nav-link${isActive(i.to) ? ' active' : ''}`} aria-current={isActive(i.to) ? 'page' : undefined}>
-                  {i.icon}<span>{i.label}</span>{i.count ? <span className="count" aria-label={`${i.count} need action`}>{i.count}</span> : null}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+          {SECTIONS.map((s) => {
+            const group = items.filter((i) => i.section === s);
+            if (!group.length) return null;
+            return (
+              <div key={s} role="group" aria-label={s}>
+                <div className="nav-section" aria-hidden>{s}</div>
+                {group.map((i) => (
+                  <NavLink key={i.key} to={c.to(i.to)} end={i.to === ''} className={() => `nav-link${isActive(i.to) ? ' active' : ''}`} aria-current={isActive(i.to) ? 'page' : undefined} title={collapsed ? i.label : undefined}>
+                    {i.icon}<span className="label">{i.label}</span>{i.count ? <span className="count" aria-label={`${i.count} need action`}>{i.count}</span> : null}
+                  </NavLink>
+                ))}
+              </div>
+            );
+          })}
+          <div className="sidebar-foot">
+            <button type="button" className="sidebar-toggle" aria-pressed={collapsed} onClick={() => setCollapsed((v) => !v)} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+              {collapsed ? <PanelLeftOpen aria-hidden /> : <PanelLeftClose aria-hidden />}<span className="label">{collapsed ? 'Expand sidebar' : 'Collapse sidebar'}</span>
+            </button>
+          </div>
         </nav>
         <main id="main" className="main" tabIndex={-1}>{c.demo && !c.demo.guide.dismissed && <DemoGuide />}{children}</main>
-        {canAssistant && assistantOpen && (
-          <aside className="assistant-panel open" aria-label="Assistant">
-            <div className="row-between" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}><h2 className="row" style={{ fontSize: '1rem' }}><Sparkles aria-hidden style={{ width: 18 }} />Assistant</h2><IconButton label="Close assistant panel" onClick={() => setAssistantOpen(false)}><PanelRightClose aria-hidden /></IconButton></div>
-            <AssistantChat compact />
-          </aside>
-        )}
       </div>
       <nav className="bottom-nav" aria-label="Main">
         {bottom.map((i) => (
@@ -275,8 +417,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             {i.icon}<span>{i.label}</span>{i.count ? <span className="nav-dot" aria-label={`${i.count} need action`}>{i.count}</span> : null}
           </NavLink>
         ))}
-        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')}><MoreHorizontal aria-hidden /><span>More</span></NavLink>}
+        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')} aria-current={isActive('more') ? 'page' : undefined}><MoreHorizontal aria-hidden /><span>More</span></NavLink>}
       </nav>
+      <CommandMenu open={cmdk} onClose={() => setCmdk(false)} />
     </div>
   );
 }
@@ -289,9 +432,22 @@ export function MorePage() {
   return (
     <div className="page page-narrow">
       <h1>More</h1>
+      {SECTIONS.map((s) => {
+        const group = more.filter((i) => i.section === s);
+        if (!group.length) return null;
+        return (
+          <section key={s} className="stack-sm" aria-label={s}>
+            <h2 className="small muted" style={{ fontWeight: 500 }}>{s}</h2>
+            <div className="card card-flush">
+              <ul className="list">
+                {group.map((i) => <li key={i.key}><Link className="list-item" to={c.to(i.to)} style={{ alignItems: 'center' }}>{i.icon}<span style={{ flex: 1 }}>{i.label}</span>{i.count ? <Pill tone="brand">{i.count}</Pill> : null}</Link></li>)}
+              </ul>
+            </div>
+          </section>
+        );
+      })}
       <div className="card card-flush">
         <ul className="list">
-          {more.map((i) => <li key={i.key}><Link className="list-item" to={c.to(i.to)} style={{ alignItems: 'center' }}>{i.icon}<span style={{ flex: 1 }}>{i.label}</span>{i.count ? <Pill tone="brand">{i.count}</Pill> : null}</Link></li>)}
           <li><Link className="list-item" to="/workspaces" style={{ alignItems: 'center' }}><Building2 aria-hidden /><span>All workspaces</span></Link></li>
           <li><Link className="list-item" to="/account" style={{ alignItems: 'center' }}><UserCircle2 aria-hidden /><span>Account and theme</span></Link></li>
         </ul>

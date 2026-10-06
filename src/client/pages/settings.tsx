@@ -73,9 +73,25 @@ function Branding() {
           variants.usable ? <Banner tone="info" title="Accessible variants">Light theme uses {variants.light} ({contrast(variants.light, '#FFFFFF').toFixed(1)}:1 on white); dark theme uses {variants.dark} ({contrast(variants.dark, '#161618').toFixed(1)}:1 on dark surfaces).<div className="row" style={{ marginTop: 8 }}><span className="pill" style={{ background: variants.light, color: '#fff' }}>Light</span><span className="pill" style={{ background: '#161618', color: variants.dark }}>Dark</span></div></Banner>
             : <Banner tone="warning">This color cannot be made readable in both themes. Choose another.</Banner>
         )}
+        <BrandPreview name={c.company.name} accent={variants.usable && /^#[0-9a-fA-F]{6}$/.test(accent) ? variants.light : '#B91C1C'} />
         <div><Button variant="primary" busy={s.busy} onClick={() => s.run()}>Save branding</Button></div>
       </div>
     </Card>
+  );
+}
+
+/** Live preview of exactly where the accent appears: switcher chip, invoice header, message preview. */
+function BrandPreview({ name, accent }: { name: string; accent: string }) {
+  const initial = (name.replace(/[^A-Za-z0-9]/g, '').charAt(0) || '?').toUpperCase();
+  return (
+    <section className="stack-sm" aria-labelledby="bp-h">
+      <h3 id="bp-h" className="label">Preview <span className="muted" style={{ fontWeight: 400 }}>(unsaved changes show here first)</span></h3>
+      <div className="brand-preview" aria-hidden>
+        <div className="bp-chrome"><span className="company-chip" data-initial={initial} style={{ background: accent }} /><span>{name}</span></div>
+        <div className="bp-doc"><div style={{ height: 4, borderRadius: 2, background: accent }} /><div className="row-between" style={{ marginTop: 10 }}><strong>{name}</strong><span className="doc-title" style={{ fontSize: 'var(--fs-16)' }}>Invoice</span></div></div>
+        <div className="bp-msg"><span className="company-chip" data-initial={initial} style={{ background: accent, width: 20, height: 20, fontSize: 11 }} /><span><strong>{name}</strong><br /><span className="muted">Your invoice is ready</span></span></div>
+      </div>
+    </section>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { MapPin, Clock, KeyRound, Phone, ChevronRight, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser } from 'lucide-react';
+import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, type Draft, type DraftState } from '../lib/offline';
@@ -74,13 +74,13 @@ export function Today() {
   }, [data, today, c.company.timezone]);
   const card = (j: any) => (
     <li key={j.id}>
-      <Link to={c.to(`today/${j.id}`)} className="driver-job">
+      <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}`}>
         <div className="row-between">
-          <span className="time row" style={{ gap: 6 }}><Clock aria-hidden style={{ width: 18 }} />{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span>
+          <span className="time">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span>
           <JobStatus status={j.status} />
         </div>
         <div className="addr">{j.address ?? 'No address'}</div>
-        <div>{j.service_name} · #{j.number} · {j.customer_name}</div>
+        <div className="small"><span className="num muted">#{j.number}</span> · {j.service_name} · {j.customer_name}</div>
         {(j.access_instructions || j.location_access) && <div className="small muted row" style={{ gap: 6, alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>{j.access_instructions || j.location_access}</span></div>}
         {drafts[j.id] && <div style={{ marginTop: 6 }}><SyncState state={drafts[j.id].state} /></div>}
         {j.nextAction && !['completed', 'partial', 'unsuccessful', 'cancelled'].includes(j.status) && <div className="next-action">{j.nextAction}<ChevronRight aria-hidden /></div>}
@@ -89,7 +89,7 @@ export function Today() {
   );
   return (
     <div className="driver-page">
-      <div className="row-between"><div><h1>My jobs</h1><div className="muted">{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: c.company.timezone }).format(new Date())}</div></div>
+      <div className="row-between"><div><h1>My jobs</h1><div className="muted small">{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: c.company.timezone }).format(new Date())}{data ? ` · ${groups.today.length} today` : ''}</div></div>
         <Button icon={<RefreshCw aria-hidden />} onClick={reload} busy={loading}>Refresh</Button></div>
       {stale && <Banner tone="warning" title="Offline: showing your saved copy">Last updated {relTime(stale)}. Jobs may have changed. You can still save drafts; they sync when you reconnect.</Banner>}
       {error && !stale && <Banner tone="danger" title="Could not load your jobs">{error.message}</Banner>}
@@ -97,7 +97,7 @@ export function Today() {
       {loading && !data ? <LoadingBlock /> : data && (
         <>
           <section aria-labelledby="h-today" className="stack-sm"><h2 id="h-today">Today</h2>
-            {groups.today.length ? <ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.today.map(card)}</ul> : <Card><Empty title="No jobs for today">New assignments appear here. Pull to refresh or tap Refresh.</Empty></Card>}
+            {groups.today.length ? <ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.today.map(card)}</ul> : <Card><Empty icon={<CheckCircle2 />} title="No jobs for today">New assignments appear here. Pull to refresh or tap Refresh.</Empty></Card>}
           </section>
           {groups.upcoming.length > 0 && <section aria-labelledby="h-up" className="stack-sm"><h2 id="h-up">Upcoming</h2><ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.upcoming.map(card)}</ul></section>}
           {groups.done.length > 0 && <section aria-labelledby="h-done" className="stack-sm"><h2 id="h-done">Finished recently</h2><ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.done.map(card)}</ul></section>}
@@ -176,7 +176,7 @@ export function DriverJob() {
   if (!job) {
     return (
       <div className="driver-page">
-        <Link className="back-link" to={c.to('today')}>← My jobs</Link>
+        <Link className="back-link" to={c.to('today')}><ChevronLeft aria-hidden />My jobs</Link>
         <Banner tone="warning" title="This job is not on your list">It may have been reassigned or cancelled. {draft ? 'Your saved draft is kept on this device for review.' : ''}</Banner>
         {draft && draft.state !== 'accepted' && <Button variant="danger" icon={<Trash2 aria-hidden />} onClick={async () => { await deleteDraft(uid, c.cid, jobId); nav(c.to('today')); }}>Discard my draft</Button>}
       </div>
@@ -222,16 +222,16 @@ export function DriverJob() {
 
   return (
     <div className="driver-page">
-      <Link className="back-link" to={c.to('today')}>← My jobs</Link>
+      <Link className="back-link" to={c.to('today')}><ChevronLeft aria-hidden />My jobs</Link>
       <div className="stack-sm">
-        <div className="row-between"><h1>#{job.number} {job.service_name}</h1><JobStatus status={job.status} /></div>
+        <div className="row-between" style={{ alignItems: 'flex-start' }}><h1 style={{ fontSize: 'var(--fs-22)' }}><span className="num muted" style={{ fontSize: 'var(--fs-16)', display: 'block', fontWeight: 500 }}>#{job.number}</span>{job.service_name}</h1><JobStatus status={job.status} /></div>
         {stale && <Banner tone="warning">Offline copy from {relTime(stale)}. Details may have changed.</Banner>}
       </div>
       <Card id="essentials">
         <div className="stack">
-          <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><MapPin aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{job.address ?? 'No address'}</div><div className="muted">{job.customer_name}{job.location_label ? ` · ${job.location_label}` : ''}</div></div>
+          <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><MapPin aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 'var(--fs-18)', letterSpacing: '-0.01em' }}>{job.address ?? 'No address'}</div><div className="muted">{job.customer_name}{job.location_label ? ` · ${job.location_label}` : ''}</div></div>
             {job.address && <Button size="sm" icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button>}</div>
-          <div className="row"><Clock aria-hidden /><span>{job.scheduled_start ? `${fmtDate(job.scheduled_start, c.company.timezone)}, ${fmtTime(job.scheduled_start, c.company.timezone)}` : 'Any time'}</span></div>
+          <div className="row"><Clock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDate(job.scheduled_start, c.company.timezone)}, ${fmtTime(job.scheduled_start, c.company.timezone)}` : 'Any time'}</span></div>
           {access && <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div><strong>Access:</strong> {access}</div></div>}
           {(job.contact_name || job.site_contact || job.contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</span></div>}
           {job.resources?.length ? <div className="row"><Truck aria-hidden /><span>{job.resources.map((r: any) => r.name).join(', ')}</span></div> : null}

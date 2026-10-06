@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Sun, Moon, Monitor, AlertTriangle } from 'lucide-react';
+import { Sun, Moon, Monitor, AlertTriangle, ChevronLeft } from 'lucide-react';
 import { useMe } from '../lib/session';
 import { patch, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
-import { Button, Card, Field, Input, PasswordInput, ErrorSummary, Banner, useToast, useConfirm, LoadingBlock } from '../components/ui';
+import { Button, Card, Field, Input, PasswordInput, ErrorSummary, Banner, useToast, useConfirm, LoadingBlock, Wordmark } from '../components/ui';
 import type { Draft } from '../lib/offline';
 
 export function Account() {
@@ -44,9 +44,9 @@ export function Account() {
   if (!me.data?.user) return <LoadingBlock />;
   return (
     <div className="shell">
-      <header className="topbar"><Link to="/workspaces" className="brand"><span className="brand-mark" aria-hidden>R</span>Rigo</Link></header>
-      <main className="main" id="main"><div className="page page-narrow">
-        <div><Link className="back-link" to="/workspaces">← Workspaces</Link><h1 style={{ marginTop: 8 }}>Account</h1><p className="muted">{me.data.user.email}</p></div>
+      <header className="plain-top"><Wordmark to="/workspaces" /></header>
+      <main className="plain-main" id="main"><div className="page page-narrow">
+        <div><Link className="back-link" to="/workspaces"><ChevronLeft aria-hidden />Workspaces</Link><h1 style={{ marginTop: 8 }}>Account</h1><p className="muted">{me.data.user.email}</p></div>
         {(sp.get('signout') || (unsynced && unsynced.length > 0)) && unsynced && unsynced.length > 0 && (
           <Banner tone="warning" title={`${unsynced.length} job draft(s) are not synced yet`}>
             They are saved only on this device. Open them and sync before signing out, or discard them.

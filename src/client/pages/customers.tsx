@@ -48,7 +48,7 @@ export function Customers() {
   const toast = useToast();
   const [sp, setSp] = useSearchParams();
   const search = sp.get('q') ?? '';
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(() => sp.get('new') === '1' && c.can('customers.edit'));
   const q = useQuery({ queryKey: [c.cid, 'customers', search], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(search)}`) });
   return (
     <div className="page">
@@ -70,7 +70,7 @@ export function Customers() {
           ))}</tbody>
         </table></div></div>
       )}
-      {creating && <CustomerDialog open onClose={() => setCreating(false)} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: [c.cid, 'customers'] }); toast('Customer added'); }} />}
+      {creating && <CustomerDialog open onClose={() => { setCreating(false); if (sp.get('new')) { const n = new URLSearchParams(sp); n.delete('new'); setSp(n, { replace: true }); } }} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: [c.cid, 'customers'] }); toast('Customer added'); }} />}
     </div>
   );
 }

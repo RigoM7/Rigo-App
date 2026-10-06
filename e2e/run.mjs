@@ -86,7 +86,7 @@ async function assertTheme(t) {
   if (got !== t) throw new Error(`expected ${t} theme, page is ${got}`);
 }
 const cidPath = () => new URL(demoUrl).pathname;
-const pages = ['', '/jobs', '/jobs?view=board', '/jobs?view=schedule', '/inbox', '/invoices?status=all', '/customers', '/team', '/workflows', '/automation', '/recurring', '/messages', '/services', '/settings', '/templates', '/imports', '/assistant'];
+const pages = ['', '?tl=feed', '/jobs', '/jobs?view=board', '/jobs?view=schedule', '/inbox', '/invoices?status=all', '/customers', '/team', '/workflows', '/automation', '/recurring', '/messages', '/services', '/settings', '/templates', '/imports', '/assistant'];
 
 for (const theme of ['light', 'dark']) {
   await step(`axe scan, ${theme} theme, key pages`, async () => {
@@ -126,6 +126,50 @@ await step('mobile shows at most five bottom destinations', async () => {
   return `${n} items`;
 });
 await page.setViewportSize({ width: 1440, height: 900 });
+
+await step('home: live timeline with driver lanes, now line, job panel and feed view', async () => {
+  await page.goto(`${BASE}${cidPath()}`);
+  await page.getByRole('heading', { name: "Today's timeline" }).waitFor();
+  await page.getByRole('list', { name: /^Dana Driver/ }).waitFor();
+  await page.getByRole('list', { name: /^Unassigned: 1 job/ }).waitFor();
+  if ((await page.locator('.tl-now').count()) !== 1) throw new Error('no now line on today');
+  await page.getByRole('list', { name: /^Unassigned/ }).getByRole('button', { name: /#3/ }).click();
+  const panel = page.getByRole('dialog');
+  await panel.getByRole('link', { name: 'Open job' }).waitFor();
+  await panel.getByLabel(/Driver for job #3/).waitFor();
+  await page.keyboard.press('Escape');
+  await panel.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Feed' }).click();
+  await page.waitForURL(/tl=feed/);
+  await page.getByRole('list', { name: 'Jobs in time order' }).waitFor();
+  await page.screenshot({ path: `${OUT}/home-feed-1440.png`, fullPage: true });
+});
+
+await step('command menu: Ctrl+K finds a job by number and opens it', async () => {
+  await page.goto(`${BASE}${cidPath()}/inbox`);
+  await page.locator('main h1').first().waitFor();
+  await page.keyboard.press('Control+k');
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await menu.waitFor();
+  await menu.getByRole('combobox').fill('3');
+  await menu.getByRole('option', { name: /#3 Fuel delivery/ }).waitFor();
+  await page.screenshot({ path: `${OUT}/command-menu.png` });
+  await menu.getByRole('option', { name: /#3 Fuel delivery/ }).click();
+  await page.waitForURL(/\/jobs\/[0-9a-f-]+$/);
+  await page.keyboard.press('Control+k');
+  await menu.getByRole('combobox').fill('invoices');
+  await page.keyboard.press('Enter');
+  await page.waitForURL(/\/invoices$/);
+});
+
+await step('sidebar collapses to icons and remembers it', async () => {
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+  await page.reload();
+  await page.locator('.shell.nav-collapsed').waitFor();
+  await page.getByRole('link', { name: 'Jobs' }).first().waitFor();
+  await page.getByRole('button', { name: 'Expand sidebar' }).click();
+  if (await page.locator('.shell.nav-collapsed').count()) throw new Error('still collapsed');
+});
 
 let jobPath = '';
 await step('dispatcher: assign the unassigned fuel job to Dana from the list', async () => {

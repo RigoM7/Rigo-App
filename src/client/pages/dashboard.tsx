@@ -1,103 +1,116 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Hand, CheckCircle2, ChevronRight, Plus, Zap, PauseCircle } from 'lucide-react';
+import { AlertTriangle, Hand, CheckCircle2, Plus, Zap, PauseCircle, ArrowRight, ClipboardList, Users, Wrench } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get } from '../lib/api';
-import { Card, LoadingBlock, ErrorState, JobStatus, LinkButton, Pill, Empty } from '../components/ui';
-import { formatMoney, fmtTime } from '../lib/format';
+import { LoadingBlock, ErrorState, LinkButton, Pill, Empty, TickNumber, LiveDot } from '../components/ui';
+import { formatMoney } from '../lib/format';
+import { DispatchTimeline } from '../components/timeline';
 import { SetupChecklist } from './setup';
+
+// The owner's command center. Today's timeline leads; "Needs you" and "What Rigo is doing" sit
+// around it, compact. Every number comes from real records; empty companies get setup actions.
+
+const NEED_ACTION: Record<string, string> = {
+  approvals: 'Review', ready: 'Run steps', blocked: 'See why', held: 'Fix holds', problems: 'Open', unassigned: 'Assign', exceptions: 'Review', drafts: 'Complete',
+};
+
+function useClock(tz: string) {
+  const fmt = () => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date());
+  const [t, setT] = useState(fmt);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { const i = setInterval(() => setT(fmt()), 15_000); return () => clearInterval(i); }, [tz]);
+  return t;
+}
 
 export function Dashboard() {
   const c = useCompany();
   const q = useQuery({ queryKey: [c.cid, 'overview'], queryFn: () => get(`/c/${c.cid}/overview`), refetchInterval: 30_000 });
-  if (q.isLoading) return <div className="page"><LoadingBlock rows={8} /></div>;
-  if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
+  const clock = useClock(c.company.timezone);
+  if (q.isLoading) return <div className="page page-wide"><LoadingBlock rows={8} /></div>;
+  if (q.error) return <div className="page page-wide"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
   const d = q.data;
+  const date = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: c.company.timezone }).format(new Date());
+  const r = d.rigo;
+  const busy = r ? r.queued + r.running : 0;
   return (
-    <div className="page">
-      <div className="page-header">
-        <div><h1>Home</h1><div className="sub">{c.company.name} · {new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: c.company.timezone }).format(new Date())}</div></div>
+    <div className="page page-wide">
+      <div className="home-head">
+        <div>
+          <h1>Home</h1>
+          <div className="when"><span>{date}</span><span aria-hidden>·</span><span className="clock" aria-label={`Local time ${clock}`}>{clock}</span><span aria-hidden>·</span><span>{c.company.name}</span></div>
+        </div>
         {c.can('jobs.create') && <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton>}
       </div>
 
-      {c.setup && !c.setup.ready && !c.demo && <SetupChecklist compact />}
-
-      <section aria-labelledby="att-h" className="stack-sm">
-        <h2 id="att-h">Needs you</h2>
+      <section aria-labelledby="att-h" className="needs-strip">
+        <h2 id="att-h" className="needs-strip-label">Needs you</h2>
         {d.attention.length === 0 ? (
-          <div className="card row"><CheckCircle2 aria-hidden style={{ color: 'var(--success)' }} /><span>Nothing needs your attention right now.</span></div>
-        ) : (
-          <div className="grid-2">
-            {d.attention.map((a: any) => (
-              <Link key={a.key} to={c.to(a.link)} className="attention-item">
-                {a.tone === 'warning' ? <AlertTriangle aria-hidden style={{ color: 'var(--warning)' }} /> : <Hand aria-hidden style={{ color: 'var(--primary-text)' }} />}
-                <span className="count">{a.count}</span>
-                <span style={{ flex: 1 }}>{a.label}</span>
-                <ChevronRight aria-hidden />
-              </Link>
-            ))}
+          <span className="all-clear"><CheckCircle2 aria-hidden />Nothing needs your attention right now.</span>
+        ) : d.attention.map((a: any) => (
+          <div key={a.key} className={`need tone-${a.tone}`}>
+            {a.tone === 'warning' ? <AlertTriangle aria-hidden /> : <Hand aria-hidden />}
+            <span className="n" aria-hidden>{a.count}</span>
+            <span><span className="sr-only">{a.count} </span>{a.label}</span>
+            <Link className={`btn btn-sm${a.key === 'approvals' ? ' btn-primary' : ''}`} to={c.to(a.link)} aria-label={`${NEED_ACTION[a.key] ?? 'Open'}: ${a.label}`}>{NEED_ACTION[a.key] ?? 'Open'}</Link>
           </div>
-        )}
+        ))}
       </section>
 
-      {d.today && (
-        <Card id="today" title="Today's operations" actions={<Link to={c.to('jobs?view=schedule')}>Open schedule</Link>}>
-          {d.empty ? (
-            <Empty title="No jobs yet" action={c.can('jobs.create') ? <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>Create the first job</LinkButton> : undefined}>Jobs you create appear here with their driver and status. Add customers first, or create a job and a customer together.</Empty>
-          ) : (
-            <div className="stack">
-              <div className="grid-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
-                <div className="stat"><span className="value">{d.today.total}</span><span className="label">Scheduled today</span></div>
-                <div className="stat"><span className="value">{d.today.inProgress}</span><span className="label">In progress</span></div>
-                <div className="stat"><span className="value">{d.today.done}</span><span className="label">Completed</span></div>
-                <div className="stat"><span className="value">{d.today.unassigned}</span><span className="label">Without a driver</span></div>
-                <div className="stat"><span className="value">{d.today.exceptions}</span><span className="label">Partial / unsuccessful</span></div>
+      {c.setup && !c.setup.ready && !c.demo && <SetupChecklist compact />}
+
+      <div className="cc-grid">
+        <div className="stack" style={{ minWidth: 0 }}>
+          {d.today && (d.empty ? (
+            <section className="card" aria-labelledby="first-h">
+              <Empty icon={<ClipboardList />} title="No jobs yet"
+                action={<div className="row" style={{ justifyContent: 'center' }}>
+                  {c.can('jobs.create') && <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>Create the first job</LinkButton>}
+                  {c.can('customers.edit') && <LinkButton to={c.to('customers')} icon={<Users aria-hidden />}>Add customers</LinkButton>}
+                  {c.can('services.manage') && <LinkButton to={c.to('services')} icon={<Wrench aria-hidden />}>Check services and rates</LinkButton>}
+                </div>}>
+                <span id="first-h">Once jobs have a time, today's timeline shows each driver's day here, live. Add customers first, or create a job and a customer together.</span>
+              </Empty>
+            </section>
+          ) : <DispatchTimeline />)}
+        </div>
+
+        <aside className="side-stack" aria-label="Status">
+          {r && (
+            <section className="card stack" aria-labelledby="rigo-h">
+              <div className="section-head"><h2 id="rigo-h" className="row" style={{ gap: 8 }}><Zap aria-hidden style={{ width: 16 }} />What Rigo is doing</h2></div>
+              <div className="row" style={{ gap: 6 }}>
+                <Pill tone="brand">{r.mode === 'manual' ? 'Manual' : r.mode === 'assisted' ? 'Assisted' : 'Automatic'} mode</Pill>
+                {r.paused ? <Pill tone="warning" icon={<PauseCircle aria-hidden />}>Paused</Pill> : null}
               </div>
-              {d.today.jobs.length > 0 ? (
-                <div className="table-wrap"><table className="table responsive">
-                  <thead><tr><th>Time</th><th>Job</th><th>Driver</th><th>Status</th></tr></thead>
-                  <tbody>{d.today.jobs.map((j: any) => (
-                    <tr key={j.id}>
-                      <td data-label="Time" className="num nowrap">{fmtTime(j.scheduled_start, c.company.timezone)}</td>
-                      <td data-primary><Link className="row-link" to={c.to(`jobs/${j.id}`)}>#{j.number} {j.service_name ?? 'Service'}</Link><div className="small muted">{j.customer_name} · {j.address}</div></td>
-                      <td data-label="Driver">{j.assignee_name ?? <Pill tone="warning">Unassigned</Pill>}</td>
-                      <td data-label="Status"><JobStatus status={j.status} />{j.problem_open ? <> <Pill tone="danger">Problem</Pill></> : null}</td>
-                    </tr>))}
-                  </tbody>
-                </table></div>
-              ) : <p className="muted">Nothing is scheduled for today.</p>}
-            </div>
+              <p className="status-line" style={{ margin: 0 }}>
+                {r.paused ? <><PauseCircle aria-hidden style={{ width: 16, color: 'var(--warning)' }} />Holding all queued work</> : busy ? <><LiveDot />Working on {busy} step{busy === 1 ? '' : 's'}</> : r.waiting_approval ? <><Hand aria-hidden style={{ width: 16, color: 'var(--primary-text)' }} />Waiting on your approval</> : <><CheckCircle2 aria-hidden style={{ width: 16, color: 'var(--success)' }} />Idle and up to date</>}
+              </p>
+              <dl className="metric-list">
+                <dt>Waiting for approval</dt><dd><TickNumber value={r.waiting_approval} /></dd>
+                <dt>Queued or running</dt><dd><TickNumber value={busy} /></dd>
+                <dt>Done in the last 24 h</dt><dd><TickNumber value={r.done_today} /></dd>
+                <dt>Active workflows</dt><dd><TickNumber value={r.activeWorkflows} /></dd>
+              </dl>
+              <Link to={c.to('automation')} className="small row" style={{ gap: 4 }}>Automation controls<ArrowRight aria-hidden style={{ width: 14 }} /></Link>
+            </section>
           )}
-        </Card>
-      )}
-
-      {d.rigo && (
-        <Card id="rigo" title={<h2 className="row"><Zap aria-hidden />What Rigo is doing</h2>} actions={<Link to={c.to('automation')}>Automation</Link>}>
-          <div className="row" style={{ marginBottom: 12 }}>
-            <Pill tone="brand">{d.rigo.mode === 'manual' ? 'Manual' : d.rigo.mode === 'assisted' ? 'Assisted' : 'Automatic'} mode</Pill>
-            {d.rigo.paused ? <Pill tone="warning" icon={<PauseCircle aria-hidden />}>Paused</Pill> : null}
-            <span className="muted small">{d.rigo.activeWorkflows} active workflow(s)</span>
-          </div>
-          <div className="grid-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
-            <div className="stat"><span className="value">{d.rigo.waiting_approval}</span><span className="label">Waiting for approval</span></div>
-            <div className="stat"><span className="value">{d.rigo.queued + d.rigo.running}</span><span className="label">Queued or running</span></div>
-            <div className="stat"><span className="value">{d.rigo.done_today}</span><span className="label">Done in the last 24 h</span></div>
-          </div>
-        </Card>
-      )}
-
-      {d.business && (
-        <Card id="biz" title="Business overview (last 30 days)">
-          <div className="grid-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-            <div className="stat"><span className="value">{d.business.completed30}</span><span className="label">Jobs completed</span></div>
-            <div className="stat"><span className="value">{d.business.exceptions30}</span><span className="label">Partial or unsuccessful</span></div>
-            <div className="stat"><span className="value">{d.business.customers}</span><span className="label">Customers</span></div>
-            {d.business.issued30Minor !== undefined && <div className="stat"><span className="value">{formatMoney(d.business.issued30Minor, d.business.currency)}</span><span className="label">Invoiced</span></div>}
-            {d.business.outstandingMinor !== undefined && <div className="stat"><span className="value">{formatMoney(d.business.outstandingMinor, d.business.currency)}</span><span className="label">Outstanding</span></div>}
-          </div>
-          <p className="small muted" style={{ marginTop: 12 }}>Calculated from your records. Payments are recorded by your team; Rigo does not process payments.</p>
-        </Card>
-      )}
+          {d.business && (
+            <section className="card stack" aria-labelledby="biz-h">
+              <h2 id="biz-h">Last 30 days</h2>
+              <dl className="metric-list">
+                <dt>Jobs completed</dt><dd><TickNumber value={d.business.completed30} /></dd>
+                <dt>Partial or unsuccessful</dt><dd><TickNumber value={d.business.exceptions30} /></dd>
+                <dt>Customers</dt><dd><TickNumber value={d.business.customers} /></dd>
+                {d.business.issued30Minor !== undefined && <><dt>Invoiced</dt><dd>{formatMoney(d.business.issued30Minor, d.business.currency)}</dd></>}
+                {d.business.outstandingMinor !== undefined && <><dt>Outstanding</dt><dd>{formatMoney(d.business.outstandingMinor, d.business.currency)}</dd></>}
+              </dl>
+              <p className="xsmall muted" style={{ margin: 0 }}>Calculated from your records. Payments are recorded by your team; Rigo does not process payments.</p>
+            </section>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

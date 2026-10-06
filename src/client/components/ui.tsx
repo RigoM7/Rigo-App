@@ -1,6 +1,6 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ButtonHTMLAttributes } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand, Sparkles, PlayCircle } from 'lucide-react';
 import type { ApiError } from '../lib/api';
 
 // ------------------------------------------------------------ buttons
@@ -9,7 +9,7 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button({ 
   const cls = ['btn', variant !== 'default' && `btn-${variant}`, size && `btn-${size}`, block && 'btn-block', className].filter(Boolean).join(' ');
   return (
     <button ref={ref} type={type} className={cls} disabled={disabled || busy} aria-busy={busy || undefined} {...rest}>
-      {busy ? <Loader2 className="spin-icon" aria-hidden style={{ animation: 'spin 0.8s linear infinite' }} /> : icon}
+      {busy ? <Loader2 className="spin-icon" aria-hidden /> : icon}
       {children}
     </button>
   );
@@ -116,8 +116,14 @@ export function Skeleton({ h = 18, w = '100%' }: { h?: number; w?: number | stri
   return <div className="skeleton" style={{ height: h, width: w }} aria-hidden />;
 }
 
+/** Skeleton shaped like a page: a header line, then a card of rows. */
 export function LoadingBlock({ rows = 4 }: { rows?: number }) {
-  return <div className="stack-sm" role="status" aria-label="Loading">{Array.from({ length: rows }, (_, i) => <Skeleton key={i} h={i === 0 ? 28 : 18} w={i === 0 ? '40%' : `${90 - i * 8}%`} />)}</div>;
+  return (
+    <div className="skeleton-page" role="status" aria-label="Loading" aria-busy="true">
+      <Skeleton h={30} w="min(280px, 60%)" />
+      <div className="skeleton-card">{Array.from({ length: rows }, (_, i) => <Skeleton key={i} h={i === 0 ? 20 : 16} w={i === 0 ? '35%' : `${92 - (i % 4) * 9}%`} />)}</div>
+    </div>
+  );
 }
 
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {
@@ -128,7 +134,45 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
 }
 
 export function Empty({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
-  return <div className="empty">{icon}<h3>{title}</h3>{children ? <div style={{ maxWidth: 460 }}>{children}</div> : null}{action}</div>;
+  return <div className="empty">{icon ? <span className="empty-icon" aria-hidden>{icon}</span> : null}<h3>{title}</h3>{children ? <div style={{ maxWidth: 460 }}>{children}</div> : null}{action}</div>;
+}
+
+/** Rigo wordmark. On the black chrome it inherits the chrome text color. */
+export function Wordmark({ to, label = 'Rigo', hideText }: { to: string; label?: string; hideText?: boolean }) {
+  return <Link to={to} className="brand"><span className="brand-mark" aria-hidden>R</span>{hideText ? <span className="sr-only">{label}</span> : <span>{label}</span>}</Link>;
+}
+
+/** A slow pulse for things happening right now. Static under reduced motion. */
+export function LiveDot({ label }: { label?: string }) {
+  return <span className="live-dot" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} />;
+}
+
+/** Numbers that tick to their new value when they change (instant under reduced motion). */
+export function TickNumber({ value, format = (n: number) => String(n) }: { value: number; format?: (n: number) => string }) {
+  const [shown, setShown] = useState(value);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = from.current;
+    if (start === value) return;
+    const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !Number.isFinite(start) || !Number.isFinite(value)) { from.current = value; setShown(value); return; }
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (t: number) => {
+      const p = Math.min(1, (t - t0) / 600);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setShown(Math.round(start + (value - start) * eased));
+      if (p < 1) raf = requestAnimationFrame(step); else from.current = value;
+    };
+    raf = requestAnimationFrame(step);
+    return () => { cancelAnimationFrame(raf); from.current = value; };
+  }, [value]);
+  return <span className="num">{format(shown)}</span>;
+}
+
+/** Inline "Ask Rigo" suggestion that opens the Assistant with context. */
+export function AskRigo({ to, prompt, children = 'Ask Rigo' }: { to: string; prompt: string; children?: ReactNode }) {
+  return <Link className="ask-rigo no-print" to={`${to}?ask=${encodeURIComponent(prompt)}`}><Sparkles aria-hidden />{children}</Link>;
 }
 
 export function Card({ title, actions, children, flush, id }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; flush?: boolean; id?: string }) {
@@ -163,11 +207,13 @@ export function Pill({ tone = 'neutral', children, icon }: { tone?: Tone; childr
 }
 
 const JOB_TONES: Record<string, [Tone, string]> = {
+  // in_progress uses the live red: it is the one status that is happening right now.
   draft: ['neutral', 'Draft'], open: ['info', 'Open'], in_progress: ['brand', 'In progress'], completed: ['success', 'Completed'],
   partial: ['warning', 'Partial'], unsuccessful: ['danger', 'Unsuccessful'], cancelled: ['neutral', 'Cancelled'],
 };
 export function JobStatus({ status }: { status: string }) {
   const [tone, label] = JOB_TONES[status] ?? ['neutral', status];
+  if (status === 'in_progress') return <span className="pill pill-brand"><LiveDot />{label}</span>;
   return <Pill tone={tone} icon={status === 'cancelled' ? <Ban aria-hidden /> : undefined}>{label}</Pill>;
 }
 
@@ -181,7 +227,7 @@ export function InvoiceStatus({ status }: { status: string }) {
 
 const ACTION_TONES: Record<string, [Tone, string, ReactNode?]> = {
   suggested: ['neutral', 'Next step (manual)', <Hand aria-hidden key="h" />], proposed: ['info', 'Proposed'], waiting_approval: ['warning', 'Waiting for approval'], queued: ['info', 'Queued'],
-  running: ['brand', 'Running'], completed: ['success', 'Completed'], simulated: ['demo', 'Simulated'], failed: ['danger', 'Failed'], blocked: ['warning', 'Blocked'],
+  running: ['brand', 'Running', <PlayCircle aria-hidden key="r" />], completed: ['success', 'Completed'], simulated: ['demo', 'Simulated'], failed: ['danger', 'Failed'], blocked: ['warning', 'Blocked'],
   rejected: ['danger', 'Rejected'], cancelled: ['neutral', 'Cancelled'],
 };
 export function ActionStatus({ status, held }: { status: string; held?: boolean }) {
@@ -220,6 +266,28 @@ export function Dialog({ open, onClose, title, children, footer, labelledBy }: {
   );
 }
 
+/** Side panel that slides in from the right. Uses a modal <dialog> so focus is contained and Escape closes it. */
+export function Drawer({ open, onClose, title, sub, children, footer }: { open: boolean; onClose: () => void; title: ReactNode; sub?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const tid = useId();
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+  }, [open]);
+  return (
+    <dialog ref={ref} className="drawer" aria-labelledby={tid} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}
+      onClick={(e) => { if (e.target === ref.current) onClose(); }}>
+      {open && <>
+        <div className="drawer-head"><div style={{ minWidth: 0 }}><h2 id={tid}>{title}</h2>{sub ? <div className="small muted" style={{ marginTop: 4 }}>{sub}</div> : null}</div><IconButton label="Close panel" onClick={onClose}><X aria-hidden /></IconButton></div>
+        <div className="drawer-body">{children}</div>
+        {footer ? <div className="drawer-foot">{footer}</div> : null}
+      </>}
+    </dialog>
+  );
+}
+
 /** Confirmation for consequential or destructive actions: states the consequence plainly. */
 export function useConfirm() {
   const [state, setState] = useState<null | { title: string; body: ReactNode; confirm: string; danger?: boolean; resolve: (v: boolean) => void }>(null);
@@ -250,9 +318,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className="toast">
-            {t.tone === 'error' ? <AlertCircle aria-hidden /> : t.tone === 'info' ? <Info aria-hidden /> : <CheckCircle2 aria-hidden />}
+            {t.tone === 'error' ? <AlertCircle className="t-error" aria-hidden /> : t.tone === 'info' ? <Info className="t-info" aria-hidden /> : <CheckCircle2 className="t-success" aria-hidden />}
             <span style={{ flex: 1 }}>{t.text}</span>
-            <button className="icon-btn" style={{ width: 28, height: 28 }} aria-label="Dismiss" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}><X aria-hidden style={{ width: 16, height: 16 }} /></button>
+            <button className="icon-btn" style={{ width: 28, height: 28, color: 'inherit' }} aria-label="Dismiss" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}><X aria-hidden style={{ width: 16, height: 16 }} /></button>
           </div>
         ))}
       </div>

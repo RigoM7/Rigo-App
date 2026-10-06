@@ -15,7 +15,7 @@ pauses and takeovers.
 
 | Layer | Choice |
 |---|---|
-| Web interface | React 19, React Router 7, TanStack Query, Vite, plain CSS with semantic tokens, Lucide icons, self-hosted Poppins + Open Sans |
+| Web interface | React 19, React Router 7, TanStack Query, Vite, plain CSS with semantic tokens, Lucide icons, self-hosted Geist + Geist Mono |
 | API | Hono on Node.js 22 (TypeScript), zod validation |
 | Auth | Own sessions: random 256-bit tokens (stored as SHA-256), httpOnly SameSite=Lax cookies, bcrypt (cost 12) password hashes, CSRF header check |
 | Database | PostgreSQL 16+ through `pg`; with no `DATABASE_URL`, an embedded PostgreSQL (PGlite) stored in `./data/db` |
@@ -91,9 +91,10 @@ npm run build && npm start &
 BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) npm run test:browser
 ```
 
-The browser checks run real flows (sign-up, demo, dispatch, driver completion, approval,
+The browser checks run real flows (sign-up, demo, live timeline and job panel, command menu,
+sidebar collapse, dispatch, driver completion, approval,
 workflow edit/test, assistant proposal, company creation, employee invitation), an axe
-WCAG 2.2 AA scan of 17 pages in light and dark themes, horizontal-overflow checks at 375,
+WCAG 2.2 AA scan of 18 pages in light and dark themes, horizontal-overflow checks at 375,
 768, 1024 and 1440 px, 200% text, reduced motion and keyboard skip link. Screenshots go to
 `e2e/output/`.
 

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MailOpen } from 'lucide-react';
 import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Banner, LoadingBlock, ErrorSummary, LinkButton } from '../components/ui';
+import { Button, Banner, LoadingBlock, ErrorSummary, LinkButton, Wordmark } from '../components/ui';
 import { fmtDate } from '../lib/format';
 
 export function InvitePage() {
@@ -16,15 +16,16 @@ export function InvitePage() {
   const d = q.data;
   return (
     <div className="auth-wrap">
-      <main className="auth-card stack" id="main">
-        <Link to="/" className="brand"><span className="brand-mark" aria-hidden>R</span>Rigo</Link>
-        <div className="card stack">
+      <main className="auth-card" id="main">
+        <Wordmark to="/" />
+        <div className="auth-panel stack">
           {q.isLoading ? <LoadingBlock /> : !d || d.state === 'invalid' ? (
             <Banner tone="danger" title="This invitation link is not valid">Check that you copied the whole link, or ask the company to send a new invitation.</Banner>
           ) : (
             <>
-              <div className="row"><MailOpen aria-hidden /><h1>Join {d.companyName}</h1></div>
-              <p>You are invited as <strong>{d.roleName}</strong>. The invitation is for <strong>{d.emailHint}</strong>{d.state === 'pending' ? ` and expires ${fmtDate(d.expiresAt)}` : ''}.</p>
+              <span className="empty-icon" aria-hidden><MailOpen /></span>
+              <h1>Join {d.companyName}</h1>
+              <p style={{ margin: 0 }}>You are invited as <strong>{d.roleName}</strong>. The invitation is for <strong>{d.emailHint}</strong>{d.state === 'pending' ? ` and expires ${fmtDate(d.expiresAt)}` : ''}.</p>
               {d.state === 'expired' && <Banner tone="warning" title="This invitation has expired">Ask the company to send a new one.</Banner>}
               {d.state === 'revoked' && <Banner tone="warning" title="This invitation was cancelled">Ask the company if you should still join.</Banner>}
               {d.state === 'replaced' && <Banner tone="warning" title="A newer invitation was sent">Use the most recent link you received.</Banner>}

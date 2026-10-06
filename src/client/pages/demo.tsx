@@ -26,10 +26,12 @@ export function DemoGuide() {
   const set = async (patch: { step?: number; dismissed?: boolean }) => { await post(`/c/${c.cid}/demo/guide`, patch); qc.invalidateQueries({ queryKey: [c.cid, 'boot'] }); };
   const g = GUIDE[step];
   return (
-    <aside className="guide card stack-sm" aria-label="Demo walkthrough" style={{ boxShadow: 'var(--shadow-2)' }}>
-      <div className="row-between"><span className="row small muted" style={{ gap: 6 }}><FlaskConical aria-hidden style={{ width: 16 }} />Guided walkthrough · {step + 1}/{GUIDE.length}</span><IconButton label="Hide walkthrough (you can resume from the demo bar)" onClick={() => set({ dismissed: true })}><X aria-hidden /></IconButton></div>
-      <h2 style={{ fontSize: '1.0625rem' }}>{g.title}</h2>
-      <p style={{ margin: 0 }}>{g.body}</p>
+    <aside className="guide card stack-sm" aria-label="Demo walkthrough">
+      <div className="row-between" style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}>
+        <h2 className="row" style={{ fontSize: 'var(--fs-16)', gap: 8 }}><FlaskConical aria-hidden style={{ width: 16, flex: 'none' }} />{g.title}</h2>
+        <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}><span className="num xsmall muted" aria-label={`Step ${step + 1} of ${GUIDE.length}`}>{step + 1}/{GUIDE.length}</span><IconButton label="Hide walkthrough (you can resume from the demo bar)" onClick={() => set({ dismissed: true })}><X aria-hidden /></IconButton></span>
+      </div>
+      <p className="small" style={{ margin: 0, maxWidth: '75ch' }}>{g.body}</p>
       <div className="row-between">
         <Button size="sm" variant="ghost" icon={<ChevronLeft aria-hidden />} disabled={step === 0} onClick={() => set({ step: step - 1 })}>Back</Button>
         <span className="row">{g.go !== undefined && step > 0 && <Button size="sm" onClick={() => nav(c.to(g.go))}>Show me</Button>}
