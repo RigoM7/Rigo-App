@@ -95,10 +95,10 @@ export function ServiceEditor() {
           <Card id="basics" title="Basics">
             <div className="stack">
               <div className="grid-2">
-                <Field label="Name" id="f-service-name" error={s.fieldError('service.name')}>{(p) => <Input {...p} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+                <Field label="Name" id="f-service-name" error={s.fieldError('service.name')}>{(p) => <Input {...p} maxLength={80} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
                 <Field label="Category" id="f-category">{(p) => <Select {...p} value={v.category} onChange={(e) => setV({ ...v, category: e.target.value })}>{Object.entries(SERVICE_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>}</Field>
               </div>
-              <Field label="Description" optionalText id="f-description">{(p) => <Textarea {...p} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />}</Field>
+              <Field label="Description" optionalText id="f-description">{(p) => <Textarea {...p} maxLength={500} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />}</Field>
               <Checkbox label="Require at least one photo to complete" checked={v.requiresPhoto} onChange={(e) => setV({ ...v, requiresPhoto: e.target.checked })} />
               <Checkbox label="Require a customer signature to complete" checked={v.requiresSignature} onChange={(e) => setV({ ...v, requiresSignature: e.target.checked })} />
               <Checkbox label="Active (available for new jobs)" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} />
@@ -110,10 +110,10 @@ export function ServiceEditor() {
               {v.fields.map((f: FieldDef, i: number) => (
                 <li key={i} className="card" style={{ padding: 12 }}>
                   <div className="grid-2">
-                    <Field label="Label" id={`f-service-fields-${i}-label`} error={s.fieldError(`service.fields.${i}.label`)}>{(p) => <Input {...p} value={f.label} onChange={(e) => setField(i, { label: e.target.value, key: f.key.startsWith('field_') ? slug(e.target.value) : f.key })} />}</Field>
+                    <Field label="Label" id={`f-service-fields-${i}-label`} error={s.fieldError(`service.fields.${i}.label`)}>{(p) => <Input {...p} maxLength={60} value={f.label} onChange={(e) => setField(i, { label: e.target.value, key: f.key.startsWith('field_') ? slug(e.target.value) : f.key })} />}</Field>
                     <Field label="Type" id={`f-ft-${i}`}>{(p) => <Select {...p} value={f.type} onChange={(e) => setField(i, { type: e.target.value as any })}><option value="text">Short text</option><option value="longtext">Long text</option><option value="number">Number</option><option value="select">Choice list</option><option value="boolean">Yes / no</option><option value="date">Date</option></Select>}</Field>
                     <Field label="When" id={`f-fs-${i}`}>{(p) => <Select {...p} value={f.stage} onChange={(e) => setField(i, { stage: e.target.value as any })}><option value="request">Request (dispatch)</option><option value="completion">Completion (driver)</option><option value="both">Both</option></Select>}</Field>
-                    {f.type === 'number' && <Field label="Unit" optionalText id={`f-fu-${i}`}>{(p) => <Input {...p} value={f.unit} onChange={(e) => setField(i, { unit: e.target.value })} />}</Field>}
+                    {f.type === 'number' && <Field label="Unit" optionalText id={`f-fu-${i}`}>{(p) => <Input {...p} maxLength={20} value={f.unit} onChange={(e) => setField(i, { unit: e.target.value })} />}</Field>}
                     {f.type === 'select' && <Field label="Options (one per line)" id={`f-service-fields-${i}-options`} error={s.fieldError(`service.fields.${i}.options`)}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => setField(i, { options: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />}</Field>}
                   </div>
                   <div className="row-between" style={{ marginTop: 8 }}>
@@ -135,7 +135,7 @@ export function ServiceEditor() {
               {v.pricing.map((p: PriceLine, i: number) => (
                 <li key={p.id} className="card" style={{ padding: 12 }}>
                   <div className="grid-2">
-                    <Field label="Line label" id={`f-service-pricing-${i}-label`}>{(pp) => <Input {...pp} value={p.label} onChange={(e) => setPrice(i, { label: e.target.value })} />}</Field>
+                    <Field label="Line label" id={`f-service-pricing-${i}-label`}>{(pp) => <Input {...pp} maxLength={80} value={p.label} onChange={(e) => setPrice(i, { label: e.target.value })} />}</Field>
                     <Field label="Charged" id={`f-pb-${i}`}>{(pp) => <Select {...pp} value={p.basis} onChange={(e) => setPrice(i, { basis: e.target.value as any })}><option value="flat">Once per job</option><option value="per_quantity">Per unit of a quantity field</option></Select>}</Field>
                     {p.basis === 'per_quantity' && <Field label="Quantity field" id={`f-service-pricing-${i}-quantityField`} error={s.fieldError(`service.pricing.${i}.quantityField`)}>{(pp) => <Select {...pp} value={p.quantityField} onChange={(e) => { const f = numberFields.find((x: FieldDef) => x.key === e.target.value); setPrice(i, { quantityField: e.target.value, unit: f?.unit ?? p.unit }); }}><option value="">Choose…</option>{numberFields.map((f: FieldDef) => <option key={f.key} value={f.key}>{f.label}</option>)}</Select>}</Field>}
                     <Field label={`Rate (${c.company.currency})${p.basis === 'per_quantity' && p.unit ? ` per ${p.unit}` : ''}`} id={`f-rate-${i}`} hint="Empty means not set yet.">{(pp) => <Input {...pp} inputMode="decimal" value={rates[p.id] ?? ''} onChange={(e) => setRates({ ...rates, [p.id]: e.target.value })} />}</Field>

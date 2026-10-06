@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, Plus, MailOpen, ChevronRight, LogOut, UserCircle2, ChevronLeft } from 'lucide-react';
-import { useMe } from '../lib/session';
+import { refreshMe, signOutAndForget, useMe } from '../lib/session';
+import { useDocumentTitle } from '../lib/title';
+import { ConfirmEmailNotice } from './account';
 import { post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, ErrorSummary, Pill, Banner, LoadingBlock, Checkbox, Wordmark, useToast } from '../components/ui';
@@ -19,7 +21,8 @@ export function TopBar() {
     const uid = me.data?.user?.id;
     if (uid && (await hasUnsynced(uid))) { nav('/account?signout=1'); return; }
     if (uid) await clearUserData(uid);
-    await post('/auth/signout'); qc.clear(); nav('/signin');
+    await signOutAndForget(qc);
+    nav('/signin');
   };
   return (
     <header className="plain-top">
@@ -36,8 +39,9 @@ export function Workspaces() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
-  const demo = useSubmit(async () => { const r = await post('/demo'); await qc.invalidateQueries({ queryKey: ['me'] }); nav(`/c/${r.id}`); });
-  const accept = useSubmit(async (id: string) => { const r = await post(`/me/invitations/${id}/accept`); await qc.invalidateQueries({ queryKey: ['me'] }); toast('Invitation accepted'); nav(`/c/${r.companyId}`); });
+  const demo = useSubmit(async () => { const r = await post('/demo'); await refreshMe(qc); nav(`/c/${r.id}`); });
+  const accept = useSubmit(async (id: string) => { const r = await post(`/me/invitations/${id}/accept`); await refreshMe(qc); toast('Invitation accepted'); nav(`/c/${r.companyId}`); });
+  useDocumentTitle('Workspaces');
   if (me.isLoading || !me.data) return <div className="auth-wrap"><LoadingBlock /></div>;
   const real = me.data.companies.filter((c) => c.kind === 'real');
   const demoCo = me.data.companies.find((c) => c.kind === 'demo');
@@ -46,7 +50,8 @@ export function Workspaces() {
       <TopBar />
       <main className="plain-main" id="main">
         <div className="page page-narrow">
-          <div><h1>Hello, {me.data.user?.name.split(' ')[0]}</h1><p className="muted" style={{ marginTop: 8 }}>Choose a workspace. Each company is separate: what you can see depends on your role there.</p></div>
+          <div><h1 className="wrap-anywhere">Hello, {me.data.user?.name.split(' ')[0]}</h1><p className="muted" style={{ marginTop: 8 }}>Open a company to get to work. Each company is separate, and what you see depends on your role there.</p></div>
+          {me.data.user && !me.data.user.emailVerified && me.data.emailChannel !== 'none' ? <ConfirmEmailNotice email={me.data.user.email} /> : null}
           {me.data.invitations.length > 0 && (
             <Card title="Invitations for you" id="inv">
               <ErrorSummary error={accept.error} />
@@ -79,14 +84,14 @@ export function Workspaces() {
             )}
           </section>
           <Card title={<h2 className="row" style={{ gap: 8 }}><FlaskConical aria-hidden style={{ width: 18 }} />Free demo</h2>}>
-            <p>Explore a fictional fuel, portable toilet and septic company. Try dispatching a job, completing it as a driver and approving the invoice. Nothing is sent, charged or connected.</p>
+            <p>{real.length ? '' : 'Not sure yet? Try a sample company first; nothing is sent or charged. '}A fictional fuel, portable toilet and septic company where you can dispatch a job, finish it as a driver and approve the invoice.</p>
             <ErrorSummary error={demo.error} />
             <div className="row">
-              <Button variant={real.length ? 'default' : 'primary'} busy={demo.busy} icon={<FlaskConical aria-hidden />} onClick={() => (demoCo ? nav(`/c/${demoCo.id}`) : demo.run())}>{demoCo ? 'Open my demo' : 'Explore the demo'}</Button>
+              <Button busy={demo.busy} icon={<FlaskConical aria-hidden />} onClick={() => (demoCo ? nav(`/c/${demoCo.id}`) : demo.run())}>{demoCo ? 'Open my demo' : 'Explore the demo'}</Button>
               {demoCo ? <Pill tone="demo">Demo workspace</Pill> : null}
             </div>
           </Card>
-          {me.data.devMailbox && <p className="small muted">Local installation: simulated emails (invitations, password resets) appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</p>}
+          {me.data.devMailbox && <p className="small muted">On this local copy, invitation and password emails appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</p>}
         </div>
       </main>
     </div>
@@ -102,7 +107,7 @@ export function CompanyBasicsForm({ onSubmit, busy, error, submitLabel, initial 
   return (
     <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); onSubmit(v); }}>
       <ErrorSummary error={error} />
-      <Field label="Company name" id="f-name" error={error?.fields?.name}>{(p) => <Input {...p} autoComplete="organization" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+      <Field label="Company name" id="f-name" error={error?.fields?.name}>{(p) => <Input {...p} maxLength={80} autoComplete="organization" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
       <div className="grid-2">
         <Field label="Time zone" id="f-timezone" hint="Schedules and recurring visits use this." error={error?.fields?.timezone}>{(p) => <Select {...p} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })}>{[...new Set([v.timezone, ...TIMEZONES])].map((t) => <option key={t}>{t}</option>)}</Select>}</Field>
         <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</Select>}</Field>
@@ -129,7 +134,8 @@ export function CompanyBasicsForm({ onSubmit, busy, error, submitLabel, initial 
 export function NewCompany() {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const s = useSubmit(async (v: any) => { const r = await post('/companies', v); await qc.invalidateQueries({ queryKey: ['me'] }); nav(`/c/${r.id}/setup`); });
+  const s = useSubmit(async (v: any) => { const r = await post('/companies', v); await refreshMe(qc); nav(`/c/${r.id}/setup`); });
+  useDocumentTitle('Create a company');
   return (
     <div className="shell">
       <TopBar />

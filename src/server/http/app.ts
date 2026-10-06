@@ -1,8 +1,9 @@
+import '../lib/zod-messages.js';
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import { type AppEnv, loadUser, companyScope } from './context.js';
 import { HttpError } from './errors.js';
-import { accounts } from '../modules/accounts.js';
+import { accounts, cleanupAuth } from '../modules/accounts.js';
 import { companiesPublic, companyRoutes } from '../modules/companies.js';
 import { teamRoutes, invitationPublic } from '../modules/team.js';
 import { inboxRoutes } from '../modules/inbox.js';
@@ -57,12 +58,17 @@ export function createApp() {
     const visits = await generateAll();
     const escalated = await escalateApprovals();
     await processAll(8000);
+    await cleanupAuth();
     return c.json({ ok: true, visits, escalated });
   });
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: 'Not found.' } }, 404));
   app.onError((err, c) => {
-    if (err instanceof HttpError) return c.json({ error: { code: err.code, message: err.message, details: err.details ?? null } }, err.status as any);
+    if (err instanceof HttpError) {
+      const retry = (err.details as any)?.retryAfter;
+      if (err.status === 429 && retry) c.header('Retry-After', String(retry));
+      return c.json({ error: { code: err.code, message: err.message, details: err.details ?? null } }, err.status as any);
+    }
     console.error(err);
     return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Nothing was partially saved; try again.' } }, 500);
   });

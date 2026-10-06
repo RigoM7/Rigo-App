@@ -35,6 +35,12 @@
 - `.claude/settings.json` allows the routine commands (npm installs and scripts, the
   checks above, Playwright, everyday git) without a prompt, and denies force pushes
   and `git reset --hard`. Add to that list when the owner approves a new command.
+  It also carries `defaultMode: bypassPermissions`, which has no effect: Claude Code
+  ignores that value in a repository's settings, both locally and in the cloud. For
+  bypass mode, the owner starts a local session with
+  `claude --permission-mode bypassPermissions` (or sets it in their own
+  `~/.claude/settings.json`); cloud sessions use the mode dropdown. Only the owner
+  changes the permission mode.
 
 ## Prompts
 The owner's reusable prompts for building Rigo live in `.claude/commands/`; each file runs as
@@ -81,6 +87,12 @@ Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
   checking pages by hand; `e2e/run.mjs` stays the automated browser check. Point it at
   a local build or a preview, and never sign in to or change data on the live site
   without the owner's go-ahead.
+- `design-md`: Google Labs' DESIGN.md format (google-labs-code/design.md at 9bf8eae,
+  Apache-2.0). That repository ships a spec and a CLI, not a skill, so this skill wraps
+  them: its spec, philosophy and an example, plus how to `lint`, `diff` and `export` with
+  `npx -y @google/design.md@0.4.0`. Rigo has no root `DESIGN.md`; create one only when the
+  owner asks, generated from `src/client/styles.css` and `docs/DESIGN-SYSTEM.md` and kept
+  in sync with them.
 
 Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
 any skill's suggestions.

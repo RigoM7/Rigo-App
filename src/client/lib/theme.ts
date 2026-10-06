@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 export type ThemePref = 'light' | 'dark' | 'system';
 const KEY = 'rigo-theme';
 
@@ -23,3 +24,15 @@ export function applyTheme(pref: ThemePref) {
   }
 }
 function onSystem() { applyTheme('system'); }
+
+/** The theme on screen right now ('light' or 'dark'), following changes to it. */
+export function useResolvedTheme(): 'light' | 'dark' {
+  const read = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light') as 'light' | 'dark';
+  const [theme, setTheme] = useState(read);
+  useEffect(() => {
+    const obs = new MutationObserver(() => setTheme(read()));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => obs.disconnect();
+  }, []);
+  return theme;
+}

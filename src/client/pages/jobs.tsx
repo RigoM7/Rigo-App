@@ -9,6 +9,7 @@ import { fmtDateTime, fmtTime, toLocalInput } from '../lib/format';
 import { BILLING_STATUSES } from '../../shared/jobs';
 import { DispatchTimeline } from '../components/timeline';
 import { QuickAssign } from '../components/assign';
+import { useDocumentTitle } from '../lib/title';
 
 type View = 'list' | 'board' | 'schedule';
 const FINISHED = ['completed', 'partial', 'unsuccessful', 'cancelled'];
@@ -17,6 +18,7 @@ export { QuickAssign };
 
 export function Jobs() {
   const c = useCompany();
+  useDocumentTitle('Jobs');
   const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const view = (sp.get('view') ?? 'list') as View;

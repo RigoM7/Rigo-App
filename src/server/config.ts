@@ -38,4 +38,19 @@ export const config = {
   },
   emailProvider: env.RIGO_EMAIL_PROVIDER || '',
   cronSecret: env.CRON_SECRET || '',
+  // Trust X-Forwarded-For only behind a proxy that sets it (Vercel overwrites it; tests opt in).
+  trustProxy: !!env.VERCEL || env.RIGO_TRUST_PROXY === '1',
+  // Shown on the password recovery page for owners with no other owner. Never invented.
+  supportEmail: validEmail(env.RIGO_SUPPORT_EMAIL),
+  termsUrl: validUrl(env.RIGO_TERMS_URL),
+  privacyUrl: validUrl(env.RIGO_PRIVACY_URL),
 };
+
+function validEmail(v: string | undefined) {
+  const s = (v ?? '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : null;
+}
+
+function validUrl(v: string | undefined) {
+  try { const u = new URL((v ?? '').trim()); return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null; } catch { return null; }
+}

@@ -6,7 +6,7 @@ import {
   Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, CalendarCheck, WifiOff, FlaskConical, RotateCcw, Check, Zap, Search, PanelLeftClose, PanelLeftOpen,
   UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
-import { useCompany, useMe } from '../lib/session';
+import { refreshMe, signOutAndForget, useCompany, useMe } from '../lib/session';
 import { get, patch, post } from '../lib/api';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
 import { relTime } from '../lib/format';
@@ -14,6 +14,7 @@ import { Button, IconButton, Pill, Wordmark, useToast, useConfirm } from './ui';
 import { DemoGuide, ResumeGuideButton } from '../pages/demo';
 import type { Permission } from '../../shared/permissions';
 import { accentVariants } from '../../shared/branding';
+import { useDocumentTitle } from '../lib/title';
 
 export interface NavItem { key: string; label: string; to: string; icon: ReactNode; perm?: Permission | Permission[]; count?: number; section: string }
 
@@ -127,8 +128,7 @@ function AccountMenu() {
       return;
     }
     if (uid) await clearUserData(uid);
-    await post('/auth/signout');
-    qc.clear();
+    await signOutAndForget(qc);
     nav('/signin');
   };
   return (
@@ -204,6 +204,7 @@ function DemoBar() {
     if (!(await ask({ title: 'Reset the demo?', body: 'Everything you changed in this demo is replaced with fresh fictional data. Your real companies are not affected.', confirm: 'Reset demo', danger: true }))) return;
     const r = await post(`/c/${c.cid}/demo/reset`);
     qc.clear();
+    await refreshMe(qc);
     nav(`/c/${r.id}`);
   };
   return (
@@ -426,6 +427,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 export function MorePage() {
   const c = useCompany();
+  useDocumentTitle('More');
   const items = useNavItems();
   const bottom = bottomItems(items);
   const more = items.filter((i) => !bottom.includes(i));

@@ -37,13 +37,13 @@ function NewCustomerDialog({ open, onClose, onCreated }: { open: boolean; onClos
     <Dialog open={open} onClose={onClose} title="New customer" footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={s.busy} onClick={() => s.run()}>Add customer</Button></>}>
       <div className="stack">
         <ErrorSummary error={s.error} labels={{ 'location.address': 'f-nc-address' }} />
-        <Field label="Customer name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+        <Field label="Customer name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={120} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
         <div className="grid-2">
-          <Field label="Email" optionalText id="f-email" error={s.fieldError('email')}>{(p) => <Input {...p} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
-          <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
+          <Field label="Email" optionalText id="f-email" error={s.fieldError('email')}>{(p) => <Input {...p} maxLength={254} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+          <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
         </div>
-        <Field label="Service address" id="f-nc-address" hint="Creates the first service location." error={s.fieldError('location.address')}>{(p) => <Input {...p} autoComplete="street-address" value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
-        <Field label="Access instructions" optionalText id="f-nc-access">{(p) => <Textarea {...p} value={v.accessInstructions} onChange={(e) => setV({ ...v, accessInstructions: e.target.value })} />}</Field>
+        <Field label="Service address" id="f-nc-address" hint="Creates the first service location." error={s.fieldError('location.address')}>{(p) => <Input {...p} maxLength={300} autoComplete="street-address" value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
+        <Field label="Access instructions" optionalText id="f-nc-access">{(p) => <Textarea {...p} maxLength={1000} value={v.accessInstructions} onChange={(e) => setV({ ...v, accessInstructions: e.target.value })} />}</Field>
       </div>
     </Dialog>
   );
@@ -118,10 +118,10 @@ export function JobForm() {
               setV({ ...v, locationId: e.target.value, accessInstructions: v.accessInstructions || loc?.access_instructions || '' });
             }}><option value="">{v.customerId ? 'Choose a location…' : 'Choose a customer first'}</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.label ? `${l.label}: ` : ''}{l.address}</option>)}</Select>}</Field>
             <div className="grid-2">
-              <Field label="On-site contact" optionalText id="f-contactName">{(p) => <Input {...p} value={v.contactName} onChange={(e) => setV({ ...v, contactName: e.target.value })} />}</Field>
-              <Field label="Contact phone" optionalText id="f-contactPhone">{(p) => <Input {...p} type="tel" value={v.contactPhone} onChange={(e) => setV({ ...v, contactPhone: e.target.value })} />}</Field>
+              <Field label="On-site contact" optionalText id="f-contactName">{(p) => <Input {...p} maxLength={120} value={v.contactName} onChange={(e) => setV({ ...v, contactName: e.target.value })} />}</Field>
+              <Field label="Contact phone" optionalText id="f-contactPhone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.contactPhone} onChange={(e) => setV({ ...v, contactPhone: e.target.value })} />}</Field>
             </div>
-            <Field label="Access instructions" optionalText id="f-accessInstructions" hint="Shown to the driver on site.">{(p) => <Textarea {...p} value={v.accessInstructions} onChange={(e) => setV({ ...v, accessInstructions: e.target.value })} />}</Field>
+            <Field label="Access instructions" optionalText id="f-accessInstructions" hint="Shown to the driver on site.">{(p) => <Textarea {...p} maxLength={2000} value={v.accessInstructions} onChange={(e) => setV({ ...v, accessInstructions: e.target.value })} />}</Field>
           </div>
         </Card>
         <Card title="Service" id="svc">
@@ -130,7 +130,7 @@ export function JobForm() {
             {services.data && services.data.services.length === 0 && <Banner tone="warning">No services are set up yet. {c.can('services.manage') ? 'Add one in Services & pricing.' : 'Ask an owner to add one.'}</Banner>}
             {requestFields.length > 0 && <div className="grid-2">{requestFields.map((f) => <DynamicField key={f.key} f={f} value={v.details[f.key]} error={fe(`details.${f.key}`)} onChange={(x) => setV({ ...v, details: { ...v.details, [f.key]: x } })} />)}</div>}
             {c.company.customFields?.jobs?.length > 0 && !editing && <div className="grid-2">{c.company.customFields.jobs.map((f: any) => <DynamicField key={f.key} f={f} idPrefix="custom" value={v.custom[f.key]} error={fe(`custom.${f.key}`)} onChange={(x) => setV({ ...v, custom: { ...v.custom, [f.key]: x } })} />)}</div>}
-            <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />}</Field>
+            <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={4000} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />}</Field>
           </div>
         </Card>
         <Card title="When" id="when">

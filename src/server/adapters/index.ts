@@ -36,14 +36,36 @@ export async function deliverMessage(company: { kind: string }, _msg: { channel:
   return { status: 'blocked' as const, detail: 'No delivery provider is implemented.', provider: 'none' };
 }
 
-/** System email (invitations, password resets). Locally these land in a simulated mailbox preview. */
-export async function sendSystemEmail(q: Q, mail: { to: string; subject: string; body: string; link?: string; kind: string }) {
-  if (config.devMailbox) {
+// ---------------------------------------------------------------- system email
+// Account email (password reset, invitations, email confirmation, email change) all goes through
+// sendSystemEmail, so configuring a provider later turns every one of them on at once.
+
+export type SystemEmailKind = 'password_reset' | 'invitation' | 'email_verify' | 'email_change' | 'email_changed_notice';
+export interface SystemEmail { to: string; subject: string; body: string; link?: string; kind: SystemEmailKind }
+interface SystemEmailProvider { send(mail: SystemEmail): Promise<void> }
+
+// No provider is implemented yet. Add one here (keyed by RIGO_EMAIL_PROVIDER) when the owner picks a service.
+const PROVIDERS: Record<string, SystemEmailProvider> = {};
+
+/** How account email can reach people on this deployment. */
+export function systemEmailChannel(): 'email' | 'mailbox' | 'none' {
+  if (config.emailProvider && PROVIDERS[config.emailProvider]) return 'email';
+  if (config.devMailbox) return 'mailbox';
+  return 'none';
+}
+
+export async function sendSystemEmail(q: Q, mail: SystemEmail) {
+  const channel = systemEmailChannel();
+  if (channel === 'email') {
+    await PROVIDERS[config.emailProvider].send(mail);
+    return { delivered: true, simulated: false, detail: 'Sent.' };
+  }
+  if (channel === 'mailbox') {
     await q.query(`insert into rigo.dev_mailbox (to_email, subject, body, link, kind) values ($1,$2,$3,$4,$5)`,
       [mail.to, mail.subject, mail.body, mail.link ?? null, mail.kind]);
     return { delivered: false, simulated: true, detail: 'Recorded in the local simulated mailbox (/dev/mailbox).' };
   }
-  return { delivered: false, simulated: false, detail: 'No email service is configured; share the link directly.' };
+  return { delivered: false, simulated: false, detail: 'Email is not set up yet; share the link directly.' };
 }
 
 // ---------------------------------------------------------------- file storage

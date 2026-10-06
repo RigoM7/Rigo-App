@@ -85,7 +85,7 @@ function LinesEditor({ data, onDone, onCancel }: { data: any; onDone: () => void
         {lines.map((l, i) => (
           <div key={i} className="card" style={{ padding: 12 }}>
             <div className="grid-2">
-              <Field label="Description" id={`f-lines-${i}-description`} error={s.fieldError(`lines.${i}.description`)}>{(p) => <Input {...p} value={l.description} onChange={(e) => set(i, { description: e.target.value })} />}</Field>
+              <Field label="Description" id={`f-lines-${i}-description`} error={s.fieldError(`lines.${i}.description`)}>{(p) => <Input {...p} maxLength={200} value={l.description} onChange={(e) => set(i, { description: e.target.value })} />}</Field>
               <Field label="Type" id={`f-lk-${i}`}>{(p) => <Select {...p} value={l.kind} onChange={(e) => set(i, { kind: e.target.value })}><option value="charge">Charge</option><option value="discount">Discount</option></Select>}</Field>
               <Field label="Quantity" id={`f-lines-${i}-quantity`} error={s.fieldError(`lines.${i}.quantity`)}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.quantity} onChange={(e) => set(i, { quantity: e.target.value })} />}</Field>
               <Field label={`Rate (${data.invoice.currency})`} id={`f-lr-${i}`} hint="Empty keeps the invoice on hold.">{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.rate} onChange={(e) => set(i, { rate: e.target.value })} />}</Field>
@@ -97,7 +97,7 @@ function LinesEditor({ data, onDone, onCancel }: { data: any; onDone: () => void
           </div>
         ))}
         <div><Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLines([...lines, { description: '', quantity: '1', unit: '', rate: '', taxable: false, kind: 'charge' }])}>Add line</Button></div>
-        <Field label="Note on invoice" optionalText id="f-notes">{(p) => <Textarea {...p} value={notes} onChange={(e) => setNotes(e.target.value)} />}</Field>
+        <Field label="Note on invoice" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} />}</Field>
         <p className="small muted num">Subtotal before tax: {preview.subtotalMinor === null ? 'incomplete' : formatMoney(preview.subtotalMinor - (preview.discountMinor ?? 0), data.invoice.currency)}. Tax is applied by the server from the service's configured rate.</p>
         <div className="form-actions"><Button variant="primary" busy={s.busy} onClick={() => s.run()}>Save lines</Button><Button onClick={onCancel}>Cancel</Button></div>
       </div>
@@ -230,12 +230,12 @@ export function InvoiceDetail() {
           <ErrorSummary error={recordPay.error} />
           <Field label={`Amount (${i.currency})`} id="f-amountMinor" hint={`Balance due: ${formatMoney((i.totalMinor ?? 0) - (i.paidMinor ?? 0), i.currency)}`} error={recordPay.fieldError('amountMinor')}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} />}</Field>
           <Field label="Method" id="f-method">{(p) => <Select {...p} value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })}><option value="check">Check</option><option value="cash">Cash</option><option value="card">Card (processed elsewhere)</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></Select>}</Field>
-          <Field label="Note" optionalText id="f-note">{(p) => <Input {...p} value={pay.note} onChange={(e) => setPay({ ...pay, note: e.target.value })} />}</Field>
+          <Field label="Note" optionalText id="f-note">{(p) => <Input {...p} maxLength={500} value={pay.note} onChange={(e) => setPay({ ...pay, note: e.target.value })} />}</Field>
         </div>
       </Dialog>
       <Dialog open={voidOpen} onClose={() => setVoidOpen(false)} title="Void this invoice?" footer={<><Button onClick={() => setVoidOpen(false)}>Keep it</Button><Button variant="danger" icon={<Ban aria-hidden />} busy={voidIt.busy} onClick={() => voidIt.run()}>Void invoice</Button></>}>
         <div className="stack"><p>The invoice keeps its number but no longer counts as owed. The job becomes ready to bill again.</p><ErrorSummary error={voidIt.error} />
-          <Field label="Reason" id="f-reason" error={voidIt.fieldError('reason')}>{(p) => <Input {...p} value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />}</Field></div>
+          <Field label="Reason" id="f-reason" error={voidIt.fieldError('reason')}>{(p) => <Input {...p} maxLength={500} value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />}</Field></div>
       </Dialog>
       {node}
     </div>

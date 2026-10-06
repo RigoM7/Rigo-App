@@ -113,8 +113,8 @@ export function Setup() {
           <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); addTruck.run(); }}>
             <ErrorSummary error={addTruck.error} />
             <div className="grid-2">
-              <Field label="Name" id="f-name" error={addTruck.fieldError('name')}>{(p) => <Input {...p} value={truck.name} onChange={(e) => setTruck({ ...truck, name: e.target.value })} />}</Field>
-              <Field label="Plate or identifier" optionalText id="f-identifier">{(p) => <Input {...p} value={truck.identifier} onChange={(e) => setTruck({ ...truck, identifier: e.target.value })} />}</Field>
+              <Field label="Name" id="f-name" error={addTruck.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={truck.name} onChange={(e) => setTruck({ ...truck, name: e.target.value })} />}</Field>
+              <Field label="Plate or identifier" optionalText id="f-identifier">{(p) => <Input {...p} maxLength={60} value={truck.identifier} onChange={(e) => setTruck({ ...truck, identifier: e.target.value })} />}</Field>
             </div>
             <div className="form-actions"><Button type="submit" busy={addTruck.busy}>Add truck</Button><Button variant="primary" onClick={next}>Continue</Button><Button variant="ghost" onClick={() => { mark('resourcesSkipped'); next(); }}>Skip for now</Button></div>
           </form>
@@ -126,7 +126,7 @@ export function Setup() {
             <p className="muted">Employees join with their own account through a single-use link. They don't create a company or go through the demo.</p>
             <ErrorSummary error={invite.error} />
             <div className="grid-2">
-              <Field label="Email" id="f-email" error={invite.fieldError('email')}>{(p) => <Input {...p} type="email" value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} />}</Field>
+              <Field label="Email" id="f-email" error={invite.fieldError('email')}>{(p) => <Input {...p} maxLength={254} type="email" value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} />}</Field>
               <Field label="Role" id="f-role">{(p) => <Select {...p} value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })}>{c.roles.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}</Select>}</Field>
             </div>
             {invLink && <Banner tone="success" title="Invitation created">Share this link: <span className="wrap-anywhere">{invLink}</span></Banner>}

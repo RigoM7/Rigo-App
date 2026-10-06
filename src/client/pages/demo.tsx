@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, ChevronRight, ChevronLeft, FlaskConical } from 'lucide-react';
-import { useCompany } from '../lib/session';
+import { refreshMe, useCompany } from '../lib/session';
 import { post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Banner, PageHeader, Checkbox, IconButton } from '../components/ui';
@@ -46,7 +46,7 @@ export function SetupFromDemo() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [copy, setCopy] = useState(true);
-  const s = useSubmit(async (v: any) => { const r = await post(`/c/${c.cid}/demo/convert`, { ...v, copyStructure: copy }); await qc.invalidateQueries({ queryKey: ['me'] }); window.location.href = `/c/${r.id}/setup`; });
+  const s = useSubmit(async (v: any) => { const r = await post(`/c/${c.cid}/demo/convert`, { ...v, copyStructure: copy }); await refreshMe(qc); window.location.href = `/c/${r.id}/setup`; });
   if (!c.demo) return <div className="page"><Banner tone="info">This page is for the demo workspace. To create another company, use <a href="/workspaces/new">Create a company</a>.</Banner></div>;
   return (
     <div className="page page-narrow">

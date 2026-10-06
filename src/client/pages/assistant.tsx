@@ -66,7 +66,7 @@ export function AssistantChat({ compact, initial = '' }: { compact?: boolean; in
       {err && <div style={{ padding: '0 12px' }}><Banner tone="danger">{err}</Banner></div>}
       <form className="chat-input" onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <label htmlFor={compact ? 'chat-c' : 'chat-p'} className="sr-only">Message the assistant</label>
-        <input ref={inputRef} id={compact ? 'chat-c' : 'chat-p'} className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask or describe a workflow…" autoComplete="off" />
+        <input ref={inputRef} id={compact ? 'chat-c' : 'chat-p'} className="input" maxLength={2000} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask or describe a workflow…" autoComplete="off" />
         <Button type="submit" variant="primary" busy={busy} aria-label="Send"><Send aria-hidden /></Button>
       </form>
       {q.data?.messages.length ? <div style={{ padding: '0 12px 12px' }}><Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} onClick={clear}>Clear conversation</Button></div> : null}

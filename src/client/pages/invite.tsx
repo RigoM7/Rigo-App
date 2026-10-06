@@ -5,15 +5,18 @@ import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Banner, LoadingBlock, ErrorSummary, LinkButton, Wordmark } from '../components/ui';
 import { fmtDate } from '../lib/format';
+import { refreshMe, signOutAndForget } from '../lib/session';
+import { useDocumentTitle } from '../lib/title';
 
 export function InvitePage() {
   const { token = '' } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['invite', token], queryFn: () => get(`/invitations/${token}`) });
-  const accept = useSubmit(async () => { const r = await post(`/invitations/${token}/accept`); await qc.invalidateQueries({ queryKey: ['me'] }); nav(`/c/${r.companyId}`); });
-  const signOut = async () => { await post('/auth/signout'); qc.clear(); nav(`/signin?next=/invite/${token}`); };
+  const accept = useSubmit(async () => { const r = await post(`/invitations/${token}/accept`); await refreshMe(qc); nav(`/c/${r.companyId}`); });
+  const signOut = async () => { await signOutAndForget(qc); nav(`/signin?next=/invite/${token}`); };
   const d = q.data;
+  useDocumentTitle(d?.companyName ? `Join ${d.companyName}` : 'Invitation');
   return (
     <div className="auth-wrap">
       <main className="auth-card" id="main">

@@ -59,8 +59,8 @@ export function Templates() {
         {create && <div className="stack">
           <Banner tone="info">Rates, approver names, customers and all records stay private. Only structure is shared.</Banner>
           <ErrorSummary error={save.error} />
-          <Field label="Name" id="f-name" error={save.fieldError('name')}>{(p) => <Input {...p} value={create.name} onChange={(e) => setCreate({ ...create, name: e.target.value })} />}</Field>
-          <Field label="Description" optionalText id="f-description">{(p) => <Textarea {...p} value={create.description} onChange={(e) => setCreate({ ...create, description: e.target.value })} />}</Field>
+          <Field label="Name" id="f-name" error={save.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={create.name} onChange={(e) => setCreate({ ...create, name: e.target.value })} />}</Field>
+          <Field label="Description" optionalText id="f-description">{(p) => <Textarea {...p} maxLength={400} value={create.description} onChange={(e) => setCreate({ ...create, description: e.target.value })} />}</Field>
           <Field label="Who can use it" id="f-visibility">{(p) => <Select {...p} value={create.visibility} onChange={(e) => setCreate({ ...create, visibility: e.target.value })}><option value="private">Only me</option><option value="shared">People I choose</option><option value="public">Anyone with a Rigo account</option></Select>}</Field>
           {create.visibility === 'shared' && <Field label="Share with (emails)" id="f-shareWith" hint="Separate with commas." error={save.fieldError('shareWith')}>{(p) => <Textarea {...p} value={create.shareWith} onChange={(e) => setCreate({ ...create, shareWith: e.target.value })} />}</Field>}
         </div>}

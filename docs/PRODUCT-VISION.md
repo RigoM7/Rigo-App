@@ -41,6 +41,11 @@ through templates and configuration rather than code.
   Companies can have several owners; the last active owner cannot be removed or demoted.
 - Employees join through an emailed (locally: simulated) single-use invitation bound to their
   address, with expiry, revoke, replace, wrong-account guidance and race-safe acceptance.
+- Anyone who forgets their password can recover it: by email once an email service is set up,
+  and always through a single-use reset link an owner (or someone allowed to manage members)
+  creates from Team. Owners with no other owner can be pointed to a support address. Accounts
+  can change their email (with the password) and can be deleted, except by the last owner of a
+  company.
 - Role presets: **Owner**, **Dispatcher**, **Driver**, **Office/billing**. Owners can edit
   role permissions across records, fields, actions, financial visibility, workflow
   configuration, approval authority and member management. Approval authority can be

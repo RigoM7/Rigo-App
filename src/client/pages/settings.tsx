@@ -31,7 +31,7 @@ function CustomFieldsEditor() {
       <ol className="stack" style={{ listStyle: 'none', padding: 0, margin: '12px 0' }}>{list.map((f: any, i: number) => (
         <li key={i} className="card" style={{ padding: 12 }}>
           <div className="grid-2">
-            <Field label="Label" id={`f-customFields-${kind}-${i}-label`} error={s.fieldError(`customFields.${kind}.${i}.label`)}>{(p) => <Input {...p} value={f.label} onChange={(e) => set(i, { label: e.target.value, key: f.isNew ? slug(e.target.value) : f.key })} />}</Field>
+            <Field label="Label" id={`f-customFields-${kind}-${i}-label`} error={s.fieldError(`customFields.${kind}.${i}.label`)}>{(p) => <Input {...p} maxLength={60} value={f.label} onChange={(e) => set(i, { label: e.target.value, key: f.isNew ? slug(e.target.value) : f.key })} />}</Field>
             <Field label="Type" id={`f-cft-${i}`}>{(p) => <Select {...p} value={f.type} onChange={(e) => set(i, { type: e.target.value })}><option value="text">Text</option><option value="number">Number</option><option value="select">Choice list</option><option value="boolean">Yes / no</option><option value="date">Date</option></Select>}</Field>
             {f.type === 'select' && <Field label="Options (one per line)" id={`f-cfo-${i}`}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => set(i, { options: e.target.value.split('\n').map((x: string) => x.trim()).filter(Boolean) })} />}</Field>}
           </div>
@@ -67,7 +67,7 @@ function Branding() {
         <fieldset><legend>Accent color</legend>
           <div className="row">{ACCENT_PRESETS.map((p) => <button key={p.hex} type="button" className="swatch" style={{ background: p.hex }} aria-pressed={accent.toLowerCase() === p.hex.toLowerCase()} aria-label={p.name} title={p.name} onClick={() => setAccent(p.hex)} />)}
             <Button size="sm" variant="ghost" onClick={() => setAccent('')}>Use Rigo red</Button></div>
-          <div style={{ maxWidth: 220, marginTop: 8 }}><Field label="Custom hex" optionalText id="f-accent" error={s.fieldError('accent')}>{(p) => <Input {...p} value={accent} placeholder="#B91C1C" onChange={(e) => setAccent(e.target.value)} />}</Field></div>
+          <div style={{ maxWidth: 220, marginTop: 8 }}><Field label="Custom hex" optionalText id="f-accent" error={s.fieldError('accent')}>{(p) => <Input {...p} maxLength={7} value={accent} placeholder="#B91C1C" onChange={(e) => setAccent(e.target.value)} />}</Field></div>
         </fieldset>
         {accent && /^#[0-9a-fA-F]{6}$/.test(accent) && (
           variants.usable ? <Banner tone="info" title="Accessible variants">Light theme uses {variants.light} ({contrast(variants.light, '#FFFFFF').toFixed(1)}:1 on white); dark theme uses {variants.dark} ({contrast(variants.dark, '#161618').toFixed(1)}:1 on dark surfaces).<div className="row" style={{ marginTop: 8 }}><span className="pill" style={{ background: variants.light, color: '#fff' }}>Light</span><span className="pill" style={{ background: '#161618', color: variants.dark }}>Dark</span></div></Banner>
@@ -111,14 +111,14 @@ export function SettingsPage() {
         <Card id="co" title="Company details">
           <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
             <ErrorSummary error={s.error} />
-            <Field label="Company name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+            <Field label="Company name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
             <div className="grid-2">
-              <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
-              <Field label="Email" optionalText id="f-email">{(p) => <Input {...p} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+              <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />}</Field>
+              <Field label="Email" optionalText id="f-email">{(p) => <Input {...p} maxLength={254} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
             </div>
-            <Field label="Address" optionalText id="f-address" hint="Shown on invoices.">{(p) => <Input {...p} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
+            <Field label="Address" optionalText id="f-address" hint="Shown on invoices.">{(p) => <Input {...p} maxLength={300} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
             <div className="grid-2">
-              <Field label="Time zone" id="f-timezone" error={s.fieldError('timezone')}>{(p) => <Input {...p} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })} />}</Field>
+              <Field label="Time zone" id="f-timezone" error={s.fieldError('timezone')}>{(p) => <Input {...p} maxLength={60} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })} />}</Field>
               <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((x) => <option key={x}>{x}</option>)}</Select>}</Field>
             </div>
             <fieldset><legend>Service types</legend>{Object.entries(SERVICE_CATEGORIES).map(([k, l]) => <Checkbox key={k} label={l} checked={v.serviceCategories.includes(k)} onChange={(e) => setV({ ...v, serviceCategories: e.target.checked ? [...v.serviceCategories, k] : v.serviceCategories.filter((x) => x !== k) })} />)}</fieldset>
@@ -128,7 +128,7 @@ export function SettingsPage() {
       )}
       {tab === 'branding' && <Branding />}
       {tab === 'fields' && <CustomFieldsEditor />}
-      {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">Optional external services stay off until someone who runs this installation configures them. Real company creation is free; there is no billing in this version.</p><CapabilityList /></Card>}
+      {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}
     </div>
   );
 }

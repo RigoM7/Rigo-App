@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { UserPlus, Copy, RotateCw, Ban, Trash2, Mail, ShieldCheck, Save } from 'lucide-react';
+import { UserPlus, Copy, RotateCw, Ban, Trash2, Mail, ShieldCheck, Save, KeyRound } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch, del } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Tabs, Pill, Banner, useToast, useConfirm, Checkbox } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Tabs, Pill, Banner, Dialog, useToast, useConfirm, Checkbox } from '../components/ui';
+import { EMAIL_MAX } from '../../shared/email';
 import { fmtDate } from '../lib/format';
 import { PERMISSIONS, PERMISSION_GROUPS, type Permission } from '../../shared/permissions';
 
@@ -21,7 +22,7 @@ function InviteCard({ roles, onDone }: { roles: any[]; onDone: () => void }) {
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <div className="grid-2">
-          <Field label="Their email" id="f-email" error={s.fieldError('email')} hint="They sign in or create an account with this exact address.">{(p) => <Input {...p} type="email" autoComplete="off" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+          <Field label="Their email" id="f-email" error={s.fieldError('email')} hint="They sign in or create an account with this exact address.">{(p) => <Input {...p} type="email" autoComplete="off" maxLength={EMAIL_MAX} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
           <Field label="Role" id="f-role" error={s.fieldError('role')}>{(p) => <Select {...p} value={v.role} onChange={(e) => setV({ ...v, role: e.target.value })}>{grantable.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}</Select>}</Field>
         </div>
         <div><Button type="submit" variant="primary" busy={s.busy} icon={<Mail aria-hidden />}>Create invitation</Button></div>
@@ -91,6 +92,28 @@ function Delegations({ members }: { members: any[] }) {
   );
 }
 
+/** Shows a just-created password reset link once. It is never shown again or put in a URL. */
+function ResetLinkDialog({ result, onClose }: { result: null | { name: string; link: string; simulated: boolean; expiresInHours: number }; onClose: () => void }) {
+  const toast = useToast();
+  const first = result?.name.split(' ')[0] ?? '';
+  return (
+    <Dialog open={!!result} onClose={onClose} title={`Password reset link for ${first}`}
+      footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      {result && (
+        <div className="stack">
+          {result.simulated ? <Banner tone="info" title="Simulated in the demo">This example link doesn't work, and nothing was sent.</Banner> : null}
+          <p style={{ margin: 0 }}>Text this link to {first}. It works once and expires in {result.expiresInHours} hours. When {first} uses it to choose a new password, they're signed out on their other devices.</p>
+          <div className="row" style={{ flexWrap: 'nowrap' }}>
+            <Input readOnly value={result.link} aria-label={`Password reset link for ${result.name}`} onFocus={(e) => e.target.select()} />
+            <Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(result.link).then(() => toast('Link copied'), () => toast('Copy failed; select the link and copy it', 'error'))}>Copy</Button>
+          </div>
+          <p className="hint" style={{ margin: 0 }}>This link is shown only now. If it's lost, create a new one; the old one stops working.</p>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 export function Team() {
   const c = useCompany();
   const qc = useQueryClient();
@@ -101,7 +124,12 @@ export function Team() {
   const q = useQuery({ queryKey: [c.cid, 'members'], queryFn: () => get(`/c/${c.cid}/members`) });
   const roles = useQuery({ queryKey: [c.cid, 'roles'], queryFn: () => get(`/c/${c.cid}/roles`) });
   const [err, setErr] = useState<any>(null);
+  const [resetLink, setResetLink] = useState<null | { name: string; link: string; simulated: boolean; expiresInHours: number }>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
+  const createResetLink = async (m: any) => {
+    setErr(null);
+    try { setResetLink(await post(`/c/${c.cid}/members/${m.id}/reset-link`)); } catch (e) { setErr(e); }
+  };
   const changeRole = async (m: any, role: string) => {
     setErr(null);
     try { await patch(`/c/${c.cid}/members/${m.id}`, { role }); toast(`${m.name} is now ${roles.data.roles.find((r: any) => r.key === role)?.name}`); refresh(); } catch (e) { setErr(e); }
@@ -144,7 +172,10 @@ export function Team() {
                     </select>
                   ) : m.role_name}{lastOwner ? <div className="small muted">Last owner: add another owner before changing.</div> : null}</td>
                   <td data-label="Open jobs" className="right num">{m.open_jobs}</td>
-                  {c.can('members.manage') && <td data-label="">{canChange && !lastOwner && m.user_id !== c.me.id ? <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => remove(m)}>Remove</Button> : null}</td>}
+                  {c.can('members.manage') && <td data-label=""><span className="row">
+                    {m.user_id !== c.me.id && (c.role.isOwner || !m.is_owner) ? <Button size="sm" icon={<KeyRound aria-hidden />} onClick={() => createResetLink(m)} aria-label={`Create password reset link for ${m.name}`}>Reset link</Button> : null}
+                    {canChange && !lastOwner && m.user_id !== c.me.id ? <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => remove(m)}>Remove</Button> : null}
+                  </span></td>}
                 </tr>
               );
             })}</tbody>
@@ -168,6 +199,7 @@ export function Team() {
       </>}
       {tab === 'roles' && <PermissionMatrix roles={roles.data.roles} onSaved={refresh} />}
       {tab === 'approvals' && <Delegations members={q.data.members} />}
+      <ResetLinkDialog result={resetLink} onClose={() => setResetLink(null)} />
       {node}
     </div>
   );
