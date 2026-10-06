@@ -1,12 +1,12 @@
 import { Fragment, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck } from 'lucide-react';
+import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck, ChevronLeft, CalendarClock, UserRound, Contact, Smartphone } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, JobStatus, InvoiceStatus, MessageStatus, Pill, Banner, Dialog, Checkbox, LinkButton, useToast } from '../components/ui';
-import { fmtDateTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
+import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
+import { fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES } from '../../shared/jobs';
 import { DynamicField } from './jobform';
@@ -44,7 +44,7 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
     <Card id="assign" title={<h2 className="row"><UserCheck aria-hidden />Schedule and assignment</h2>}>
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
-        <div className="grid-2">
+        <div className="stack">
           <Field label="Start" id="f-scheduledStart" hint={c.company.timezone}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
           <Field label="End" id="f-scheduledEnd" error={s.fieldError('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
         </div>
@@ -88,15 +88,27 @@ export function JobDetail() {
   const finished = ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(job.status);
   return (
     <div className="page">
-      <PageHeader back={{ to: c.to('jobs'), label: 'Jobs' }} title={<span className="row">Job #{job.number}<JobStatus status={job.status} />{job.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</span>}
-        sub={<>{service?.name ?? 'No service'} · {customer?.name ?? 'No customer'}{job.billing_status ? <> · Billing: {(BILLING_STATUSES as any)[job.billing_status]}</> : null}</>}
-        actions={<>
-          {can.edit && <LinkButton to={c.to(`jobs/${id}/edit`)} icon={<Pencil aria-hidden />}>Edit</LinkButton>}
-          {can.edit && job.status === 'draft' && <Button variant="primary" icon={<Send aria-hidden />} busy={status.busy} onClick={() => status.run('open')}>Open for scheduling</Button>}
-          {can.work && <LinkButton variant="primary" to={c.to(`today/${id}`)}>Open driver view</LinkButton>}
-          {can.reportProblem && !finished && <Button icon={<AlertTriangle aria-hidden />} onClick={() => setProblemOpen(true)}>Report problem</Button>}
-          {can.edit && !finished && <Button variant="danger" icon={<Ban aria-hidden />} onClick={() => setCancelOpen(true)}>Cancel job</Button>}
-        </>} />
+      <div className="record-head">
+        <Link className="back-link" to={c.to('jobs')}><ChevronLeft aria-hidden />Jobs</Link>
+        <div className="page-header">
+          <div style={{ minWidth: 0 }} className="stack-sm">
+            <div className="ident"><span className="no">#{job.number}</span><h1>{service?.name ?? 'Job'}<span className="sr-only">, job #{job.number}</span></h1><JobStatus status={job.status} />{job.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</div>
+            <div className="record-meta">
+              <span><Contact aria-hidden />{customer?.name ?? 'No customer'}</span>
+              <span><CalendarClock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDateTime(job.scheduled_start, c.company.timezone)}${job.scheduled_end ? ` – ${fmtTime(job.scheduled_end, c.company.timezone)}` : ''}` : 'Not scheduled'}</span></span>
+              <span><UserRound aria-hidden />{job.assignee_name ?? 'No driver yet'}</span>
+              {job.billing_status ? <span><Receipt aria-hidden />Billing: {(BILLING_STATUSES as any)[job.billing_status]}</span> : null}
+            </div>
+          </div>
+          <div className="row">
+            {can.edit && <LinkButton to={c.to(`jobs/${id}/edit`)} icon={<Pencil aria-hidden />}>Edit</LinkButton>}
+            {can.reportProblem && !finished && <Button icon={<AlertTriangle aria-hidden />} onClick={() => setProblemOpen(true)}>Report problem</Button>}
+            {can.edit && !finished && <Button variant="danger" icon={<Ban aria-hidden />} onClick={() => setCancelOpen(true)}>Cancel job</Button>}
+            {can.work && <LinkButton variant="primary" to={c.to(`today/${id}`)} icon={<Smartphone aria-hidden />}>Open driver view</LinkButton>}
+            {can.edit && job.status === 'draft' && <Button variant="primary" icon={<Send aria-hidden />} busy={status.busy} onClick={() => status.run('open')}>Open for scheduling</Button>}
+          </div>
+        </div>
+      </div>
       <ErrorSummary error={status.error ?? prep.error ?? resolve.error} />
       {job.status === 'draft' && job.missing?.length > 0 && <Banner tone="warning" title="This draft still needs information before it can be scheduled">{<ul style={{ margin: 0 }}>{job.missing.map((m: string) => <li key={m}>{m}</li>)}</ul>}</Banner>}
       {job.problem_open && (
@@ -104,8 +116,8 @@ export function JobDetail() {
           {[...events].reverse().find((e: any) => e.type === 'problem')?.data?.text}
         </Banner>
       )}
-      <div className="grid-2" style={{ alignItems: 'start' }}>
-        <div className="stack">
+      <div className="detail-grid">
+        <div className="stack" style={{ minWidth: 0 }}>
           <Card id="where" title={<h2 className="row"><MapPin aria-hidden />Where and who</h2>}>
             <dl className="kv">
               <dt>Customer</dt><dd>{customer ? (c.can('customers.view') ? <Link to={c.to(`customers/${customer.id}`)}>{customer.name}</Link> : customer.name) : '—'}</dd>
@@ -113,7 +125,7 @@ export function JobDetail() {
               <dt>Address</dt><dd>{location?.address ?? '—'}</dd>
               <dt>Access</dt><dd className="pre">{job.access_instructions || location?.access_instructions || '—'}</dd>
               <dt>On-site contact</dt><dd>{job.contact_name || location?.site_contact || '—'}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</dd>
-              <dt>Scheduled</dt><dd>{fmtDateTime(job.scheduled_start, c.company.timezone)}</dd>
+              <dt>Scheduled</dt><dd className="num">{fmtDateTime(job.scheduled_start, c.company.timezone)}</dd>
               <dt>Driver</dt><dd>{job.assignee_name ?? <Pill tone="warning">Unassigned</Pill>}</dd>
               <dt>Equipment</dt><dd>{resources.length ? resources.map((r: any) => r.name).join(', ') : '—'}</dd>
             </dl>
@@ -138,16 +150,32 @@ export function JobDetail() {
               {files.length > 0 && <div className="photo-grid" style={{ marginTop: 12 }}>{files.map((f: any) => <figure key={f.id}><a href={`/api/c/${c.cid}/jobs/${id}/files/${f.id}`} target="_blank" rel="noreferrer"><img src={`/api/c/${c.cid}/jobs/${id}/files/${f.id}`} alt={f.name.startsWith('signature') ? 'Customer signature' : `Job photo ${f.name}`} loading="lazy" /></a></figure>)}</div>}
             </Card>
           )}
+          <Card id="hist" title={<h2 className="row"><History aria-hidden />History</h2>}>
+            <ol className="history">
+              {events.map((e: any) => (
+                <li key={e.id}>
+                  <span className={`hdot${e.type === 'correction' ? ' correction' : ''}`} aria-hidden />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="row-between" style={{ gap: 8 }}><strong style={{ fontWeight: 550 }}>{EVENT_LABELS[e.type] ?? titleCase(e.type)}</strong><span className="xsmall muted num">{fmtDateTime(e.created_at, c.company.timezone)}</span></div>
+                    {eventText(e, members) ? <div className="small">{eventText(e, members)}</div> : null}
+                    <div className="xsmall muted">{e.actor_label || e.actor_name || 'Rigo'}</div>
+                    {e.type === 'correction' && <details className="small"><summary>Before and after</summary><pre className="pre num" style={{ fontSize: 12 }}>{JSON.stringify({ before: e.data.before, after: e.data.after }, null, 2)}</pre></details>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </Card>
         </div>
-        <div className="stack">
+        <div className="stack" style={{ minWidth: 0 }}>
           {can.assign && <AssignCard key={job.version} data={q.data} onDone={refresh} />}
           {(invoice || can.prepareInvoice) && (
             <Card id="inv" title={<h2 className="row"><Receipt aria-hidden />Invoice</h2>}>
               {invoice ? (
                 <div className="stack-sm">
-                  <div className="row"><InvoiceStatus status={invoice.status} />{invoice.number ? <strong>{invoice.number}</strong> : null}{invoice.total_minor !== null ? <span className="num">{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
+                  <div className="row-between"><InvoiceStatus status={invoice.status} />{invoice.total_minor !== null ? <span className="num" style={{ fontSize: 'var(--fs-18)', fontWeight: 500 }}>{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
+                  {invoice.number ? <span className="num small muted">{invoice.number}</span> : null}
                   {invoice.hold_reasons?.length ? <Banner tone="warning" title="On hold">{invoice.hold_reasons.join(' ')}</Banner> : null}
-                  <Link to={c.to(`invoices/${invoice.id}`)}>Open invoice</Link>
+                  <div className="row"><LinkButton size="sm" to={c.to(`invoices/${invoice.id}`)}>Open invoice</LinkButton>{invoice.hold_reasons?.length && c.can('assistant.use') ? <AskRigo to={c.to('assistant')} prompt={`Why is the invoice for job #${job.number} on hold?`} /> : null}</div>
                 </div>
               ) : job.status === 'unsuccessful' ? <p className="muted">Unsuccessful visits are not billed automatically.</p> : (
                 <div className="stack-sm"><p className="muted">No invoice yet.</p><div><Button variant="primary" busy={prep.busy} onClick={() => prep.run()}>Prepare invoice</Button></div></div>
@@ -155,20 +183,8 @@ export function JobDetail() {
             </Card>
           )}
           {messages && messages.length > 0 && (
-            <Card id="msgs" title="Customer messages"><ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}</span><MessageStatus status={m.status} /></li>)}</ul></Card>
+            <Card id="msgs" title="Customer messages"><ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between small" style={{ padding: '10px 0' }}><span style={{ minWidth: 0 }}>{m.subject}</span><MessageStatus status={m.status} /></li>)}</ul></Card>
           )}
-          <Card id="hist" title={<h2 className="row"><History aria-hidden />History</h2>}>
-            <ol className="list">
-              {events.map((e: any) => (
-                <li key={e.id} style={{ padding: '8px 0' }}>
-                  <div className="row-between"><strong>{EVENT_LABELS[e.type] ?? titleCase(e.type)}</strong><span className="small muted">{fmtDateTime(e.created_at, c.company.timezone)}</span></div>
-                  <div className="small">{eventText(e, members)}</div>
-                  <div className="small muted">{e.actor_label || e.actor_name || 'Rigo'}</div>
-                  {e.type === 'correction' && <details className="small"><summary>Before and after</summary><pre className="pre" style={{ fontSize: 12 }}>{JSON.stringify({ before: e.data.before, after: e.data.after }, null, 2)}</pre></details>}
-                </li>
-              ))}
-            </ol>
-          </Card>
         </div>
       </div>
       <Dialog open={cancelOpen} onClose={() => setCancelOpen(false)} title={`Cancel job #${job.number}?`} footer={<><Button onClick={() => setCancelOpen(false)}>Keep job</Button><Button variant="danger" busy={status.busy} onClick={() => status.run('cancelled', reason)}>Cancel job</Button></>}>

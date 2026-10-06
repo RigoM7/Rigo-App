@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Sparkles, FileText, Trash2 } from 'lucide-react';
+import { Send, Sparkles, FileText, Trash2, ShieldCheck, Eye, Workflow, ArrowUpRight } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
-import { Button, Pill, Banner, LoadingBlock, PageHeader } from '../components/ui';
+import { Button, Pill, Banner, LoadingBlock, PageHeader, Card } from '../components/ui';
 import { relTime } from '../lib/format';
 
 const SUGGESTIONS = ['What needs my attention?', 'Why is an invoice on hold?', 'What is on today?', 'When a job is completed, prepare an invoice and ask me to approve it'];
@@ -12,20 +12,24 @@ const SUGGESTIONS = ['What needs my attention?', 'Why is an invoice on hold?', '
 function ProposalCard({ p }: { p: any }) {
   const c = useCompany();
   return (
-    <div className="card stack-sm" style={{ padding: 12, marginTop: 8 }}>
+    <div className="card stack-sm" style={{ padding: 14, marginTop: 10, whiteSpace: 'normal' }}>
       <div className="row-between"><strong className="row" style={{ gap: 6 }}><FileText aria-hidden style={{ width: 16 }} />{p.name}</strong><Pill tone="info">Proposed</Pill></div>
       {p.validation?.errors?.length ? <Banner tone="danger">{p.validation.errors.join(' ')}</Banner> : null}
       {p.validation?.warnings?.length ? <Banner tone="warning">{p.validation.warnings.join(' ')}</Banner> : null}
-      <Link className="btn btn-sm" to={c.to(`workflows/${p.workflowId}`)}>Review proposal</Link>
+      {p.explanation?.length ? <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{p.explanation.map((l: string, i: number) => <li key={i}>{l}</li>)}</ul> : null}
+      <p className="xsmall muted" style={{ margin: 0 }}>Not active. Accepting makes a draft you test and activate yourself.</p>
+      <div><Link className="btn btn-sm btn-primary" to={c.to(`workflows/${p.workflowId}`)}><ArrowUpRight aria-hidden />Review proposal</Link></div>
     </div>
   );
 }
 
-export function AssistantChat({ compact }: { compact?: boolean }) {
+export function AssistantChat({ compact, initial = '' }: { compact?: boolean; initial?: string }) {
   const c = useCompany();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: [c.cid, 'assistant'], queryFn: () => get(`/c/${c.cid}/assistant`) });
-  const [text, setText] = useState('');
+  const [text, setText] = useState(initial);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (initial) { setText(initial); inputRef.current?.focus(); } }, [initial]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -39,19 +43,20 @@ export function AssistantChat({ compact }: { compact?: boolean }) {
   const clear = async () => { await post(`/c/${c.cid}/assistant/clear`); qc.invalidateQueries({ queryKey: [c.cid, 'assistant'] }); };
   const ai = q.data?.ai;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: compact ? 0 : 480 }}>
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }} className="small">
-        {ai?.state === 'available' ? <Pill tone="success">AI on</Pill> : <Pill tone="neutral">Prepared responses · AI off</Pill>} <span className="muted">{ai?.reason}</span>
+    <div className="chat-shell" style={compact ? { minHeight: 0 } : undefined}>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }} className="small row">
+        {ai?.state === 'available' ? <Pill tone="success" icon={<Sparkles aria-hidden />}>AI on</Pill> : <Pill tone="neutral">Prepared responses · AI off</Pill>} <span className="muted">{ai?.reason}</span>
       </div>
       <div className="chat" aria-live="polite" aria-busy={busy}>
         {q.isLoading ? <LoadingBlock /> : q.data?.messages.length === 0 ? (
-          <div className="stack-sm">
-            <p className="muted">Ask about your work or describe a workflow. Answers only use information your role can see. Proposals never change your setup until you accept, test and activate them.</p>
-            {SUGGESTIONS.map((s) => <button key={s} className="btn btn-sm" style={{ justifyContent: 'flex-start', whiteSpace: 'normal', textAlign: 'left' }} onClick={() => send(s)}>{s}</button>)}
+          <div className="stack" style={{ margin: 'auto 0', alignItems: 'flex-start' }}>
+            <h2 style={{ fontSize: 'var(--fs-22)' }}>What can Rigo help with?</h2>
+            <p className="muted prose" style={{ margin: 0 }}>Ask about your work or describe a workflow. Answers only use information your role can see. Proposals never change your setup until you accept, test and activate them.</p>
+            <div className="suggestions">{SUGGESTIONS.map((s) => <button key={s} type="button" className="suggestion" onClick={() => send(s)}><Sparkles aria-hidden />{s}</button>)}</div>
           </div>
         ) : q.data?.messages.map((m: any) => (
           <div key={m.id} className={`msg ${m.role === 'user' ? 'msg-user' : 'msg-assistant'}`}>
-            {m.role === 'assistant' && <div className="msg-meta">{m.source === 'ai' ? <><Sparkles aria-hidden style={{ width: 12 }} />AI response</> : 'Prepared response (not AI)'} · {relTime(m.created_at)}</div>}
+            {m.role === 'assistant' && <div className="msg-meta">{m.source === 'ai' ? <Pill tone="brand" icon={<Sparkles aria-hidden />}>AI response</Pill> : <Pill tone="neutral">Prepared response (not AI)</Pill>}<span>{relTime(m.created_at)}</span></div>}
             {m.content}
             {m.proposal ? <ProposalCard p={m.proposal} /> : null}
           </div>
@@ -61,7 +66,7 @@ export function AssistantChat({ compact }: { compact?: boolean }) {
       {err && <div style={{ padding: '0 12px' }}><Banner tone="danger">{err}</Banner></div>}
       <form className="chat-input" onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <label htmlFor={compact ? 'chat-c' : 'chat-p'} className="sr-only">Message the assistant</label>
-        <input id={compact ? 'chat-c' : 'chat-p'} className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask or describe a workflow…" autoComplete="off" />
+        <input ref={inputRef} id={compact ? 'chat-c' : 'chat-p'} className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask or describe a workflow…" autoComplete="off" />
         <Button type="submit" variant="primary" busy={busy} aria-label="Send"><Send aria-hidden /></Button>
       </form>
       {q.data?.messages.length ? <div style={{ padding: '0 12px 12px' }}><Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} onClick={clear}>Clear conversation</Button></div> : null}
@@ -70,10 +75,29 @@ export function AssistantChat({ compact }: { compact?: boolean }) {
 }
 
 export function AssistantPage() {
+  const [sp] = useSearchParams();
+  const ask = sp.get('ask') ?? '';
   return (
-    <div className="page page-narrow">
+    <div className="page">
       <PageHeader title="Assistant" sub="Help with setup, exceptions, today's work and workflow proposals." />
-      <div className="card card-flush" style={{ display: 'flex', flexDirection: 'column', minHeight: '60dvh' }}><AssistantChat /></div>
+      <div className="assistant-page">
+        <div className="card card-flush" style={{ display: 'flex', flexDirection: 'column' }}><AssistantChat initial={ask} /></div>
+        <aside className="stack" aria-label="About the assistant">
+          <Card title="How it works">
+            <ul className="list small">
+              <li className="row" style={{ padding: '8px 0', flexWrap: 'nowrap', alignItems: 'flex-start' }}><Eye aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>It only sees what your role can see.</span></li>
+              <li className="row" style={{ padding: '8px 0', flexWrap: 'nowrap', alignItems: 'flex-start' }}><ShieldCheck aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>It never sets prices, computes totals, approves or changes anything.</span></li>
+              <li className="row" style={{ padding: '8px 0', flexWrap: 'nowrap', alignItems: 'flex-start' }}><Workflow aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>Workflow ideas become proposals. You accept, test and activate them yourself.</span></li>
+            </ul>
+          </Card>
+          <Card title="Answer labels">
+            <div className="stack-sm small">
+              <span className="row" style={{ gap: 8 }}><Pill tone="neutral">Prepared response (not AI)</Pill></span><span className="muted">Built from your records without AI.</span>
+              <span className="row" style={{ gap: 8 }}><Pill tone="brand" icon={<Sparkles aria-hidden />}>AI response</Pill></span><span className="muted">Written by AI when it is turned on for your company.</span>
+            </div>
+          </Card>
+        </aside>
+      </div>
     </div>
   );
 }

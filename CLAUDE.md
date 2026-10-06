@@ -42,6 +42,17 @@
   `~/.claude/settings.json`); cloud sessions use the mode dropdown. Only the owner
   changes the permission mode.
 
+## Prompts
+The owner's reusable prompts for building Rigo live in `.claude/commands/`; each file runs as
+`/<name>` in a Claude session. Write new ones with `/new-prompt` and list them here. Changes
+that only touch `.claude/` and this file don't trigger a Vercel build.
+- `/new-prompt <idea>`: turn an idea into a new prompt in this library.
+- `/feature <feature>`: build a feature end to end (server, client, tests, docs).
+- `/screen <screen and change>`: design, build or redesign a screen to the design system.
+- `/fix <bug>`: reproduce a bug with a test, fix the root cause.
+- `/review [PR or branch]`: check changes against Rigo's rules before they ship.
+- `/ship [summary]`: run the checks, update the docs, push once and open a draft PR.
+
 ## Skills
 Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
 (MIT; `ui-styling` is Apache-2.0), in `.claude/skills/`:

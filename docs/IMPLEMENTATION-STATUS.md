@@ -9,9 +9,10 @@ Deployment: the Vercel preview of this branch connects to Supabase through the t
 (`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
 public API roles cannot access.
 
-Latest results (local): `npm test` 37/37 passed on embedded PostgreSQL (PGlite) and 37/37 on
-PostgreSQL 16; `e2e/run.mjs` 24/24 browser checks passed; axe found 0 violations on 17 pages in
-light and dark themes; `npm run typecheck` clean.
+Latest results (local, "Light command center" redesign): `npm test` 37/37 passed on embedded
+PostgreSQL (PGlite); `e2e/run.mjs` 27/27 browser checks passed; axe found 0 violations on 18
+pages in light and dark themes; `npm run typecheck` clean. The redesign changed only the web
+client, so the PostgreSQL 16 run was not repeated (it last passed 37/37 before the redesign).
 
 ## A. Foundation
 
@@ -26,8 +27,11 @@ light and dark themes; `npm run typecheck` clean.
 | Company isolation and 404 for non-members | Verified | `access.test.ts` |
 | Role model and server-side permissions | Verified | Driver/office/owner checks in `operations.test.ts` |
 | Field-level filtering (rates, contact, amounts) | Verified | Driver gets no rates; amounts removed without `finance.view` |
-| Design tokens, both themes, System theme | Verified | axe light+dark; theme persisted to account + device |
-| Responsive shell (sidebar / bottom nav ≤5 / More) | Verified | Overflow checks at 4 widths; nav count check |
+| Design tokens (primitive → semantic → component), both themes, System theme | Verified | axe light+dark; theme persisted to account + device |
+| "Light command center" UI: black chrome, Geist / Geist Mono, every screen restyled | Verified | axe on 18 pages, overflow at 4 widths and 200% text; before/after screenshots in the pull request |
+| Responsive shell (grouped sidebar / bottom nav ≤5 / More) | Verified | Overflow checks at 4 widths; nav count check |
+| Sidebar collapses to icons and remembers it | Verified | Browser check |
+| Command menu (Ctrl/⌘ K): screens, jobs, customers, invoices, quick actions | Verified | Browser check finds job #3 and opens it; results filtered by permission, server checks again |
 
 ## B. First operational product
 
@@ -55,6 +59,11 @@ light and dark themes; `npm run typecheck` clean.
 | One invoice per billable event | Verified | Duplicate preparation returns the same invoice |
 | Approve / issue / number / void / payments | Verified (approve/issue) · Implemented (void, payments) | Payments idempotent by key |
 | Branded invoice preview, print/save PDF | Implemented | Browser screenshot; PDF via the browser's print |
+| Live dispatch timeline on Home and Jobs (driver lanes, Unassigned lane, now line, job side panel, feed view) | Verified | Browser check: lanes, now line, side panel with assignment, feed view in the URL; axe on both views |
+| Bulk driver assignment from the jobs table | Implemented | Uses the same per-job assignment endpoint, so conflicts are refused per job and reported |
+| Invoices grouped by work state; separate invoice / approval / delivery / payment / total cells | Implemented | Browser check opens an invoice |
+| "Ask Rigo" chips (held invoices, blocked or failed steps) open the Assistant with a prefilled question | Implemented | |
+| Branding live preview (switcher chip, invoice header, message) | Implemented | |
 | Automation modes Manual/Assisted/Automatic | Verified | `operations.test.ts` |
 | Automatic never bypasses approvals | Verified | Company-wide invoice approval rule also enforced |
 | Approvals bound to record + workflow version; stale on edit | Verified | `operations.test.ts` |
@@ -121,5 +130,12 @@ light and dark themes; `npm run typecheck` clean.
 - Rate limiting and the in-process worker are single-instance designs; scaling out needs a shared
   queue/lock (the database locks already prevent double execution).
 - Screen-reader walkthroughs (VoiceOver/TalkBack) and real-device offline testing still to do.
+- Motion: timeline blocks slide when a job's time changes, but a job moving to another driver's
+  lane appears there without a transition, and table rows do not animate on status changes.
+- The timeline reassigns by select in the job side panel; drag-to-reassign is not built.
+- The timeline feed lists the day's jobs; it does not yet interleave other events (messages,
+  automation steps).
+- Customer emails are plain text (no email provider yet); the branded layout is the in-app
+  preview in Messages.
 - Next: email provider adapter, configurable dashboard widgets and job stages, XLSX import,
   map links/geocoding adapter (disabled by default), per-field permissions beyond contact/finance.

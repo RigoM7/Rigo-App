@@ -7,16 +7,24 @@ import { get, post, patch } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, MessageStatus, Banner, Dialog, Pill, useToast } from '../components/ui';
 import { fmtDateTime } from '../lib/format';
+import { CompanyChip } from '../components/shell';
 
+/** Branded email preview: the company's chip and accent, then exactly the text that would be sent. */
 function Preview({ m }: { m: any }) {
   const c = useCompany();
   return (
-    <div className="doc" style={{ padding: 16 }}>
-      <div className="doc-accent" style={{ background: c.company.accent.light, margin: '-4px 0 12px' }} aria-hidden />
-      <div className="small muted">From {c.company.name} · To {m.recipient || '(no address)'}</div>
-      <strong>{m.subject}</strong>
-      <p className="pre small" style={{ marginTop: 8 }}>{m.body}</p>
-    </div>
+    <article className="email-preview" aria-label="Email preview">
+      <div className="ep-head">
+        <CompanyChip cid={c.cid} name={c.company.name} logo={c.company.branding?.logoFileId} accent={c.company.branding?.accent} />
+        <div style={{ minWidth: 0 }}><strong>{c.company.name}</strong><div className="xsmall">To {m.recipient || '(no address)'}</div></div>
+      </div>
+      <div style={{ height: 3, background: c.company.accent.light }} aria-hidden />
+      <div className="ep-body">
+        <h3>{m.subject}</h3>
+        <p className="pre" style={{ margin: 0 }}>{m.body}</p>
+      </div>
+      <div className="ep-foot">Sent by {c.company.name} with Rigo</div>
+    </article>
   );
 }
 
@@ -41,7 +49,7 @@ export function Messages() {
     <div className="page">
       <PageHeader title="Messages" sub="Company-branded customer communications, linked to customers, jobs and invoices." />
       <Banner tone={cap.state === 'available' ? 'success' : 'info'} title={cap.state === 'simulated' ? 'Demo: sending is simulated' : cap.state === 'disabled' ? 'Email sending is not set up' : 'Email sending is available'}>{cap.reason} {cap.state === 'disabled' ? 'Copy a prepared message into your own email, then mark it as sent so the record stays accurate.' : ''}</Banner>
-      {q.data.messages.length === 0 ? <Card><Empty icon={<MessageSquare aria-hidden />} title="No messages yet">Workflows and invoices prepare messages here for review.</Empty></Card> : (
+      {q.data.messages.length === 0 ? <Card><Empty icon={<MessageSquare />} title="No messages yet">Workflows and invoices prepare messages here for review.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{q.data.messages.map((m: any) => (
           <li key={m.id}><button type="button" className="list-item" style={{ width: '100%', border: 0, background: sel?.id === m.id ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', textAlign: 'left' }} onClick={() => setSel(m)}>
             <span style={{ flex: 1, minWidth: 0 }}>

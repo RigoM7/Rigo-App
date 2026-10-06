@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme } from './lib/session';
 import { AppShell, MorePage } from './components/shell';
-import { ToastProvider, LoadingBlock, ErrorState, LinkButton } from './components/ui';
+import { ToastProvider, LoadingBlock, ErrorState, LinkButton, Wordmark, Empty } from './components/ui';
+import { Lock, SearchX } from 'lucide-react';
 import { SignIn, SignUp, Forgot, Reset } from './pages/auth';
 import { Workspaces, NewCompany } from './pages/workspaces';
 import { InvitePage } from './pages/invite';
@@ -64,11 +65,17 @@ function CompanyRoot() {
   if (boot.error) {
     const e = boot.error as ApiError;
     return (
-      <div className="auth-wrap"><div className="auth-card stack">
-        <ErrorState error={e} retry={() => boot.refetch()} />
-        {e.status === 404 && <p className="muted">You are not a member of this company, or it no longer exists. Being signed in does not give access to a company; you need an invitation.</p>}
-        <LinkButton to="/workspaces">Go to my workspaces</LinkButton>
-      </div></div>
+      <div className="auth-wrap"><main className="auth-card" id="main">
+        <Wordmark to="/workspaces" />
+        <div className="auth-panel stack">
+          {e.status === 404 ? <>
+            <span className="empty-icon" aria-hidden><Lock /></span>
+            <h1>You don't have access to this company</h1>
+            <p className="muted" style={{ margin: 0 }}>You are not a member of this company, or it no longer exists. Being signed in does not give access to a company; you need an invitation.</p>
+          </> : <ErrorState error={e} retry={() => boot.refetch()} />}
+          <LinkButton variant="primary" to="/workspaces">Go to my workspaces</LinkButton>
+        </div>
+      </main></div>
     );
   }
   return (
@@ -80,6 +87,16 @@ function CompanyRoot() {
         </Suspense>
       </AppShell>
     </CompanyProvider>
+  );
+}
+
+function NotFound() {
+  const c = useCompany();
+  return (
+    <div className="page page-narrow">
+      <h1 className="sr-only">Page not found</h1>
+      <div className="card"><Empty icon={<SearchX />} title="This page does not exist" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>The link may be old, or the page moved. Use the menu or press <kbd>Ctrl</kbd> <kbd>K</kbd> to search.</Empty></div>
+    </div>
   );
 }
 
@@ -123,7 +140,7 @@ function CompanyRoutes() {
       <Route path="setup-company" element={<SetupFromDemo />} />
       <Route path="assistant" element={<AssistantPage />} />
       <Route path="more" element={<MorePage />} />
-      <Route path="*" element={<div className="page"><ErrorState error={{ status: 404, message: 'This page does not exist.' }} /></div>} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
