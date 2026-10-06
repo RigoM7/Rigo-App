@@ -35,6 +35,9 @@
 - `.claude/settings.json` allows the routine commands (npm installs and scripts, the
   checks above, Playwright, everyday git) without a prompt, and denies force pushes
   and `git reset --hard`. Add to that list when the owner approves a new command.
+  The owner also set `defaultMode` to `bypassPermissions` there: local Claude Code
+  sessions skip permission prompts (after a one-time confirmation), while cloud
+  sessions ignore that setting and rely on the allow list. Only the owner changes it.
 
 ## Skills
 Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
