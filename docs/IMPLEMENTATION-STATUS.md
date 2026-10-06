@@ -5,6 +5,10 @@ tests, `e2e/run.mjs` browser checks). **Implemented** = built and exercised manu
 not yet covered by a dedicated test. **Simulated** = deliberately simulated. **Deferred** = not
 built yet. **Blocked** = needs a specific external dependency.
 
+Deployment: the Vercel preview of this branch connects to Supabase through the transaction pooler
+(`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
+public API roles cannot access.
+
 Latest results (local): `npm test` 37/37 passed on embedded PostgreSQL (PGlite) and 37/37 on
 PostgreSQL 16; `e2e/run.mjs` 24/24 browser checks passed; axe found 0 violations on 17 pages in
 light and dark themes; `npm run typecheck` clean.
@@ -108,7 +112,6 @@ light and dark themes; `npm run typecheck` clean.
 |---|---|
 | Real email delivery | Choose and configure a provider (e.g. an SMTP/API service), then implement its adapter in `src/server/adapters/index.ts`. |
 | Real AI answers | An Anthropic API key in `ANTHROPIC_API_KEY` with `RIGO_AI_PROVIDER=anthropic`. |
-| Production database connectivity check | Vercel `DATABASE_URL` points at the Supabase transaction pooler (`aws-1-us-east-1`) with the dedicated `rigo_app` role. This session could not reach Supabase's database port to test it; it is verified on the preview deployment. |
 
 ## Known limitations and next steps
 
