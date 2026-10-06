@@ -1,0 +1,75 @@
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import type { Q } from '../db/index.js';
+
+// External-service boundary. Every outbound capability is decided here, on the server, from the
+// company kind and deployment configuration. Demo companies can never reach a real provider.
+
+export type CapabilityState = 'available' | 'simulated' | 'disabled';
+export interface Capability { state: CapabilityState; reason: string }
+export interface Capabilities { email: Capability; sms: Capability; ai: Capability; payments: Capability; maps: Capability; fileStorage: Capability }
+
+export function capabilities(company: { kind: string }): Capabilities {
+  const demo = company.kind === 'demo';
+  const sim = (what: string): Capability => ({ state: 'simulated', reason: `Demo workspace: ${what} is simulated and nothing leaves Rigo.` });
+  return {
+    email: demo ? sim('email') : config.emailProvider
+      ? { state: 'disabled', reason: `Email provider "${config.emailProvider}" is not supported in this build yet.` }
+      : { state: 'disabled', reason: 'No email service is configured. Messages are prepared for you to copy and send yourself.' },
+    sms: demo ? sim('text messaging') : { state: 'disabled', reason: 'Text messaging is not configured.' },
+    ai: demo ? { state: 'simulated', reason: 'Demo workspace: the assistant uses prepared responses only.' }
+      : config.ai.provider === 'anthropic' && config.ai.apiKey
+        ? { state: 'available', reason: `AI provider configured (${config.ai.model}).` }
+        : { state: 'disabled', reason: 'Real AI is off. The assistant uses clearly labeled prepared responses.' },
+    payments: { state: 'disabled', reason: 'Payment processing is not part of this build. You can record payments received.' },
+    maps: { state: 'disabled', reason: 'Maps, routing and geocoding are not configured. Addresses are stored as text.' },
+    fileStorage: { state: 'available', reason: config.storageDriver === 'local' ? 'Files are stored on this server.' : 'Files are stored in the database.' },
+  };
+}
+
+/** Customer-facing message delivery. Returns the honest resulting status; never claims a send that did not happen. */
+export async function deliverMessage(company: { kind: string }, _msg: { channel: string; recipient: string; subject: string; body: string }) {
+  const cap = capabilities(company)[_msg.channel === 'sms' ? 'sms' : 'email'];
+  if (cap.state === 'simulated') return { status: 'simulated' as const, detail: cap.reason, provider: 'simulation' };
+  if (cap.state === 'disabled') return { status: 'blocked' as const, detail: cap.reason, provider: 'none' };
+  return { status: 'blocked' as const, detail: 'No delivery provider is implemented.', provider: 'none' };
+}
+
+/** System email (invitations, password resets). Locally these land in a simulated mailbox preview. */
+export async function sendSystemEmail(q: Q, mail: { to: string; subject: string; body: string; link?: string; kind: string }) {
+  if (config.devMailbox) {
+    await q.query(`insert into rigo.dev_mailbox (to_email, subject, body, link, kind) values ($1,$2,$3,$4,$5)`,
+      [mail.to, mail.subject, mail.body, mail.link ?? null, mail.kind]);
+    return { delivered: false, simulated: true, detail: 'Recorded in the local simulated mailbox (/dev/mailbox).' };
+  }
+  return { delivered: false, simulated: false, detail: 'No email service is configured; share the link directly.' };
+}
+
+// ---------------------------------------------------------------- file storage
+export interface StoredFile { storage: 'local' | 'database'; storage_key: string | null; data: Buffer | null }
+
+export function storeFile(id: string, data: Buffer): StoredFile {
+  if (config.storageDriver === 'local') {
+    mkdirSync(config.uploadsDir, { recursive: true });
+    writeFileSync(join(config.uploadsDir, id), data);
+    return { storage: 'local', storage_key: id, data: null };
+  }
+  return { storage: 'database', storage_key: null, data };
+}
+
+export function readStoredFile(f: { storage: string; storage_key: string | null; data: Buffer | null }): Buffer | null {
+  if (f.storage === 'database') return f.data;
+  const p = join(config.uploadsDir, f.storage_key ?? '');
+  return f.storage_key && /^[0-9a-f-]{36}$/.test(f.storage_key) && existsSync(p) ? readFileSync(p) : null;
+}
+
+export const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+/** Check magic bytes so a renamed file cannot pretend to be an image. SVG is never accepted. */
+export function sniffImage(buf: Buffer): string | null {
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}

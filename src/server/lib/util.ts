@@ -1,0 +1,23 @@
+import { createHash, randomBytes } from 'node:crypto';
+import type { Context } from 'hono';
+import type { ZodType } from 'zod';
+import { badRequest, zodFields } from '../http/errors.js';
+
+export const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
+export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+
+export async function body<T>(c: Context, schema: ZodType<T>): Promise<T> {
+  let raw: unknown;
+  try { raw = await c.req.json(); } catch { throw badRequest('Request body must be JSON.'); }
+  const r = schema.safeParse(raw);
+  if (!r.success) throw badRequest('Some information needs attention.', { fields: zodFields(r.error) });
+  return r.data;
+}
+
+export function normEmail(e: string) { return e.trim().toLowerCase(); }
+
+export function pick<T extends object, K extends keyof T>(o: T, keys: K[]): Pick<T, K> {
+  const out = {} as Pick<T, K>;
+  for (const k of keys) out[k] = o[k];
+  return out;
+}
