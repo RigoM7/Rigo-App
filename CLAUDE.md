@@ -42,5 +42,10 @@ Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
   HTML presentations, and shadcn/Tailwind styling. Rigo's UI is plain CSS with its
   own tokens, so `ui-styling` advice applies only to separate projects. Scripts that
   call outside services (logo generation, stock backgrounds) need their own API
-  keys and are never run automatically. Rigo's confirmed palette and
-  `docs/DESIGN-SYSTEM.md` always take precedence over skill suggestions.
+  keys and are never run automatically.
+- `design-taste-frontend`: Taste Skill v2 (Leonxlnx/taste-skill, MIT), an
+  "anti-slop" guide for landing pages, portfolios and redesigns. It is not meant for
+  dashboards or dense product UI, so use it for marketing pages, not the app screens.
+
+Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
+any skill's suggestions.
