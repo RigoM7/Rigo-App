@@ -10,7 +10,7 @@ import { config } from '../config.js';
 import { sendSystemEmail, systemEmailChannel } from '../adapters/index.js';
 import { checkPassword, PASSWORD_MAX, PASSWORD_MIN } from '../../shared/password.js';
 import { EMAIL_MAX } from '../../shared/email.js';
-import { COMMON_PASSWORDS } from '../data/common-passwords.js';
+import { COMMON_PASSWORDS } from '../lib/common-passwords.js';
 import { removeMember, ownerResetBlocked } from './team.js';
 import { notifyRoles } from './inbox.js';
 

@@ -6,7 +6,7 @@ import { config } from '../src/server/config';
 import { checkPassword } from '../src/shared/password';
 import { suggestEmail } from '../src/shared/email';
 import { sha256 } from '../src/server/lib/util';
-import { COMMON_PASSWORDS } from '../src/server/data/common-passwords';
+import { COMMON_PASSWORDS } from '../src/server/lib/common-passwords';
 
 const STRONG = 'tidy-lantern-orchard-42';
 afterEach(() => vi.restoreAllMocks());
