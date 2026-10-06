@@ -17,7 +17,8 @@ function where(params) {
   const parts = [];
   for (const [key, raw] of params) {
     if (['select', 'order', 'limit'].includes(key)) continue;
-    const [, op, value] = /^(eq|in)\.(.*)$/.exec(raw) || [];
+    const [, op, value] = /^(eq|in|cs)\.(.*)$/.exec(raw) || [];
+    if (op === 'cs') { parts.push(`${key} @> ${lit(value)}`); continue; }
     if (op === 'eq') parts.push(`${key} = ${lit(value)}`);
     else if (op === 'in') parts.push(`${key}::text in (${value.replace(/^\(|\)$/g, '').split(',').map(lit).join(',')})`);
     else throw new Error('Unsupported filter ' + key + '=' + raw);
@@ -65,7 +66,7 @@ function createFakeSupabase(db, users) {
         return Response.json(rows(`select ${select} from public.${table}${where(params)}${orderSql}${limit}`));
       }
       if (method === 'PATCH') {
-        const sets = Object.entries(body).map(([k, v]) => `${k} = ${['state', 'audit', 'receipts'].includes(k) ? json(v) : lit(v)}`).join(', ');
+        const sets = Object.entries(body).map(([k, v]) => `${k} = ${['state', 'audit', 'receipts'].includes(k) ? json(v) : Array.isArray(v) ? `array[${v.map(lit).join(',')}]::text[]` : lit(v)}`).join(', ');
         const out = db.sql(`with u as (update public.${table} set ${sets}${where(params)} returning *) select coalesce(json_agg(u), '[]') from u`);
         return Response.json(JSON.parse(out || '[]'));
       }

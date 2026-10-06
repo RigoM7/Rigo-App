@@ -148,6 +148,7 @@
           <dl class="rigo-money"><div><dt>Invoiced</dt><dd>${money(invoiced)}</dd></div><div><dt>Collected</dt><dd>${money(collected)}</dd></div><div><dt>Outstanding</dt><dd>${money(invoiced - collected)}</dd></div></dl>
           <p class="rigo-help">Totals from recorded invoices and payments. This is not profit: costs are not recorded here.</p></section>
         ${seriesCard(s, role)}
+        ${outboxCard(s, role)}
         ${(s.automationLog || []).length ? `<section class="rigo-card" aria-labelledby="rigo-log-title"><h3 id="rigo-log-title">What Rigo did</h3><ul class="rigo-items">${s.automationLog.slice(0, 5).map(l => { const j = s.jobs.find(x => x.id === l.jobId); return `<li>${j ? jobLink(j) : 'A job'}<small>${esc(l.process)} · ${esc(l.mode)} · ${esc(l.outcome)}${l.reason ? ' (' + esc(l.reason) + ')' : ''} · ${new Date(l.at).toLocaleString()}</small></li>`; }).join('')}</ul></section>` : ''}
       </div></section>`;
     wire(target, s);
@@ -179,6 +180,8 @@
       const msg = { paused: 'Pause this recurring service? Upcoming visits that have not started are archived (not deleted).', ended: 'End this recurring service? Past visits stay; upcoming unstarted visits are archived.', active: 'Resume this recurring service? Plan visits again afterwards.' }[status];
       if (confirm(msg)) run(b, { type: 'seriesState', id, status });
     });
+    on('[data-outbox]', () => outboxDialog());
+    on('[data-prepare]', b => { const d = new Date(); if (b.dataset.prepare === 'reminders') d.setDate(d.getDate() + 1); run(b, { type: 'prepareMessages', kind: b.dataset.prepare, date: d.toLocaleDateString('en-CA') }); });
     on('[data-plan]', b => { const d = new Date(); d.setDate(d.getDate() + 14); run(b, { type: 'generateVisits', from: today(), until: d.toLocaleDateString('en-CA') }); });
   }
 
@@ -216,6 +219,8 @@
   }
 
   // ---- Automation, approvals and escalation settings ------------------------------------
+  // Save results survive the panel re-rendering after a change (shown for 15 seconds).
+  let settingsNotice = null;
   function automationSettings(target, inDialog = false) {
     const { state: s, role } = current();
     if (!s) return;
@@ -238,7 +243,8 @@
       <div class="rigo-grid2">${Object.entries(ISSUES).map(([k, label]) => `<label class="field rigo-field"><span>${label}</span><select data-escalate="${k}"${dis}><option value="dispatcher"${(s.exceptionRules || {})[k] !== 'owner' ? ' selected' : ''}>Dispatchers and above</option><option value="owner"${(s.exceptionRules || {})[k] === 'owner' ? ' selected' : ''}>Escalate to owners and administrators</option></select></label>`).join('')}</div>
       <p class="rigo-settings-message" role="status" aria-live="polite"></p></section>`;
     if (!owner) return;
-    const say = (t, e) => { const m = target.querySelector('.rigo-settings-message'); m.textContent = t; m.className = 'rigo-settings-message ' + (e ? 'error-text' : 'success-text'); };
+    const say = (t, e) => { settingsNotice = { t, e, at: Date.now() }; const m = target.querySelector('.rigo-settings-message'); m.textContent = t; m.className = 'rigo-settings-message ' + (e ? 'error-text' : 'success-text'); };
+    if (settingsNotice && Date.now() - settingsNotice.at < 15000) say(settingsNotice.t, settingsNotice.e);
     target.querySelector('[data-save-auto]').onclick = async () => {
       const def = target.querySelector('input[name="rigo-default"]:checked')?.value;
       if (!def) return say('Choose Manual, Assisted or Automatic.', true);
@@ -267,14 +273,153 @@
     d.showModal();
   }
 
+  // ---- Milestone E: setup changes, templates, assistant, customer messages -----------------
+  const SOURCES = { assistant: 'From an assistant', template: 'From a template', visual: 'Setup change' };
+  const EVENTS = { confirmation: 'Job confirmation', arrival: 'On the way', delay: 'Running late', completion: 'Work completed', invoice: 'Invoice', reminder: 'Visit reminder', payment_reminder: 'Payment reminder' };
+  const connected = () => Boolean(window.Rigo?.connected);
+  const workspaceId = () => window.Rigo?.workspaceId;
+  async function api(path, body) {
+    const response = await window.Rigo.request(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Request failed.');
+    return data;
+  }
+  function configPanel(target) {
+    const { state: s, role } = current();
+    if (!s) return;
+    const reviewer = ['Owner', 'Administrator'].includes(role);
+    const owner = role === 'Owner';
+    const pending = (s.configProposals || []).filter(p => p.status === 'pending');
+    const m = s.messaging || {};
+    target.innerHTML = `<section class="rigo-settings" aria-labelledby="rigo-review-title">
+      <h3 id="rigo-review-title">Setup changes waiting for review <span class="rigo-count">${pending.length}</span></h3>
+      <p class="rigo-help">Assistants, templates and setup tools all propose changes the same way. Nothing changes until an owner or administrator applies it, and it is checked again when applied.</p>
+      ${pending.length ? `<ul class="rigo-items">${pending.map(p => `<li><span class="rigo-tag">${esc(SOURCES[p.source] || 'Setup change')}</span> <strong>${esc(p.summary || 'Setup change')}</strong><small>Proposed by ${esc(p.createdBy)} · ${new Date(p.createdAt).toLocaleString()}</small>
+        <ol class="rigo-preview">${p.preview.map(line => `<li>${esc(line)}</li>`).join('')}</ol>
+        ${reviewer ? `<div class="rigo-row-actions"><button type="button" class="primary small" data-apply="${esc(p.id)}">Apply these changes</button><button type="button" class="text-button" data-dismiss="${esc(p.id)}">Dismiss</button></div>` : ''}</li>`).join('')}</ul>` : '<p class="rigo-empty">Nothing waiting.</p>'}
+      <h3>Setup assistant</h3>
+      <div class="rigo-card rigo-muted"><strong>Rigo's built-in assistant is not set up</strong><p class="rigo-help">The platform owner has not chosen an AI service or budget yet, so no AI is used and nothing is charged. If your browser has its own AI assistant, it can propose setup changes to Rigo (tool: <code>propose_configuration</code>); they appear above for review and are never applied on their own.</p></div>
+      <h3>Templates</h3>
+      <div data-templates>${connected() ? '<p class="rigo-help">Loading templates…</p>' : '<p class="rigo-help">Templates are shared between real companies. They are not available in the demo; use "Create my company" to start from the demo’s structure.</p>'}</div>
+      <h3>Customer messages</h3>
+      <p class="rigo-help">Rigo prepares messages from your wording when jobs are booked, on the way, delayed, completed and invoiced, following each client's contact preference. <strong>No email or SMS provider is connected, so nothing is sent</strong>; messages wait in the outbox on Today.</p>
+      ${owner ? `<label class="rigo-check"><input type="checkbox" data-msg-enabled${m.enabled ? ' checked' : ''}> Prepare customer messages${m.enabled ? '' : ' (adds Email, Mobile phone and Contact by fields to Clients)'}</label>` : `<p>${m.enabled ? 'Customer messages are prepared.' : 'Customer messages are off.'}</p>`}
+      ${m.enabled && owner ? `<label class="field rigo-field"><span>“On the way” is sent at step</span><select data-msg-arrival><option value="">Never</option>${s.workflow.statuses.map(st => `<option${(m.arrivalStatus ?? (s.workflow.statuses.includes('En Route') ? 'En Route' : '')) === st ? ' selected' : ''}>${esc(st)}</option>`).join('')}</select></label>
+        <details class="rigo-review"><summary>Edit message wording</summary>${Object.entries(m.templates || {}).map(([k, t]) => `<fieldset class="rigo-msg-tpl" data-tpl="${k}"><legend>${EVENTS[k] || k}</legend><label class="rigo-check"><input type="checkbox" data-tpl-on${t.enabled !== false ? ' checked' : ''}> Prepare this message</label>${field('Subject', `<input data-tpl-subject maxlength="150" value="${esc(t.subject)}">`)}${field('Text', `<textarea data-tpl-body rows="3" maxlength="1000">${esc(t.body)}</textarea>`)}</fieldset>`).join('')}
+        <p class="rigo-help">Placeholders: {company} {client} {service} {date} {quantity} {unit} {total} {due}. Rigo never adds prices or promises of its own.</p><button type="button" class="outline" data-tpl-save>Save wording</button></details>` : ''}
+      <p class="rigo-settings-message" role="status" aria-live="polite"></p></section>`;
+    const say = (t, e) => { const el = target.querySelector('.rigo-settings-message'); el.textContent = t; el.className = 'rigo-settings-message ' + (e ? 'error-text' : 'success-text'); };
+    target.querySelectorAll('[data-apply]').forEach(b => { b.onclick = async () => { b.disabled = true; if (await act({ type: 'decideConfig', id: b.dataset.apply, decision: 'apply' })) say('Changes applied.'); else b.disabled = false; }; });
+    target.querySelectorAll('[data-dismiss]').forEach(b => { b.onclick = () => act({ type: 'decideConfig', id: b.dataset.dismiss, decision: 'dismiss' }); });
+    const enabled = target.querySelector('[data-msg-enabled]');
+    if (enabled) enabled.onchange = async () => {
+      if (enabled.checked && !confirm('Prepare customer messages? This adds Email, Mobile phone and Contact by fields to Clients. Nothing is sent until an email or SMS provider is connected.')) { enabled.checked = false; return; }
+      await act({ type: 'messaging', enabled: enabled.checked });
+    };
+    const arrival = target.querySelector('[data-msg-arrival]');
+    if (arrival) arrival.onchange = () => act({ type: 'messaging', arrivalStatus: arrival.value });
+    const save = target.querySelector('[data-tpl-save]');
+    if (save) save.onclick = async () => {
+      const templates = Object.fromEntries([...target.querySelectorAll('[data-tpl]')].map(f => [f.dataset.tpl, { enabled: f.querySelector('[data-tpl-on]').checked, subject: f.querySelector('[data-tpl-subject]').value, body: f.querySelector('[data-tpl-body]').value }]));
+      say((await act({ type: 'messaging', templates })) ? 'Wording saved.' : 'Not saved.', false);
+    };
+    if (connected()) templatesSection(target.querySelector('[data-templates]'), owner, reviewer).catch(e => { target.querySelector('[data-templates]').textContent = e.message; });
+  }
+  // Template results survive the panel re-rendering after a save (shown for 15 seconds).
+  let templateNotice = null;
+  async function templatesSection(box, owner, reviewer) {
+    const { templates } = await api('/api/templates');
+    const mine = templates.filter(t => t.mine), shared = templates.filter(t => !t.mine);
+    box.innerHTML = `<p class="rigo-help">A template holds this company's structure only: list fields, job steps, modules and rules (switched off). Never customers, team, prices, records or credentials. Companies that used a template are never changed by a newer version.</p>
+      ${owner ? `<div class="rigo-rule-form"><label class="field rigo-field"><span>Template name</span><input data-tpl-name maxlength="80" placeholder="For example: Fuel delivery setup"></label><label class="field rigo-field"><span>Description</span><input data-tpl-desc maxlength="300"></label><button type="button" class="outline" data-publish>Save as template</button></div>` : ''}
+      ${mine.length ? `<h4>Your templates</h4><ul class="rigo-items">${mine.map(t => `<li><strong>${esc(t.name)}</strong> · version ${t.version}<small>${t.visibility === 'selected' ? 'Shared with ' + esc(t.sharedWith.join(', ') || 'nobody yet') : 'Only you'}</small>
+        <div class="rigo-row-actions">${owner ? `<button type="button" class="text-button" data-new-version="${esc(t.id)}|${esc(t.name)}">Save this setup as version ${t.version + 1}</button>` : ''}<button type="button" class="text-button" data-share="${esc(t.id)}">Share…</button></div></li>`).join('')}</ul>` : ''}
+      ${shared.length ? `<h4>Shared with you</h4><ul class="rigo-items">${shared.map(t => `<li><strong>${esc(t.name)}</strong> · version ${t.version}<small>${esc(t.description)}</small>${reviewer ? `<div class="rigo-row-actions"><button type="button" class="text-button" data-use="${esc(t.id)}|${t.version}">Review for this company</button></div>` : ''}</li>`).join('')}</ul>` : ''}
+      <p class="rigo-tpl-message" role="status" aria-live="polite"></p>`;
+    const say = (t, e) => { templateNotice = { t, e, at: Date.now() }; const el = box.querySelector('.rigo-tpl-message'); if (el) { el.textContent = t; el.className = 'rigo-tpl-message ' + (e ? 'error-text' : 'success-text'); } };
+    if (templateNotice && Date.now() - templateNotice.at < 15000) say(templateNotice.t, templateNotice.e);
+    const reload = () => templatesSection(box, owner, reviewer).catch(e => say(e.message, true));
+    const publish = async (templateId, name, description) => {
+      try { const r = await api('/api/templates', { op: 'publish', workspace: workspaceId(), templateId, name, description }); say('Saved as version ' + r.version + '.'); reload(); }
+      catch (e) { say(e.message, true); }
+    };
+    box.querySelector('[data-publish]')?.addEventListener('click', () => {
+      const name = box.querySelector('[data-tpl-name]').value.trim();
+      if (!name) return say('Name the template.', true);
+      publish(undefined, name, box.querySelector('[data-tpl-desc]').value.trim());
+    });
+    box.querySelectorAll('[data-new-version]').forEach(b => { b.onclick = () => { const [id, name] = b.dataset.newVersion.split('|'); if (confirm('Save this company’s current setup as a new version? Companies using earlier versions are not changed.')) publish(id, name); }; });
+    box.querySelectorAll('[data-share]').forEach(b => { b.onclick = () => {
+      const t = mine.find(x => x.id === b.dataset.share);
+      dialog('rigo-share', 'Share “' + t.name + '”', `${field('Who can use it', `<select name="visibility"><option value="private"${t.visibility === 'private' ? ' selected' : ''}>Only me</option><option value="selected"${t.visibility === 'selected' ? ' selected' : ''}>People I choose</option></select>`)}
+        ${field('Their emails (one per line)', `<textarea name="emails" rows="4">${esc(t.sharedWith.join('\n'))}</textarea>`, 'They see the template when they sign in with these emails. Public sharing is not available yet.')}`,
+        (f, fail) => {
+          api('/api/templates', { op: 'share', templateId: t.id, visibility: f.elements.visibility.value, sharedWith: f.elements.emails.value.split(/[\s,;]+/).filter(Boolean) })
+            .then(() => { document.getElementById('rigo-share')?.close(); reload(); }).catch(e => fail(e.message));
+          return null;
+        }, 'Save sharing');
+    }; });
+    box.querySelectorAll('[data-use]').forEach(b => { b.onclick = async () => {
+      const [id, version] = b.dataset.use.split('|');
+      try { await api('/api/templates', { op: 'apply', templateId: id, version: Number(version), workspace: workspaceId() }); say('Added to “Setup changes waiting for review”. Nothing has changed yet.'); window.rigoRefresh?.(); }
+      catch (e) { say(e.message, true); }
+    }; });
+  }
+  function outboxCard(s, role) {
+    if (!s.messaging?.enabled || !atLeast(role, 'Dispatcher')) return '';
+    const open = (s.outbox || []).filter(m => m.status !== 'dismissed');
+    return `<section class="rigo-card" aria-labelledby="rigo-outbox-title"><h3 id="rigo-outbox-title">Customer messages <span class="rigo-count">${open.length}</span></h3>
+      <p class="rigo-help">Prepared, not sent: no email or SMS provider is connected.</p>
+      ${s.lastPrepared ? `<p class="rigo-help">Last prepared ${new Date(s.lastPrepared.at).toLocaleString()}: ${s.lastPrepared.made} new message(s).</p>` : ''}
+      <div class="rigo-row-actions"><button type="button" class="outline small" data-outbox>Review outbox</button><button type="button" class="text-button" data-prepare="reminders">Prepare tomorrow's reminders</button><button type="button" class="text-button" data-prepare="paymentReminders">Prepare payment reminders</button></div></section>`;
+  }
+  function outboxDialog() {
+    const { state: s } = current();
+    const open = (s.outbox || []).filter(m => m.status !== 'dismissed');
+    document.getElementById('rigo-outbox')?.remove();
+    const d = document.createElement('dialog');
+    d.id = 'rigo-outbox'; d.className = 'rigo-dialog';
+    d.setAttribute('aria-labelledby', 'rigo-outbox-dialog-title');
+    d.innerHTML = `<div class="rigo-dialog-head"><h2 id="rigo-outbox-dialog-title">Outbox</h2><button class="text-button" type="button" data-close>Close</button></div>
+      <p class="rigo-help">Nothing here has been sent. You can copy a message to send it yourself.</p>
+      ${open.length ? `<ul class="rigo-items">${open.map(m => `<li><span class="rigo-tag">${esc(EVENTS[m.event] || m.event)}</span> <strong>${esc(m.subject)}</strong>
+        <small>To: ${esc([m.to.email, m.to.phone].filter(Boolean).join(', ') || 'no address')} · ${esc(m.status === 'skipped' ? 'Not prepared: ' + m.note : 'Not sent: ' + m.note)}</small>
+        <p class="rigo-msg-body">${esc(m.body)}</p><div class="rigo-row-actions"><button type="button" class="text-button" data-copy="${esc(m.id)}">Copy text</button><button type="button" class="text-button" data-dismiss-msg="${esc(m.id)}">Dismiss</button></div></li>`).join('')}</ul>` : '<p class="rigo-empty">The outbox is empty.</p>'}`;
+    document.body.append(d);
+    d.querySelector('[data-close]').onclick = () => d.close();
+    d.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); d.close(); } });
+    d.addEventListener('close', () => d.remove());
+    d.querySelectorAll('[data-copy]').forEach(b => { b.onclick = async () => { const msg = open.find(x => x.id === b.dataset.copy); try { await navigator.clipboard.writeText(msg.subject + '\n\n' + msg.body); b.textContent = 'Copied'; } catch { b.textContent = 'Copy not available'; } }; });
+    d.querySelectorAll('[data-dismiss-msg]').forEach(b => { b.onclick = async () => { b.disabled = true; if (await act({ type: 'messageState', id: b.dataset.dismissMsg, status: 'dismissed' })) b.closest('li').remove(); }; });
+    d.showModal();
+  }
+  // In-browser AI assistants (WebMCP) may propose setup changes; owners review them in Rigo.
+  if (document.modelContext?.registerTool) {
+    try {
+      Promise.resolve(document.modelContext.registerTool({
+        name: 'propose_configuration',
+        description: 'Propose setup changes for the open Rigo company as structured steps (addList, addField, workflow, modules, labels, automation, approvalRule, exceptionRule). Changes are only proposed: an owner or administrator reviews and applies them in Rigo. Never include customer data, prices or invented facts.',
+        inputSchema: { type: 'object', properties: { summary: { type: 'string', maxLength: 300 }, ops: { type: 'array', maxItems: 50, items: { type: 'object' } } }, required: ['ops'], additionalProperties: false },
+        annotations: { readOnlyHint: false, untrustedContentHint: true },
+        execute: async input => {
+          if (window.Rigo?.demo) return { proposed: false, reason: 'The demo does not accept assistant changes.' };
+          const ok = await act({ type: 'proposeConfig', ops: input?.ops, summary: String(input?.summary || 'Assistant proposal'), source: 'assistant' });
+          return ok ? { proposed: true, review: 'Waiting for an owner or administrator in App settings › Process builder.' } : { proposed: false, reason: 'Rigo refused the proposal; see the message in the app.' };
+        }
+      })).catch(() => {});
+    } catch {}
+  }
+
   // ---- Rendering --------------------------------------------------------------------------
   // Re-render on every state change, except while someone is typing in that area.
-  const typing = el => el.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+  const typing = el => { const a = document.activeElement; return el.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || (a.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit'].includes(a.type))); };
   function render() {
     const today = document.getElementById('rigo-today');
     if (today && !typing(today)) todayPanel(today);
     const auto = document.getElementById('rigo-automation');
     if (auto && !typing(auto)) automationSettings(auto);
+    const config = document.getElementById('rigo-config');
+    if (config && !typing(config) && !config.querySelector('dialog[open]')) configPanel(config);
     const dlg = document.querySelector('#rigo-auto-dialog [data-body]');
     if (dlg && !typing(dlg)) automationSettings(dlg, true);
   }
@@ -282,7 +427,7 @@
   const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; render(); }); };
   window.addEventListener('rigo:state', schedule);
   new MutationObserver(muts => {
-    if (muts.some(m => [...m.addedNodes].some(n => n.nodeType === 1 && (n.id === 'rigo-today' || n.id === 'rigo-automation' || n.querySelector?.('#rigo-today,#rigo-automation'))))) schedule();
+    if (muts.some(m => [...m.addedNodes].some(n => n.nodeType === 1 && (['rigo-today', 'rigo-automation', 'rigo-config'].includes(n.id) || n.querySelector?.('#rigo-today,#rigo-automation,#rigo-config'))))) schedule();
   }).observe(document.documentElement, { childList: true, subtree: true });
   window.Rigo = Object.assign(window.Rigo || {}, { openAutomation });
 })();

@@ -338,12 +338,83 @@ and the server run the same rules. The screens live in `rigo-ops.js`.
   phone-width check.
 - Screenshots: `docs/screenshots/rigo-d-*.png`.
 
-## 7. Progress
+## 7. Milestone E: configuration model, templates, communication, imports, assistant
+
+### What changed
+
+- **One configuration model.** Setup changes are described as validated steps:
+  `addList`, `addField`, `workflow`, `modules`, `labels`, `automation`,
+  `approvalRule` and `exceptionRule`.
+  - A proposal is dry-run against the current setup and previewed in plain
+    words. It changes nothing until an owner or administrator applies it in
+    App settings › Process builder.
+  - Applying re-checks it and applies every step or none.
+  - Steps already in place are skipped. A conflicting field type is refused.
+  - Each underlying rule uses the reviewer's own role, so only owners can
+    change automation or approval rules.
+  - Workflow changes apply to new jobs only.
+- **Assistants.** The built-in assistant is not set up: no AI provider or
+  budget is chosen, and the `assistant` route answers "not set up" without
+  calling anything. An AI assistant running in the owner's own browser can
+  call the WebMCP tool `propose_configuration`. Its proposals wait for
+  review, are treated as untrusted input, and are refused in the demo.
+- **Templates** (tables `rigo_templates` and `rigo_template_versions`,
+  function `rigo_publish_template`, applied in production 2026-10-06):
+  - An owner saves the company's structure (list fields, job steps, modules,
+    escalation, approval rules switched off) as a private template. They can
+    share it with selected people by email; public sharing waits for
+    moderation rules.
+  - The server builds the content from the company. It never accepts content
+    from the browser.
+  - Versions are immutable. A company records the template and version it
+    used and is never changed by a newer version.
+  - Using a template in an existing company creates a reviewed proposal. New
+    companies can start from a template.
+- **Customer messages.** Owners opt in, which adds Email, Mobile phone and
+  Contact by fields to Clients.
+  - Rigo prepares messages from the company's wording for job booked, on the
+    way (a chosen step), running late, completed and invoiced. Visit and
+    payment reminders are prepared on request, once per day.
+  - Each client's preference is respected, including "Do not contact".
+  - Every message reads "Not sent: no email or SMS provider is connected",
+    and the `messages` send route refuses. The outbox (on Today) offers copy
+    and dismiss.
+- **Imports** now warn about likely duplicates: names that match an existing
+  record with a different ID, and repeated names in the file with different
+  IDs.
+- **Privacy:** field employees' view leaves out the outbox, approvals,
+  proposals, automation log and recurring series. The demo preview does the
+  same.
+
+### Needs owner decisions (not invented)
+
+- **AI provider, model and budget** for the built-in assistant.
+- **Email/SMS provider** and sender identity (for example Postmark,
+  SendGrid or Twilio). Environment variable names will be documented when
+  chosen.
+- **Moderation rules** for public templates.
+
+### Verification
+
+- `tests/config.test.cjs`: validation, preview, all-or-nothing, roles,
+  skipped steps, new-jobs-only.
+- `tests/messaging.test.cjs`: opt-in fields, preferences, never sent,
+  idempotent reminders, dismissal.
+- `tests/invitations.test.cjs`:
+  - templates: structure only, no client-supplied content, sharing,
+    versions, no silent updates, reviewed application, unsharing;
+  - no message or AI calls;
+  - field-employee privacy.
+- `tests/setup.browser.cjs`: a reviewed proposal and apply, message opt-in,
+  reminders, the outbox, and template save and review.
+- Screenshots: `docs/screenshots/rigo-e-*.png`.
+
+## 8. Progress
 
 - [x] Milestone A — accounts and company foundation
 - [x] Milestone B — isolated free demo
 - [x] Milestone C — reliable service-specific operations
 - [x] Milestone D — dashboard, exceptions, approvals, recurring work
-- [ ] Milestone E — configuration, imports, communication, templates (next)
-- [ ] Milestone F — authorized cross-company sharing
+- [x] Milestone E — configuration, imports, communication, templates (provider choices pending)
+- [ ] Milestone F — authorized cross-company sharing (next)
 - [ ] Milestone G — native distribution and billing (needs approval)

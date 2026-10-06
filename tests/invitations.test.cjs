@@ -199,4 +199,70 @@ test('invitations and access requests', { skip: !localdb.available && 'local Pos
     assert.deepEqual(view.jobs.map(j => j.title), ['Mine']);
     assert.deepEqual(view.invoices, []);
   });
+
+  await t.test('templates: structure only, shared with selected people, versioned, never silently updated', async () => {
+    const ws = await company();
+    await act('owner', ws, { type: 'applyTemplate', template: 'fuel' });
+    await act('owner', ws, { type: 'record', listId: 'clients', values: { code: 'C-1', name: 'Secret Client' } });
+    await act('owner', ws, { type: 'record', listId: 'services', values: { code: 'S-1', name: 'Diesel', rate: '4.10', unit: 'gallon' } });
+    await act('owner', ws, { type: 'field', listId: 'clients', field: { name: 'Billing email', type: 'text' } });
+    await act('owner', ws, { type: 'approvalRule', action: 'invoice', minTotal: 5000, role: 'Owner' });
+    // Only the company's owner publishes; the content is built on the server.
+    await act('owner', ws, { type: 'member', email: people.employee.email, role: 'Administrator' });
+    await accept('employee', ws);
+    await assert.rejects(post('employee', 'templates', { op: 'publish', workspace: ws, name: 'Stolen' }), e => e.status === 403);
+    const first = await post('owner', 'templates', { op: 'publish', workspace: ws, name: 'Fuel setup', description: 'Our fuel structure', content: [{ op: 'addList', name: 'Injected' }] });
+    assert.equal(first.version, 1);
+    const stored = JSON.parse(db.sql(`select content::text from public.rigo_template_versions where template_id = '${first.id}'`));
+    const text = JSON.stringify(stored);
+    assert.ok(!/Secret Client|4\.10|Injected/.test(text), 'no records, prices or client-supplied content');
+    assert.ok(stored.some(o => o.op === 'addField' && o.name === 'Billing email'));
+    assert.equal(stored.find(o => o.op === 'approvalRule').enabled, false, 'rules travel switched off');
+    // Private until shared.
+    assert.deepEqual((await call('third', 'templates')).templates, []);
+    await assert.rejects(call('third', 'templates', { query: { id: first.id } }), e => e.status === 404);
+    await assert.rejects(post('third', 'templates', { op: 'share', templateId: first.id, visibility: 'selected', sharedWith: ['third@example.net'] }), e => e.status === 404);
+    await post('owner', 'templates', { op: 'share', templateId: first.id, visibility: 'selected', sharedWith: ['Third@Example.net'] });
+    const listed = (await call('third', 'templates')).templates;
+    assert.deepEqual(listed.map(t => [t.name, t.mine, t.sharedWith]), [['Fuel setup', false, undefined]], 'recipients do not see the share list');
+    const preview = await call('third', 'templates', { query: { id: first.id } });
+    assert.ok(preview.preview.some(line => /Billing email/.test(line)));
+    // A new company from the template: structure applied, recorded, nothing else.
+    const created = (await post('third', 'companies', { name: 'Third Fuel', requestId: 'tpl-company-1', templateId: first.id })).id;
+    const fresh = (await open('third', created)).state;
+    assert.ok(fresh.lists.find(l => l.id === 'clients').fields.some(f => f.name === 'Billing email'));
+    assert.ok(fresh.lists.every(l => l.rows.length === 0));
+    assert.deepEqual([fresh.templateSource.id, fresh.templateSource.version], [first.id, 1]);
+    assert.deepEqual(fresh.integrations, { geocoding: false });
+    // A new version does not change companies that used an earlier one.
+    await act('owner', ws, { type: 'field', listId: 'services', field: { name: 'Hose length', type: 'text' } });
+    const second = await post('owner', 'templates', { op: 'publish', workspace: ws, templateId: first.id, name: 'Fuel setup' });
+    assert.equal(second.version, 2);
+    assert.ok(!(await open('third', created)).state.lists.find(l => l.id === 'services').fields.some(f => f.name === 'Hose length'), 'no silent update');
+    // Applying the new version to an existing company is a reviewed proposal.
+    const { proposal } = await post('third', 'templates', { op: 'apply', templateId: first.id, version: 2, workspace: created });
+    let state = (await open('third', created)).state;
+    const pending = state.configProposals.find(p => p.id === proposal);
+    assert.equal(pending.status, 'pending');
+    assert.ok(pending.preview.some(line => /Hose length/.test(line)));
+    assert.ok(!state.lists.find(l => l.id === 'services').fields.some(f => f.name === 'Hose length'));
+    // Unshared again: no longer available.
+    await post('owner', 'templates', { op: 'share', templateId: first.id, visibility: 'private', sharedWith: [] });
+    await assert.rejects(post('third', 'templates', { op: 'apply', templateId: first.id, workspace: created }), e => e.status === 404);
+  });
+
+  await t.test('no message or AI provider is called; drivers do not see company-wide records', async () => {
+    const ws = await company();
+    await act('owner', ws, { type: 'messaging', enabled: true });
+    const before = fake.calls.length;
+    await assert.rejects(post('owner', 'messages', { workspace: ws, id: 'x' }), e => e.status === 503 && /nothing was sent/.test(e.message));
+    await assert.rejects(post('owner', 'assistant', { workspace: ws, prompt: 'Set up my fuel business' }), e => e.status === 503 && /No AI service was called/.test(e.message));
+    await assert.rejects(post('third', 'assistant', { workspace: ws, prompt: 'x' }), e => e.status === 403);
+    assert.ok(fake.calls.slice(before).every(c => c.host === 'project.supabase.co' && !c.path.startsWith('/auth/v1/invite')), 'only the database was used');
+    await act('owner', ws, { type: 'member', email: people.employee.email, role: 'Field employee' });
+    await accept('employee', ws);
+    await act('owner', ws, { type: 'record', listId: 'clients', values: { code: 'C-1', name: 'Client' } });
+    const view = (await open('employee', ws)).state;
+    for (const key of ['outbox', 'approvals', 'configProposals', 'automationLog', 'series']) assert.deepEqual(view[key], [], key);
+  });
 });

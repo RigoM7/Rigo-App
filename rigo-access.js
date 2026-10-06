@@ -280,6 +280,12 @@
     const form = document.getElementById('company-form');
     const input = form.elements.name;
     input.focus();
+    // Templates shared with this account (structure only) are offered next to the built-in ones.
+    if (config?.configured && !demo) api('/api/templates').then(({ templates }) => {
+      if (!templates.length) return;
+      const set = form.querySelector('.rigo-structures');
+      set.insertAdjacentHTML('beforeend', templates.map(t => `<label class="rigo-structure"><input type="radio" name="template" value="tpl:${esc(t.id)}:${t.version}"><span><strong>${esc(t.name)} · v${t.version}</strong><small>${t.mine ? 'Your template' : 'Shared with you'}${t.description ? ' · ' + esc(t.description) : ''}</small></span></label>`).join(''));
+    }).catch(() => {});
     // One request ID per attempt makes retries after a network error safe.
     let requestId = null;
     form.oninput = () => { requestId = null; input.removeAttribute('aria-invalid'); };
@@ -291,7 +297,9 @@
       requestId ||= crypto.randomUUID();
       busy(form, true); message('Creating your company…');
       try {
-        const { id } = await api('/api/companies', { name, requestId, template: form.elements.template.value || undefined });
+        const choice = form.elements.template.value || '';
+        const [, templateId, templateVersion] = choice.startsWith('tpl:') ? choice.split(':') : [];
+        const { id } = await api('/api/companies', templateId ? { name, requestId, templateId, templateVersion: Number(templateVersion) } : { name, requestId, template: choice || undefined });
         remember(id);
         location.assign('/?company=' + id);
       } catch (error) { message(error.message + ' Your entry is kept; try again.', true); busy(form, false); }
@@ -531,7 +539,7 @@
         equipment: new Set(state.jobs.flatMap(j => j.equipmentIds?.length ? j.equipmentIds : [j.equipmentId])),
         vehicles: new Set(state.jobs.map(j => j.vehicleId)), jobs: new Set(state.jobs.map(j => j.id)) };
       state.lists = state.lists.map(l => ({ ...l, rows: l.rows.filter(r => keep[l.id]?.has(r.id)) }));
-      for (const k of ['invoices', 'imports', 'views', 'notifications', 'inquiries', 'stockMoves']) state[k] = [];
+      for (const k of ['invoices', 'imports', 'views', 'notifications', 'inquiries', 'stockMoves', 'outbox', 'approvals', 'configProposals', 'automationLog', 'series']) state[k] = [];
     }
     if (!['Owner', 'Administrator'].includes(role)) { state.members = []; state.accessRequests = []; }
     return { ...row, state, role, user: demoUser(), audit: ['Owner', 'Administrator'].includes(role) ? row.audit : [] };

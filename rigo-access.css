@@ -230,3 +230,13 @@ button.small, .small { min-height:36px; padding:6px 12px; font-size:13px; }
   .rigo-money { grid-template-columns:1fr; }
   .rigo-work-facts > div { grid-template-columns:1fr; gap:0; }
 }
+/* Setup changes, templates, assistant and messages (Milestone E). */
+.rigo-config:not(:empty) { margin:0 0 20px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-settings h4 { margin:12px 0 4px; font-size:14px; }
+.rigo-preview { margin:6px 0 0; padding-left:20px; display:grid; gap:2px; font-size:14px; }
+.rigo-muted { background:#f5f7f8; }
+.rigo-muted p { margin:6px 0 0; }
+.rigo-msg-tpl { margin:10px 0 0; padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#fff; }
+.rigo-msg-tpl legend { font-weight:600; padding:0 4px; }
+.rigo-msg-body { margin:6px 0 0; padding:8px 10px; border-radius:8px; background:#f5f7f8; white-space:pre-wrap; font-size:14px; }
+.rigo-settings code { padding:1px 4px; border-radius:4px; background:#eef2f3; font-size:13px; }
