@@ -359,7 +359,7 @@
     dialog.setAttribute('aria-labelledby', 'rigo-switcher-title');
     dialog.innerHTML = `<form method="dialog" class="rigo-dialog-head"><h2 id="rigo-switcher-title">Your companies</h2><button class="text-button" value="close" aria-label="Close">Close</button></form>
       <ul class="rigo-company-list">${companyItems(companies, selected?.id)}</ul>
-      <div class="rigo-actions"><button class="outline" type="button" id="rigo-new-company">Create a company</button><button class="text-button" type="button" id="rigo-open-demo">Explore the demo</button>${selected ? `<button class="text-button rigo-danger" type="button" id="rigo-leave">Leave ${esc(selected.name)}</button>` : ''}</div>
+      <div class="rigo-actions"><button class="outline" type="button" id="rigo-new-company">Create a company</button>${companies.filter(w => ['Owner', 'Administrator'].includes(w.role)).length > 1 ? '<button class="text-button" type="button" id="rigo-overview-open">All my companies</button>' : ''}<button class="text-button" type="button" id="rigo-open-demo">Explore the demo</button>${selected ? `<button class="text-button rigo-danger" type="button" id="rigo-leave">Leave ${esc(selected.name)}</button>` : ''}</div>
       <p id="rigo-switcher-message" role="status" aria-live="polite"></p>`;
     document.body.append(dialog);
     const status = dialog.querySelector('#rigo-switcher-message');
@@ -379,6 +379,7 @@
         location.assign('/?company=' + button.dataset.id);
       };
     });
+    dialog.querySelector('#rigo-overview-open')?.addEventListener('click', () => { dialog.close(); window.Rigo.openOverview?.(); });
     dialog.querySelector('#rigo-open-demo').onclick = () => { if (leaveWork()) location.assign('/?demo=1'); };
     dialog.querySelector('#rigo-new-company').onclick = () => {
       if (!leaveWork()) return;

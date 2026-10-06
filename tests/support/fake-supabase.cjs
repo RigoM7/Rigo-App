@@ -51,7 +51,8 @@ function createFakeSupabase(db, users) {
     try {
       const rpc = /^\/rest\/v1\/rpc\/(\w+)$/.exec(u.pathname);
       if (rpc) {
-        const args = Object.entries(body).map(([k, v]) => `${k} => ${v !== null && typeof v === 'object' ? json(v) : lit(v)}`).join(', ');
+        const value = v => Array.isArray(v) && v.every(x => typeof x === 'string') && v.length ? `array[${v.map(lit).join(',')}]::text[]` : v !== null && typeof v === 'object' ? json(v) : lit(v);
+        const args = Object.entries(body).map(([k, v]) => `${k} => ${value(v)}`).join(', ');
         const out = db.sql(`select to_json(public.${rpc[1]}(${args}))`);
         return Response.json(JSON.parse(out));
       }

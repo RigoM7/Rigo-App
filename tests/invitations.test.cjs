@@ -265,4 +265,53 @@ test('invitations and access requests', { skip: !localdb.available && 'local Pos
     const view = (await open('employee', ws)).state;
     for (const key of ['outbox', 'approvals', 'configProposals', 'automationLog', 'series']) assert.deepEqual(view[key], [], key);
   });
+
+  await t.test('sharing between companies: authority on both sides, read-only, copy on request, revocable, never money', async () => {
+    const a = await company(), b = await company(), c = await company();
+    await act('owner', a, { type: 'applyTemplate', template: 'combined' });
+    await act('owner', a, { type: 'record', listId: 'clients', values: { code: 'C-1', name: 'Shared Client' } });
+    await act('owner', a, { type: 'record', listId: 'locations', values: { code: 'L-1', name: 'Yard', address: '1 Road' } });
+    let sa = (await open('owner', a)).state;
+    const clientId = sa.lists.find(l => l.id === 'clients').rows[0].id;
+    // b is run by someone else entirely: the owner of a has no authority there.
+    await act('owner', b, { type: 'member', email: people.third.email, role: 'Owner' });
+    await accept('third', b);
+    await act('owner', b, { type: 'member', email: people.owner.email, role: 'Viewer', remove: false }).catch(() => {});
+    db.sql(`update public.rigo_memberships set status = 'removed' where workspace_id = '${b}' and email = '${people.owner.email}'`);
+    await assert.rejects(post('owner', 'shares', { op: 'propose', from: a, to: b, lists: ['clients'] }), e => e.status === 403);
+    // Invoices and payments are never shareable.
+    await assert.rejects(post('owner', 'shares', { op: 'propose', from: a, to: c, lists: ['invoices'] }), e => e.status === 400);
+    const { id } = await post('owner', 'shares', { op: 'propose', from: a, to: c, lists: ['clients', 'locations'] });
+    await assert.rejects(post('owner', 'shares', { op: 'propose', from: a, to: c, lists: ['clients'] }), e => e.status === 409);
+    // Nothing is visible before acceptance.
+    assert.deepEqual((await call('owner', 'shares', { query: { workspace: c, records: '1' } })).shared, []);
+    // An administrator of the receiving company cannot accept; an owner can.
+    await act('owner', c, { type: 'member', email: people.employee.email, role: 'Administrator' });
+    await accept('employee', c);
+    await assert.rejects(post('employee', 'shares', { op: 'accept', id }), e => e.status === 403);
+    assert.equal((await post('owner', 'shares', { op: 'accept', id })).status, 'active');
+    const shared = (await call('owner', 'shares', { query: { workspace: c, records: '1' } })).shared;
+    assert.deepEqual(shared[0].lists.map(l => [l.id, l.rows.length]), [['clients', 1], ['locations', 1]]);
+    assert.ok(!JSON.stringify(shared).includes('invoices'));
+    // Copy on request: new records in c, references to a dropped, duplicates skipped.
+    const copy = await post('employee', 'shares', { op: 'copy', workspace: c, shareId: id, listId: 'clients', rowIds: [clientId] });
+    assert.deepEqual(copy, { added: 1, skipped: 0 });
+    assert.deepEqual(await post('employee', 'shares', { op: 'copy', workspace: c, shareId: id, listId: 'clients', rowIds: [clientId] }), { added: 0, skipped: 1 });
+    const sc = (await open('owner', c)).state;
+    const copied = sc.lists.find(l => l.id === 'clients').rows.find(r => r.values.name === 'Shared Client');
+    assert.notEqual(copied.id, clientId, 'a new record of its own');
+    await assert.rejects(post('employee', 'shares', { op: 'copy', workspace: c, shareId: id, listId: 'services', rowIds: ['x'] }), e => e.status === 404);
+    // Outsiders and field employees learn nothing; jobs still cannot point at the other company.
+    await assert.rejects(call('third', 'shares', { query: { workspace: c, records: '1' } }), e => e.status === 403);
+    // Either owner can revoke; access ends at once.
+    assert.equal((await post('owner', 'shares', { op: 'revoke', id })).status, 'revoked');
+    assert.deepEqual((await call('owner', 'shares', { query: { workspace: c, records: '1' } })).shared, []);
+    await assert.rejects(post('employee', 'shares', { op: 'copy', workspace: c, shareId: id, listId: 'clients', rowIds: [clientId] }), e => e.status === 404);
+    // The consolidated view lists each company separately, only where the person is owner or administrator.
+    const { companies } = await call('owner', 'overview');
+    assert.ok(companies.some(x => x.id === a) && companies.some(x => x.id === c) && !companies.some(x => x.id === b));
+    assert.ok(companies.every(x => x.money && typeof x.money.outstanding === 'number'));
+    const theirs = (await call('employee', 'overview')).companies.map(x => x.id);
+    assert.ok(theirs.includes(c) && !theirs.includes(a), 'only companies where they are an owner or administrator');
+  });
 });

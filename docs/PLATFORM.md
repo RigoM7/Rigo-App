@@ -409,12 +409,67 @@ and the server run the same rules. The screens live in `rigo-ops.js`.
   reminders, the outbox, and template save and review.
 - Screenshots: `docs/screenshots/rigo-e-*.png`.
 
-## 8. Progress
+## 8. Milestone F: authorized cross-company sharing
+
+### What changed
+
+- **All my companies** (Switch company › All my companies). Shown to people
+  who are an owner or administrator in more than one company. Each company
+  is one row: today's jobs, items needing attention, and invoiced, collected
+  and outstanding money. Amounts are never combined across companies.
+- **Sharing agreements** (table `rigo_shares`; functions
+  `rigo_share_propose` and `rigo_share_decide`; applied in production
+  2026-10-06):
+  - Companies are independent by default.
+  - An owner of company A can propose sharing chosen lists with company B,
+    but only if they are also an owner or administrator of B (authority on
+    both sides). The lists are clients, locations, services, team, vehicles
+    and equipment. Invoices, payments and money are never shareable.
+  - An owner of B accepts or declines. Either company's owner can stop
+    sharing at any time, and access ends immediately.
+- **Shared records** appear read-only in B (Process builder › Sharing).
+  People in B can copy chosen records into B:
+  - Each copy becomes B's own new record.
+  - References into A are dropped, so jobs never point across companies.
+  - Records already present in B are skipped.
+  - Copies stay in B after sharing stops.
+  - Field employees and outsiders see nothing.
+
+### Industry expansion
+
+Templates (Milestone E) carry a company's structure between companies, and
+the built-in trades are portable toilets, fuel and septic. New industries are
+added as reviewed templates rather than hard-coded features. No new trade
+structures are invented here.
+
+### Verification
+
+- `tests/invitations.test.cjs`:
+  - proposals refused without authority on both sides;
+  - money is never shareable;
+  - duplicate proposals refused;
+  - nothing visible before acceptance;
+  - only an owner of the receiving company accepts;
+  - read-only records;
+  - copying creates new records and skips duplicates;
+  - outsiders refused;
+  - revocation ends access at once;
+  - the overview lists only companies the person runs.
+- `tests/sharing.browser.cjs`: propose with validation, accept, copy, and the
+  all-companies view without combined money.
+- Screenshots: `docs/screenshots/rigo-f-*.png`.
+
+## 9. Milestone G: native distribution and commercial billing
+
+Not started. The plan says this happens only when approved: app store
+accounts, a billing provider, pricing and plans are owner decisions.
+
+## 10. Progress
 
 - [x] Milestone A — accounts and company foundation
 - [x] Milestone B — isolated free demo
 - [x] Milestone C — reliable service-specific operations
 - [x] Milestone D — dashboard, exceptions, approvals, recurring work
 - [x] Milestone E — configuration, imports, communication, templates (provider choices pending)
-- [ ] Milestone F — authorized cross-company sharing (next)
-- [ ] Milestone G — native distribution and billing (needs approval)
+- [x] Milestone F — authorized cross-company sharing
+- [ ] Milestone G — native distribution and billing (waiting for owner approval)

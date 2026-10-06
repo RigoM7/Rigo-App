@@ -301,6 +301,8 @@
       <div class="rigo-card rigo-muted"><strong>Rigo's built-in assistant is not set up</strong><p class="rigo-help">The platform owner has not chosen an AI service or budget yet, so no AI is used and nothing is charged. If your browser has its own AI assistant, it can propose setup changes to Rigo (tool: <code>propose_configuration</code>); they appear above for review and are never applied on their own.</p></div>
       <h3>Templates</h3>
       <div data-templates>${connected() ? '<p class="rigo-help">Loading templates…</p>' : '<p class="rigo-help">Templates are shared between real companies. They are not available in the demo; use "Create my company" to start from the demo’s structure.</p>'}</div>
+      <h3>Sharing with your other companies</h3>
+      <div data-sharing>${connected() ? '<p class="rigo-help">Loading…</p>' : '<p class="rigo-help">Sharing is between real companies; not available in the demo.</p>'}</div>
       <h3>Customer messages</h3>
       <p class="rigo-help">Rigo prepares messages from your wording when jobs are booked, on the way, delayed, completed and invoiced, following each client's contact preference. <strong>No email or SMS provider is connected, so nothing is sent</strong>; messages wait in the outbox on Today.</p>
       ${owner ? `<label class="rigo-check"><input type="checkbox" data-msg-enabled${m.enabled ? ' checked' : ''}> Prepare customer messages${m.enabled ? '' : ' (adds Email, Mobile phone and Contact by fields to Clients)'}</label>` : `<p>${m.enabled ? 'Customer messages are prepared.' : 'Customer messages are off.'}</p>`}
@@ -324,6 +326,8 @@
       say((await act({ type: 'messaging', templates })) ? 'Wording saved.' : 'Not saved.', false);
     };
     if (connected()) templatesSection(target.querySelector('[data-templates]'), owner, reviewer).catch(e => { target.querySelector('[data-templates]').textContent = e.message; });
+    if (connected() && reviewer) sharingSection(target.querySelector('[data-sharing]'), owner).catch(e => { target.querySelector('[data-sharing]').textContent = e.message; });
+    else if (connected()) target.querySelector('[data-sharing]').innerHTML = '<p class="rigo-help">Owners and administrators manage sharing.</p>';
   }
   // Template results survive the panel re-rendering after a save (shown for 15 seconds).
   let templateNotice = null;
@@ -364,6 +368,65 @@
       try { await api('/api/templates', { op: 'apply', templateId: id, version: Number(version), workspace: workspaceId() }); say('Added to “Setup changes waiting for review”. Nothing has changed yet.'); window.rigoRefresh?.(); }
       catch (e) { say(e.message, true); }
     }; });
+  }
+  const LIST_NAMES = { clients: 'Clients', locations: 'Locations', services: 'Services', employees: 'Team', vehicles: 'Vehicles', equipment: 'Equipment' };
+  let sharingNotice = null;
+  async function sharingSection(box, owner) {
+    const ws = workspaceId();
+    const [{ shares, targets }, { shared }] = await Promise.all([api('/api/shares?workspace=' + encodeURIComponent(ws)), api('/api/shares?records=1&workspace=' + encodeURIComponent(ws))]);
+    const open = shares.filter(x => ['pending', 'active'].includes(x.status));
+    box.innerHTML = `<p class="rigo-help">Companies are separate by default. You can share chosen lists with another company you also run. An owner there must accept. Shared records are read-only and copied only when you choose. Invoices, payments and money are never shared. Either side can stop sharing at any time.</p>
+      ${open.length ? `<ul class="rigo-items">${open.map(x => `<li><strong>${x.direction === 'out' ? 'Sharing with ' : 'Shared by '}${esc(x.other)}</strong> · ${x.lists.map(l => LIST_NAMES[l] || l).join(', ')}<small>${x.status === 'pending' ? 'Waiting for an owner of ' + (x.direction === 'out' ? esc(x.other) : 'this company') + ' to accept' : 'Active'}</small>
+        <div class="rigo-row-actions">${x.direction === 'in' && x.status === 'pending' && owner ? `<button type="button" class="primary small" data-share-op="accept|${esc(x.id)}">Accept</button><button type="button" class="text-button" data-share-op="decline|${esc(x.id)}">Decline</button>` : ''}${owner ? `<button type="button" class="text-button rigo-danger" data-share-op="revoke|${esc(x.id)}">Stop sharing</button>` : ''}</div></li>`).join('')}</ul>` : '<p class="rigo-empty">No sharing agreements.</p>'}
+      ${owner && targets.length ? `<div class="rigo-share-form"><label class="field rigo-field"><span>Share with</span><select data-share-to>${targets.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></label>
+        <fieldset class="rigo-share-lists"><legend>Lists to share</legend>${Object.entries(LIST_NAMES).map(([k, v]) => `<label class="rigo-check"><input type="checkbox" value="${k}"> ${v}</label>`).join('')}</fieldset>
+        <button type="button" class="outline" data-share-propose>Propose sharing</button></div>` : owner ? '<p class="rigo-help">You can share with companies where you are also an owner or administrator.</p>' : ''}
+      ${shared.map(sh => `<h4>From ${esc(sh.from)}</h4>${sh.lists.map(l => `<details class="rigo-review"><summary>${esc(l.name)} (${l.rows.length})</summary>
+        <div class="rigo-shared-table" role="group" aria-label="${esc(l.name)} shared by ${esc(sh.from)}"><table><thead><tr><th scope="col"><span class="rigo-sr">Select</span></th>${l.fields.slice(0, 5).map(f => `<th scope="col">${esc(f.name)}</th>`).join('')}</tr></thead>
+        <tbody>${l.rows.map(r => `<tr><td><input type="checkbox" aria-label="Select ${esc(r.values.name || r.values.code || 'record')}" data-row="${esc(r.id)}"></td>${l.fields.slice(0, 5).map(f => `<td>${esc(r.values[f.id])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+        <button type="button" class="outline small" data-copy-rows="${esc(sh.shareId)}|${esc(l.id)}">Copy selected into this company</button></details>`).join('')}`).join('')}
+      <p class="rigo-share-message" role="status" aria-live="polite"></p>`;
+    const say = (t, e) => { sharingNotice = { t, e, at: Date.now() }; const el = box.querySelector('.rigo-share-message'); el.textContent = t; el.className = 'rigo-share-message ' + (e ? 'error-text' : 'success-text'); };
+    if (sharingNotice && Date.now() - sharingNotice.at < 15000) say(sharingNotice.t, sharingNotice.e);
+    const reload = () => sharingSection(box, owner).catch(e => say(e.message, true));
+    box.querySelectorAll('[data-share-op]').forEach(b => { b.onclick = async () => {
+      const [op, id] = b.dataset.shareOp.split('|');
+      if (op === 'revoke' && !confirm('Stop sharing? The other company loses access to these lists right away. Records it already copied stay its own.')) return;
+      if (op === 'accept' && !confirm('Accept? This company will see the shared lists read-only.')) return;
+      try { await api('/api/shares', { op, id }); say({ accept: 'Sharing accepted.', decline: 'Declined.', revoke: 'Sharing stopped.' }[op]); reload(); } catch (e) { say(e.message, true); }
+    }; });
+    box.querySelector('[data-share-propose]')?.addEventListener('click', async () => {
+      const lists = [...box.querySelectorAll('.rigo-share-lists input:checked')].map(x => x.value);
+      if (!lists.length) return say('Choose at least one list.', true);
+      try { await api('/api/shares', { op: 'propose', from: ws, to: box.querySelector('[data-share-to]').value, lists }); say('Proposed. An owner of that company must accept it.'); reload(); } catch (e) { say(e.message, true); }
+    });
+    box.querySelectorAll('[data-copy-rows]').forEach(b => { b.onclick = async () => {
+      const [shareId, listId] = b.dataset.copyRows.split('|');
+      const rowIds = [...b.closest('details').querySelectorAll('input[data-row]:checked')].map(x => x.dataset.row);
+      if (!rowIds.length) return say('Select the records to copy.', true);
+      try { const r = await api('/api/shares', { op: 'copy', workspace: ws, shareId, listId, rowIds }); say(`Copied ${r.added} record(s)` + (r.skipped ? `; ${r.skipped} already existed` : '') + '.'); window.rigoRefresh?.(); } catch (e) { say(e.message, true); }
+    }; });
+  }
+  // Consolidated view across the companies a person runs; each company's money stays separate.
+  async function openOverview() {
+    document.getElementById('rigo-overview')?.remove();
+    const d = document.createElement('dialog');
+    d.id = 'rigo-overview'; d.className = 'rigo-dialog';
+    d.setAttribute('aria-labelledby', 'rigo-overview-title');
+    d.innerHTML = '<div class="rigo-dialog-head"><h2 id="rigo-overview-title">All my companies</h2><button class="text-button" type="button" data-close>Close</button></div><div data-body><p class="rigo-help">Loading…</p></div>';
+    document.body.append(d);
+    d.querySelector('[data-close]').onclick = () => d.close();
+    d.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); d.close(); } });
+    d.addEventListener('close', () => d.remove());
+    d.showModal();
+    try {
+      const { companies } = await api('/api/overview');
+      d.querySelector('[data-body]').innerHTML = companies.length ? `<p class="rigo-help">Companies where you are an owner or administrator. Each company's money is shown on its own; amounts are never combined.</p>
+        <div class="rigo-overview-table"><table><thead><tr><th scope="col">Company</th><th scope="col">Today</th><th scope="col">Needs attention</th><th scope="col">Invoiced</th><th scope="col">Collected</th><th scope="col">Outstanding</th><th scope="col"><span class="rigo-sr">Open</span></th></tr></thead>
+        <tbody>${companies.map(c => `<tr><th scope="row">${esc(c.name)}<small>${esc(c.role)}</small></th><td>${c.today}</td><td>${c.attention + c.unpriced}</td><td>${money(c.money.invoiced)}</td><td>${money(c.money.collected)}</td><td>${money(c.money.outstanding)}</td><td>${c.id === workspaceId() ? 'Current' : `<button type="button" class="text-button" data-go="${esc(c.id)}">Open</button>`}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="rigo-empty">You are not an owner or administrator of any company.</p>';
+      d.querySelectorAll('[data-go]').forEach(b => { b.onclick = () => location.assign('/?company=' + b.dataset.go); });
+    } catch (e) { d.querySelector('[data-body]').textContent = e.message; }
   }
   function outboxCard(s, role) {
     if (!s.messaging?.enabled || !atLeast(role, 'Dispatcher')) return '';
@@ -429,5 +492,5 @@
   new MutationObserver(muts => {
     if (muts.some(m => [...m.addedNodes].some(n => n.nodeType === 1 && (['rigo-today', 'rigo-automation', 'rigo-config'].includes(n.id) || n.querySelector?.('#rigo-today,#rigo-automation,#rigo-config'))))) schedule();
   }).observe(document.documentElement, { childList: true, subtree: true });
-  window.Rigo = Object.assign(window.Rigo || {}, { openAutomation });
+  window.Rigo = Object.assign(window.Rigo || {}, { openAutomation, openOverview });
 })();

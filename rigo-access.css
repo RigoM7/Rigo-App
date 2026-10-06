@@ -240,3 +240,14 @@ button.small, .small { min-height:36px; padding:6px 12px; font-size:13px; }
 .rigo-msg-tpl legend { font-weight:600; padding:0 4px; }
 .rigo-msg-body { margin:6px 0 0; padding:8px 10px; border-radius:8px; background:#f5f7f8; white-space:pre-wrap; font-size:14px; }
 .rigo-settings code { padding:1px 4px; border-radius:4px; background:#eef2f3; font-size:13px; }
+/* Sharing and all-companies overview (Milestone F). */
+.rigo-share-form { display:grid; gap:8px; margin:8px 0; }
+.rigo-share-lists { display:flex; flex-wrap:wrap; gap:0 16px; margin:0; padding:0; border:0; }
+.rigo-share-lists legend { font-weight:600; margin-bottom:4px; }
+.rigo-shared-table, .rigo-overview-table { overflow-x:auto; margin:8px 0; }
+.rigo-shared-table table, .rigo-overview-table table { width:100%; border-collapse:collapse; font-size:14px; }
+.rigo-shared-table th, .rigo-shared-table td, .rigo-overview-table th, .rigo-overview-table td { padding:8px; border-bottom:1px solid #eef2f3; text-align:left; vertical-align:top; }
+.rigo-overview-table td { font-variant-numeric:tabular-nums; }
+.rigo-overview-table th small { display:block; font-weight:400; color:#4d5d64; }
+.rigo-shared-table input { width:20px; height:20px; }
+.rigo-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
