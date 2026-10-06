@@ -57,13 +57,15 @@ async function prepareReminder(q: Q, companyId: string, inv: any, stage: Reminde
 
 /** The statement for one customer as of a date: open invoices by age, recent payments, credit. */
 export async function buildStatement(q: Q, companyId: string, customerId: string, asOf: string) {
-  const invs = (await openInvoices(q, companyId, customerId)).filter((i) => !i.issued_at || localDate(new Date(i.issued_at), 'UTC') <= asOf);
+  // Dates are the company's calendar days, not UTC ones.
+  const tz = (await q.query<{ timezone: string }>(`select timezone from rigo.companies where id = $1`, [companyId])).rows[0]?.timezone ?? 'UTC';
+  const invs = (await openInvoices(q, companyId, customerId)).filter((i) => !i.issued_at || localDate(new Date(i.issued_at), tz) <= asOf);
   const aging = Object.fromEntries(AGING_BUCKETS.map((b) => [b.key, 0])) as Record<AgingKey, number>;
   const open = invs.map((i) => {
     const bal = balanceOf(i);
     const bucket = agingBucket(i.due_date, asOf);
     aging[bucket] += bal;
-    return { id: i.id, number: i.number, issuedOn: i.issued_at ? new Date(i.issued_at).toISOString().slice(0, 10) : null, dueDate: i.due_date, totalMinor: Number(i.total_minor), paidMinor: Number(i.paid_minor) + Number(i.credited_minor ?? 0), balanceMinor: bal, bucket, periodStart: i.period_start, periodEnd: i.period_end };
+    return { id: i.id, number: i.number, issuedOn: i.issued_at ? localDate(new Date(i.issued_at), tz) : null, dueDate: i.due_date, totalMinor: Number(i.total_minor), paidMinor: Number(i.paid_minor) + Number(i.credited_minor ?? 0), balanceMinor: bal, bucket, periodStart: i.period_start, periodEnd: i.period_end };
   });
   const since = addDays(asOf, -31);
   const payments = (await q.query<any>(

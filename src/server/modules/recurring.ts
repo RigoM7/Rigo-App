@@ -8,10 +8,10 @@ import { badRequest, conflict, notFound } from '../http/errors.js';
 import { occurrences, billingPeriods, localDate, addDays, zonedToUtc, type VisitRule } from '../../shared/schedule.js';
 import { missingForOpen } from '../../shared/jobs.js';
 import { computeTotals, type DraftLine } from '../../shared/billing.js';
-import { billingRuleSchema, readBillingRule, isPeriodic, rentalLines, totalUnits, periodCharges, periodCredit, depositDue, periodLabel, PLAN_VISIT_LABEL, type BillingRule, type Excluded, type PlanVisit } from '../../shared/rentals.js';
+import { billingRuleSchema, readBillingRule, isPeriodic, rentalLines, totalUnits, periodCharges, depositDue, creditForDays, newDaysCredit, applyCredits, periodLabel, PLAN_VISIT_LABEL, type BillingRule, type Excluded, type PlanVisit, type PendingCredit } from '../../shared/rentals.js';
 import { emit } from '../automation/engine.js';
 import { notifyPermission, resolveNotices } from './inbox.js';
-import { persistLines } from './invoicing.js';
+import { persistLines, lineFromRow } from './invoicing.js';
 
 // Recurring service and rentals: visit schedules are separate from billing schedules.
 // Generation is idempotent (one occurrence row per plan/date) and runs while the server is up;
@@ -183,7 +183,7 @@ recurringRoutes.put('/recurring/:id/billing', async (c) => {
 
 /** What a plan's rent periods must leave out: the current pause, and days after an early end. */
 function exclusions(plan: any): Excluded[] {
-  const out: Excluded[] = [];
+  const out: Excluded[] = [...((plan.pause_history ?? []) as Excluded[])];
   if (plan.paused_from) out.push({ from: plan.paused_from, to: plan.paused_until ?? null, reason: `paused ${plan.paused_until ? periodLabel(plan.paused_from, plan.paused_until) : `from ${periodLabel(plan.paused_from, plan.paused_from)}`}` });
   return out;
 }
@@ -192,11 +192,19 @@ function exclusions(plan: any): Excluded[] {
 async function rebuildOpenRentInvoices(q: Q, plan: any) {
   const rule = readBillingRule(plan.billing_rule);
   const invs = (await q.query<any>(`select * from rigo.invoices where recurring_plan_id = $1 and status in ('held','draft','pending_approval','approved') and period_start is not null for update`, [plan.id])).rows;
+  let carried: PendingCredit[] = [];
   for (const inv of invs) {
     const end = plan.ends_on && plan.ends_on < inv.period_end ? plan.ends_on : inv.period_end;
     const lines = periodCharges(rule, plan.units, { start: inv.period_start, end }, exclusions(plan));
-    await writeRentInvoice(q, inv.id, plan, lines, rule);
+    // Credits already on the draft stay on it, up to its new charges; the rest waits for the next rent.
+    const had = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 and kind = 'discount' order by position`, [inv.id])).rows.map(lineFromRow)
+      .map((l) => ({ description: l.description.replace(/ \(rest\)$/, ''), amountMinor: -(l.amountMinor ?? 0) }));
+    const charges = lines.every((l) => l.amountMinor !== null) ? lines.reduce((t, l) => t + (l.amountMinor ?? 0), 0) : null;
+    const { lines: creditLines, left } = charges === null ? { lines: [], left: had } : applyCredits(charges, had);
+    carried = [...carried, ...left];
+    await writeRentInvoice(q, inv.id, plan, [...lines, ...creditLines], rule);
   }
+  if (carried.length) await q.query(`update rigo.recurring_plans set pending_credits = pending_credits || $2::jsonb where id = $1`, [plan.id, JSON.stringify(carried)]);
   return invs.length;
 }
 
@@ -219,10 +227,13 @@ async function creditIssuedPeriods(q: Q, cc: CompanyCtx, plan: any, range: Exclu
   const rule = readBillingRule(plan.billing_rule);
   const issued = (await q.query<any>(`select * from rigo.invoices where recurring_plan_id = $1 and status = 'issued' and period_start is not null and period_end >= $2 ${range.to ? 'and period_start <= $3' : ''}`,
     range.to ? [plan.id, range.from, range.to] : [plan.id, range.from])).rows;
+  // Days already credited on each issued invoice are never credited again (a pause, then an early end).
+  const ledger = (await q.query<any>(`select credited_days from rigo.recurring_plans where id = $1`, [plan.id])).rows[0]?.credited_days ?? {};
   let credits = 0;
   for (const inv of issued) {
-    const amount = periodCredit(rule, plan.units, { start: inv.period_start, end: inv.period_end }, range);
+    const { days, amountMinor: amount } = newDaysCredit(rule, plan.units, { start: inv.period_start, end: inv.period_end }, range, ledger[inv.id] ?? []);
     if (!amount) continue;
+    ledger[inv.id] = [...(ledger[inv.id] ?? []), ...days].sort();
     credits += amount;
     const description = `Credit: ${range.reason} (invoice ${inv.number})`;
     if (final) {
@@ -237,9 +248,11 @@ async function creditIssuedPeriods(q: Q, cc: CompanyCtx, plan: any, range: Exclu
         await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, invoice_id, note, created_by) values ($1,$2,$3,'overpayment',$4,$5,$6)`, [cc.company.id, inv.customer_id, amount - note, inv.id, description, cc.user.id]);
       }
     } else {
-      await q.query(`update rigo.recurring_plans set pending_credits = pending_credits || $2::jsonb where id = $1`, [plan.id, JSON.stringify([{ description, amountMinor: amount }])]);
+      const entry: PendingCredit = { description, amountMinor: amount, invoiceId: inv.id, days };
+      await q.query(`update rigo.recurring_plans set pending_credits = pending_credits || $2::jsonb where id = $1`, [plan.id, JSON.stringify([entry])]);
     }
   }
+  await q.query(`update rigo.recurring_plans set credited_days = $2 where id = $1`, [plan.id, JSON.stringify(ledger)]);
   return credits;
 }
 
@@ -272,11 +285,50 @@ recurringRoutes.post('/recurring/:id/pause', async (c) => {
   return c.json(out);
 });
 
+/**
+ * Resume a paused plan from today. The days it was paused stay left out of the rent; days of the pause
+ * after today are billed again: credits waiting for them are taken back, drafts are rebuilt, and a
+ * period that was skipped because it was fully paused is billed for the days from today (R8-M2, D5).
+ */
 recurringRoutes.post('/recurring/:id/resume', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.edit');
-  const { rows } = await cc.db.query(`update rigo.recurring_plans set status = 'active', paused_from = null, paused_until = null, version = version + 1 where id = $1 and company_id = $2 and status = 'paused' returning id`, [c.req.param('id'), cc.company.id]);
-  if (!rows.length) throw conflict('Only paused plans can be resumed.');
+  await cc.db.tx(async (q) => {
+    const plan = await loadPlan(cc, q, c.req.param('id'), true);
+    if (plan.status !== 'paused') throw conflict('Only paused plans can be resumed.');
+    const today = localDate(new Date(), cc.company.timezone);
+    const history = [...((plan.pause_history ?? []) as Excluded[])];
+    const lastOff = addDays(today, -1);
+    if (plan.paused_from && plan.paused_from <= lastOff) {
+      const to = plan.paused_until && plan.paused_until < lastOff ? plan.paused_until : lastOff;
+      history.push({ from: plan.paused_from, to, reason: `paused ${periodLabel(plan.paused_from, to)}` });
+    }
+    // Credits waiting for days from today on are taken back (service is back on those days).
+    const rule = readBillingRule(plan.billing_rule);
+    const ledger: Record<string, string[]> = plan.credited_days ?? {};
+    const pending: PendingCredit[] = [];
+    for (const cr of (plan.pending_credits ?? []) as PendingCredit[]) {
+      if (!cr.invoiceId || !cr.days?.length) { pending.push(cr); continue; }
+      const back = cr.days.filter((d) => d >= today);
+      if (!back.length) { pending.push(cr); continue; }
+      const inv = (await q.query<any>(`select period_start, period_end from rigo.invoices where id = $1`, [cr.invoiceId])).rows[0];
+      const had = ledger[cr.invoiceId] ?? [];
+      const kept = had.filter((d) => !back.includes(d));
+      const less = inv ? creditForDays(rule, plan.units, { start: inv.period_start, end: inv.period_end }, had.length) - creditForDays(rule, plan.units, { start: inv.period_start, end: inv.period_end }, kept.length) : cr.amountMinor;
+      ledger[cr.invoiceId] = kept;
+      const rest = cr.amountMinor - less;
+      if (rest > 0) pending.push({ ...cr, amountMinor: rest, days: cr.days.filter((d) => d < today) });
+    }
+    // Bill again from the last rent invoice, so a period skipped while fully paused is billed for its active days.
+    const last = (await q.query<any>(`select max(period_start)::text as d from rigo.invoices where recurring_plan_id = $1`, [plan.id])).rows[0]?.d ?? null;
+    await q.query(`update rigo.recurring_plans set status = 'active', paused_from = null, paused_until = null, pause_history = $2, pending_credits = $3, credited_days = $4,
+        billed_through = $5, generated_through = least(generated_through, $6::date), version = version + 1 where id = $1`,
+      [plan.id, JSON.stringify(history), JSON.stringify(pending), JSON.stringify(ledger), last, lastOff]);
+    // Visits from today on are scheduled again.
+    await q.query(`delete from rigo.plan_occurrences where plan_id = $1 and state = 'skipped_paused' and occurrence_date >= $2`, [plan.id, today]);
+    await rebuildOpenRentInvoices(q, { ...plan, paused_from: null, paused_until: null, pause_history: history });
+    await audit(q, cc, 'plan.resumed', { id: plan.id, on: today });
+  });
   await generateForCompany(cc.db, cc.company.id);
   return c.json({ ok: true });
 });
@@ -354,9 +406,9 @@ recurringRoutes.post('/recurring/:id/deposit', async (c) => {
     const plan = await loadPlan(cc, q, c.req.param('id'), true);
     const dup = await q.query(`select 1 from rigo.payments where company_id = $1 and idempotency_key = $2`, [cc.company.id, input.idempotencyKey]);
     if (dup.rows.length) return;
-    const p = await q.query<{ id: string }>(`insert into rigo.payments (company_id, customer_id, amount_minor, method, reference, note, paid_on, recorded_by, idempotency_key, kind, state, applied_minor, applied_at)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'deposit','confirmed',0,now()) returning id`,
-      [cc.company.id, plan.customer_id, input.amountMinor, input.method, input.reference, `Deposit for "${plan.name}"`, localDate(new Date(), cc.company.timezone), cc.user.id, input.idempotencyKey]);
+    const p = await q.query<{ id: string }>(`insert into rigo.payments (company_id, customer_id, amount_minor, method, reference, note, paid_on, recorded_by, idempotency_key, kind, state, applied_minor, applied_at, plan_id)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'deposit','confirmed',0,now(),$10) returning id`,
+      [cc.company.id, plan.customer_id, input.amountMinor, input.method, input.reference, `Deposit for "${plan.name}"`, localDate(new Date(), cc.company.timezone), cc.user.id, input.idempotencyKey, plan.id]);
     await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, payment_id, note, created_by) values ($1,$2,$3,'deposit',$4,$5,$6)`, [cc.company.id, plan.customer_id, input.amountMinor, p.rows[0].id, `Deposit for "${plan.name}"`, cc.user.id]);
     await q.query(`update rigo.recurring_plans set deposit_received_minor = deposit_received_minor + $2 where id = $1`, [plan.id, input.amountMinor]);
     await audit(q, cc, 'plan.deposit', { id: plan.id, amountMinor: input.amountMinor });
@@ -430,9 +482,11 @@ export async function generateForCompany(db: Db, companyId: string) {
         const key = `plan:${locked.id}:${p.start}`;
         const lines = periodCharges(rule, locked.units, p, exclusions(locked));
         if (lines.every((l) => l.amountMinor === 0)) { await q.query(`update rigo.recurring_plans set billed_through = $2 where id = $1`, [locked.id, p.start]); continue; }
-        // Credits from earlier periods (a pause after their invoice went out) come off this one.
-        const pending = (locked.pending_credits ?? []) as { description: string; amountMinor: number }[];
-        const credits: DraftLine[] = pending.map((cr) => ({ description: cr.description, quantity: '1', unit: '', rateE4: cr.amountMinor * 100, amountMinor: -cr.amountMinor, taxable: false, kind: 'discount' }));
+        // Credits from earlier periods (a pause after their invoice went out) come off this one, never
+        // more than its charges; the rest waits for the next rent invoice.
+        const pending = (locked.pending_credits ?? []) as PendingCredit[];
+        const charges = lines.every((l) => l.amountMinor !== null) ? lines.reduce((t, l) => t + (l.amountMinor ?? 0), 0) : null;
+        const { lines: credits, left } = charges === null ? { lines: [] as DraftLine[], left: pending } : applyCredits(charges, pending);
         const ins = await q.query<{ id: string }>(
           `insert into rigo.invoices (company_id, billable_key, customer_id, recurring_plan_id, status, currency, hold_reasons, kind, period_start, period_end, location_id, due_days)
            values ($1,$2,$3,$4,'draft',(select currency from rigo.companies where id = $1),'[]','rental',$5,$6,$7, coalesce((select payment_terms_days from rigo.customers where id = $3), (select (settings->>'invoiceDueDays')::int from rigo.companies where id = $1), 30))
@@ -440,7 +494,10 @@ export async function generateForCompany(db: Db, companyId: string) {
           [companyId, key, locked.customer_id, locked.id, p.start, p.end, locked.location_id]);
         if (ins.rows[0]) {
           await writeRentInvoice(q, ins.rows[0].id, { ...locked, company_id: companyId }, [...lines, ...credits], rule);
-          if (pending.length) await q.query(`update rigo.recurring_plans set pending_credits = '[]'::jsonb where id = $1`, [locked.id]);
+          if (pending.length) {
+            await q.query(`update rigo.recurring_plans set pending_credits = $2 where id = $1`, [locked.id, JSON.stringify(left)]);
+            locked.pending_credits = left;
+          }
           await emit(q, companyId, 'invoice.prepared', { type: 'invoice', id: ins.rows[0].id }, { recurring: true });
           invoices++;
         }

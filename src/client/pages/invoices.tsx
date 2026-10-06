@@ -297,7 +297,7 @@ export function InvoiceDetail() {
   const email = useSubmit(async () => { await post(`/c/${c.cid}/invoices/${id}/email`); toast('Email prepared with a view link. Review it in Messages.'); refresh(); });
   const applyCredit = useSubmit(async () => { const r = await post(`/c/${c.cid}/invoices/${id}/apply-credit`); toast(`${formatMoney(r.appliedMinor, q.data.invoice.currency)} of credit applied`); refresh(); });
   const replacement = useSubmit(async () => { const r = await post(`/c/${c.cid}/invoices/${id}/replacement`); toast('Replacement invoice prepared'); refresh(); nav(c.to(`invoices/${r.invoiceId}`)); });
-  const confirmPay = useSubmit(async (pid: string) => { const r = await post(`/c/${c.cid}/payments/${pid}/confirm`); toast(r.waitingForInvoice ? 'Confirmed. It pays the invoice when it is issued.' : 'Payment confirmed'); refresh(); });
+  const confirmPay = useSubmit(async (pid: string) => { const r = await post(`/c/${c.cid}/payments/${pid}/confirm`); toast(r.toCredit ? 'Confirmed. It went to the customer\'s credit and paid their open invoices.' : r.waitingForInvoice ? 'Confirmed. It pays the invoice when it is issued.' : 'Payment confirmed'); refresh(); });
   const rejectPay = useSubmit(async () => { await post(`/c/${c.cid}/payments/${reject!.id}/reject`, { reason: reject!.reason }); setReject(null); setDialog(null); toast('Payment rejected. It no longer counts.'); refresh(); });
   const voidIt = useSubmit(async () => { await post(`/c/${c.cid}/invoices/${id}/void`, { reason: voidReason }); setDialog(null); toast('Invoice voided. The job can be billed again.'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;

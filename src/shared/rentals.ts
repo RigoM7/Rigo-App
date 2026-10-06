@@ -101,6 +101,60 @@ export function periodCharges(rule: BillingRule, units: number, period: { start:
   });
 }
 
+/** The days of [start, end] inside the given ranges, as dates in order. */
+export function excludedDayList(start: string, end: string, ranges: Excluded[]) {
+  const days = new Set<string>();
+  for (const r of ranges) {
+    const from = r.from > start ? r.from : start;
+    const to = r.to === null || r.to > end ? end : r.to;
+    for (let d = from; d <= to; d = addDays(d, 1)) days.add(d);
+  }
+  return [...days].sort();
+}
+
+/** The rent for `days` days of an issued period (each line prorated by the day, rounded half up). */
+export function creditForDays(rule: BillingRule, units: number, period: { start: string; end: string }, days: number) {
+  const full = nominalDays(rule.frequency, period.start, period.end, rule.everyDays);
+  if (days <= 0 || rule.frequency === 'event') return 0;
+  return rentalLines(rule, units).reduce((s, l) => {
+    const whole = lineAmount(String(l.quantity), l.rateE4);
+    return s + (whole === null ? 0 : Number(new Big(whole).times(Math.min(days, full)).div(full).round(0).toString()));
+  }, 0);
+}
+
+/**
+ * Credit for days newly left out of an issued period, given the days already credited on it. Worked
+ * out as (rent for all credited days) − (rent for those credited before), so crediting in several
+ * steps adds up to exactly the same as crediting once, and no day is ever credited twice.
+ */
+export function newDaysCredit(rule: BillingRule, units: number, period: { start: string; end: string }, range: Excluded, alreadyCredited: string[]) {
+  const before = new Set(alreadyCredited);
+  const fresh = excludedDayList(period.start, period.end, [range]).filter((d) => !before.has(d));
+  const amountMinor = fresh.length ? creditForDays(rule, units, period, before.size + fresh.length) - creditForDays(rule, units, period, before.size) : 0;
+  return { days: fresh, amountMinor };
+}
+
+/** A rent credit waiting for the next rent invoice; `days` say which days of which issued invoice it covers. */
+export interface PendingCredit { description: string; amountMinor: number; invoiceId?: string; days?: string[] }
+
+/**
+ * Take credits off a rent invoice, never more than its charges: the rest waits for the next one.
+ * Returns the discount lines to add and what is left.
+ */
+export function applyCredits(chargesMinor: number, credits: PendingCredit[]): { lines: DraftLine[]; left: PendingCredit[] } {
+  let room = Math.max(0, chargesMinor);
+  const lines: DraftLine[] = []; const left: PendingCredit[] = [];
+  for (const cr of credits) {
+    const use = Math.min(room, cr.amountMinor);
+    if (use > 0) {
+      lines.push({ description: cr.description, quantity: '1', unit: '', rateE4: use * 100, amountMinor: -use, taxable: false, kind: 'discount' });
+      room -= use;
+    }
+    if (cr.amountMinor - use > 0) left.push({ ...cr, amountMinor: cr.amountMinor - use, description: use > 0 ? `${cr.description} (rest)` : cr.description });
+  }
+  return { lines, left };
+}
+
 /** The rent for the days of an already-issued period that are now excluded, as a credit amount. */
 export function periodCredit(rule: BillingRule, units: number, period: { start: string; end: string }, range: Excluded) {
   const full = nominalDays(rule.frequency, period.start, period.end, rule.everyDays);

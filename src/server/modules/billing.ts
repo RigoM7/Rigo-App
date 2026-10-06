@@ -418,10 +418,24 @@ billingRoutes.post('/payments/:pid/confirm', async (c) => {
     const p = await loadPayment(cc, q, c.req.param('pid'));
     if (p.state !== 'unconfirmed') throw conflict(`This payment is already ${p.state}.`);
     await q.query(`update rigo.payments set state = 'confirmed', confirmed_by = $2, confirmed_at = now() where id = $1`, [p.id, cc.user.id]);
-    const applied = await applyPayment(q, cc.company.id, p.id, cc.user.id);
+    let applied = await applyPayment(q, cc.company.id, p.id, cc.user.id);
+    // Money taken at a visit that is never billed on its own (covered by a rental plan, or not completed)
+    // goes to the customer's credit and pays their open invoices, oldest first.
+    let toCredit = false;
+    if (!p.invoice_id && p.job_id && p.customer_id) {
+      const job = (await q.query<any>(`select billing_status from rigo.jobs where id = $1 and company_id = $2`, [p.job_id, cc.company.id])).rows[0];
+      if (job?.billing_status === 'not_billable') {
+        toCredit = true;
+        await q.query(`update rigo.payments set applied_minor = 0, applied_at = now() where id = $1`, [p.id]);
+        await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, payment_id, note, created_by) values ($1,$2,$3,'overpayment',$4,$5,$6)`,
+          [cc.company.id, p.customer_id, Number(p.amount_minor), p.id, 'Paid at a visit that is not billed separately', cc.user.id]);
+        const open = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and customer_id = $2 and status = 'issued' and payment_status <> 'paid' order by due_date nulls last, issued_at`, [cc.company.id, p.customer_id])).rows;
+        for (const inv of open) applied += await applyCredit(q, cc.company.id, inv.id, cc.user.id);
+      }
+    }
     await resolveNotices(q, cc.company.id, 'payment', p.id);
-    await audit(q, cc, 'payment.confirmed', { id: p.id, amountMinor: Number(p.amount_minor) });
-    return { appliedMinor: applied, waitingForInvoice: !p.invoice_id };
+    await audit(q, cc, 'payment.confirmed', { id: p.id, amountMinor: Number(p.amount_minor), toCredit });
+    return { appliedMinor: applied, waitingForInvoice: !p.invoice_id && !toCredit, toCredit };
   });
   return c.json(out);
 });
@@ -442,8 +456,24 @@ billingRoutes.post('/payments/:pid/reject', async (c) => {
     if (credit !== 0 && p.customer_id) {
       await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, payment_id, invoice_id, note, created_by) values ($1,$2,$3,'reversal',$4,$5,$6,$7)`,
         [cc.company.id, p.customer_id, -credit, p.id, p.invoice_id, `Payment rejected: ${input.reason}`, cc.user.id]);
+      // Credit from this payment that already paid other invoices is taken back from them (newest first),
+      // so those invoices are owed again and the customer's credit never goes below zero.
+      let short = -(await creditBalance(q, cc.company.id, p.customer_id));
+      const used = short > 0 ? (await q.query<any>(`select ic.*, i.number from rigo.invoice_credits ic join rigo.invoices i on i.id = ic.invoice_id
+          where ic.company_id = $1 and i.customer_id = $2 and ic.source = 'customer_credit' order by ic.created_at desc for update of ic`, [cc.company.id, p.customer_id])).rows : [];
+      for (const u of used) {
+        if (short <= 0) break;
+        const take = Math.min(short, Number(u.amount_minor));
+        if (take === Number(u.amount_minor)) await q.query(`delete from rigo.invoice_credits where id = $1`, [u.id]);
+        else await q.query(`update rigo.invoice_credits set amount_minor = amount_minor - $2, note = note || $3 where id = $1`, [u.id, take, ` (less ${formatMoney(take, cc.company.currency)}: payment rejected)`]);
+        await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, payment_id, invoice_id, note, created_by) values ($1,$2,$3,'reversal',$4,$5,$6,$7)`,
+          [cc.company.id, p.customer_id, take, p.id, u.invoice_id, `Credit taken back from invoice ${u.number ?? ''}: payment rejected`, cc.user.id]);
+        await refreshPayment(q, u.invoice_id);
+        short -= take;
+      }
     }
     await q.query(`update rigo.payments set state = 'rejected', rejected_reason = $2, rejected_by = $3, rejected_at = now() where id = $1`, [p.id, input.reason, cc.user.id]);
+    if (p.kind === 'deposit' && p.plan_id) await q.query(`update rigo.recurring_plans set deposit_received_minor = greatest(0, deposit_received_minor - $2) where id = $1 and company_id = $3`, [p.plan_id, Number(p.amount_minor), cc.company.id]);
     if (p.invoice_id) await refreshPayment(q, p.invoice_id);
     await resolveNotices(q, cc.company.id, 'payment', p.id);
     await audit(q, cc, 'payment.rejected', { id: p.id, amountMinor: Number(p.amount_minor), reason: input.reason });

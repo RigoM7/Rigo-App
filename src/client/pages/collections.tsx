@@ -19,7 +19,7 @@ export function Collections() {
   const q = useQuery({ queryKey: [c.cid, 'collections'], queryFn: () => get(`/c/${c.cid}/collections`) });
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
   const prepare = useSubmit(async () => { const r = await post(`/c/${c.cid}/collections/prepare`); toast(r.reminders || r.statements ? `${r.reminders} reminder(s) and ${r.statements} statement(s) prepared` : 'Nothing new to prepare today'); refresh(); });
-  const confirm = useSubmit(async (id: string) => { const r = await post(`/c/${c.cid}/payments/${id}/confirm`); toast(r.waitingForInvoice ? 'Confirmed. It pays the job\'s invoice when it is issued.' : 'Payment confirmed and applied'); refresh(); });
+  const confirm = useSubmit(async (id: string) => { const r = await post(`/c/${c.cid}/payments/${id}/confirm`); toast(r.toCredit ? 'Confirmed. The visit isn\'t billed on its own, so it went to the customer\'s credit and paid their open invoices.' : r.waitingForInvoice ? 'Confirmed. It pays the job\'s invoice when it is issued.' : 'Payment confirmed and applied'); refresh(); });
   const send = useSubmit(async (id: string) => { const r = await post(`/c/${c.cid}/messages/${id}/send`); toast(r.status === 'simulated' ? 'Simulated (demo): nothing was sent.' : r.detail); refresh(); });
   const skip = useSubmit(async (id: string) => { await post(`/c/${c.cid}/messages/${id}/skip`); toast('Skipped. It will not be prepared again.'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
@@ -43,7 +43,7 @@ export function Collections() {
             <li key={p.id} className="row-between" style={{ padding: '10px 0' }}>
               <span><strong className="num">{money(p.amountMinor)}</strong> · {p.method}{p.reference ? ` #${p.reference}` : ''}
                 <div className="small muted">{p.customerName ?? 'No customer'} · {p.jobId ? <Link to={c.to(`jobs/${p.jobId}`)}>job #{p.jobNumber}</Link> : null} · {fmtDateTime(p.recordedAt, c.company.timezone)} by {p.recordedByName}{p.hasPhoto ? ' · photo of the check on the job' : ''}</div>
-                <div className="small muted">{p.invoiceId ? <>For <Link to={c.to(`invoices/${p.invoiceId}`)}>{p.invoiceNumber ?? 'the draft invoice'}</Link></> : 'No invoice yet: it pays the job\'s invoice when it is issued.'}</div>
+                <div className="small muted">{p.invoiceId ? <>For <Link to={c.to(`invoices/${p.invoiceId}`)}>{p.invoiceNumber ?? 'the draft invoice'}</Link></> : 'No invoice yet: it pays the job\'s invoice when it is issued, or the customer\'s open invoices if the visit isn\'t billed.'}</div>
               </span>
               {d.can.confirm && <Button size="sm" icon={<CheckCircle2 aria-hidden />} busy={confirm.busy} onClick={() => confirm.run(p.id)}>Confirm</Button>}
             </li>
