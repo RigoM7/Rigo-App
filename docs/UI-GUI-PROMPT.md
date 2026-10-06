@@ -1,140 +1,193 @@
 # Rigo UI/GUI prompt (self-contained, reusable)
 
-Use this prompt to design or build any Rigo screen, or to review one. It is complete on its own.
+Use this prompt to design, build or review any Rigo screen. It is complete on its own and
+describes the current "Light command center" design; `docs/DESIGN-SYSTEM.md` has the exact
+tokens and measured contrast.
 
 ---
 
 You are designing the interface of **Rigo**, a business management and automation platform for
 field-service companies (first: fuel delivery; portable toilet delivery, rental, servicing and
 pickup; septic services). Owners configure a company workspace, invite employees, and let Rigo
-do routine work — preparing invoices, notifying people, drafting follow-ups and messages — while
+do routine work (preparing invoices, notifying people, drafting follow-ups and messages) while
 they keep control through approvals, pause and takeover. One company may offer several services
 that share customers, service locations, employees, trucks and equipment.
 
-## 1. Brand and themes
+## 1. Direction: "Light command center"
 
-- Personality: polished, technology-focused, confident, professional. Restrained.
-- Palette is **red, white and black** only, plus neutral grays and functional status colors.
-  - Rich crimson for brand and primary actions: light #B91C1C (hover #991B1B), dark #DC2626
-    (hover #B91C1C). White text on these.
-  - Bright red #EF4444 only for highlights and active indicators — never as a background
-    behind white text (3.76:1 fails).
-  - Light: canvas #FAFAFA, surface #FFFFFF, text #111111, secondary #52525B, borders #E4E4E7,
-    control edges #7A7A84. Dark: canvas #0B0B0D, surface #161618, text #FAFAFA, secondary
-    #A1A1AA, borders #2A2A2F, control edges #7A7A84, red text #F87171.
-- Light, Dark and System themes. Light is the default. Preference persists per account and
-  device. Define colors as semantic tokens; never hardcode hex in components. Verify contrast in
-  both themes independently: text ≥4.5:1, large text and UI boundaries ≥3:1.
-- Errors and destructive actions must be distinguishable from brand red: danger token + icon +
-  explicit verb label + outlined style + confirmation that states the consequence.
-- Company branding: logo and an accent color with automatically derived accessible light/dark
-  variants, used for the company chip, active nav indicator, invoice header and message previews.
-  Navigation, controls and primary actions remain Rigo's. No custom company CSS or scripts.
+- Mission control for a field-service business: the owner opens it and immediately sees the day
+  moving. Built for an owner on a desktop first; drivers on phones get a focused version of the
+  same look.
+- Combines Linear (speed, restraint, keyboard-first, crisp hierarchy), Vercel's dashboard
+  (black-and-white precision, Geist type, live status) and fleet tools such as Samsara (drivers,
+  trucks and the day's schedule at the center). Money screens borrow Stripe's polished,
+  trustworthy treatment of amounts and states.
+- Light-first with **black chrome**: a near-black top bar and sidebar frame a bright, light
+  workspace. Red is a precise accent.
+- **Signature move:** the live dispatch timeline, with driver lanes across the day and a thin
+  bright-red "now" line moving across them. Everything else stays quiet and exact.
+- Never: a generic admin-template look (purple or blue gradients, rows of identical icon-and-
+  heading cards, stock illustrations, big-number "hero metric" tiles, eyebrow labels above
+  headings), clutter, important actions hidden in "…" menus or only on hover, gradient text,
+  decorative glass or blur, neon glows, colored left borders thicker than 1px, emoji as icons.
 
-## 2. Typography and components
+## 2. Color and themes
 
-- Poppins 600/700 headings; Open Sans 400/600/700 body; self-hosted. Base 16px, line-height 1.5;
-  16px inputs; tabular numbers in tables and totals.
-- Slightly rounded corners (8px controls, 12px cards), subtle 1px borders, restrained shadows,
-  4px spacing scale, Lucide icons only (no emoji as icons).
-- Buttons ≥44px tall for operational actions; primary/default/ghost/danger variants; busy state.
-- Forms: visible labels, "(optional)" markers, hints, inline errors with icon, linked focused
-  error summary after failed multi-field submit, password show/hide, paste and autofill allowed.
-- Status always as icon + text pill, never color alone.
-- Tables become labelled cards below 768px. No whole-page horizontal scrolling.
-- Every view has loading (skeleton), empty (with next action), error (with retry), permission
-  denied, offline and stale-data states. Never show fake success, invented data or fake progress.
-- Unavailable or deferred features are labeled as such; controls never silently do nothing.
+- Red, white and black only, plus neutral grays and functional status colors. Semantic tokens
+  only (primitive → semantic → component); never raw hex in components.
+- Light (default): canvas #FAFAFA, surface #FFFFFF, raised #F4F4F5, text #0A0A0B, secondary
+  #52525B, tertiary #71717A (14px or larger only), borders #E4E4E7, control edges #7A7A84.
+- Chrome (top bar, sidebar, bottom nav, demo bar, toasts, bulk bar): #0A0A0B, hover #1C1C1F,
+  text #FAFAFA, muted #A1A1AA (never #71717A on chrome: it fails), dividers #27272A, red text
+  #F87171.
+- Primary: crimson #B91C1C (hover #991B1B) with white text. Bright red #EF4444 only for the
+  active-nav marker, the now line, live dots and focus accents; never behind white text.
+- Dark (equally polished): canvas #0B0B0D, surface #161618, raised #1C1C1F, text #FAFAFA,
+  secondary #A1A1AA, borders #2A2A2F, control edges #7A7A84, chrome #050506 with a #27272A
+  divider, primary #DC2626 (hover #B91C1C) with white text, red text #F87171.
+- Status (icon + text, never color alone): light success #15803D, warning #B45309, info
+  #1D4ED8; dark #4ADE80, #FBBF24, #60A5FA. Danger has its own token and is distinguishable
+  from brand red: icon, explicit verb label, outlined style, confirmation stating the
+  consequence.
+- Contrast: text ≥4.5:1, large text and UI boundaries ≥3:1, in both themes independently.
+- Light, Dark and System; Light is the default; saved per account and device.
+- Company branding: logo and an accent (with derived accessible light/dark variants) on the
+  company chip, invoice header and message previews only. Navigation, controls and primary
+  actions always stay Rigo's.
 
-## 3. Navigation by role
+## 3. Typography, shape, density
 
-- Desktop (≥1024px): sticky top bar with brand, **company switcher** (current company always
-  visible, with logo/accent), role badge, assistant toggle, notification bell, account/theme
-  menu; grouped left sidebar with clear active state; collapsible assistant side panel ≥1280px.
-- Mobile: top bar with company context; bottom navigation of at most five destinations (four +
-  More); a dedicated assistant screen.
-- Real routes and deep links (`/c/{company}/...`); predictable back behavior. Switching company
-  must never show the previous company's data.
-- Owner: Home, Inbox, Jobs, Customers, Recurring & rentals, Trucks & equipment, Invoices,
-  Messages, Automation, Workflows, Assistant, Team, Services & pricing, Imports, Templates,
-  Settings. Dispatcher: operations-focused subset. Driver: My jobs, Inbox, Assistant, More.
-  Office/billing: customers, invoices, messages, payments.
+- Geist for interface text; Geist Mono for data (job numbers, quantities, money, times, IDs,
+  table numerals). Mono is for data only. Self-hosted, no font CDN. Base 16px / 1.5, 16px
+  inputs, scale 12/13/14/16/18/22/28/36, headings 600, body 400–550, prose 65–75 characters,
+  balanced headings, tabular figures.
+- Softly rounded: 8px controls, 12px cards/panels/dialogs, full rounding for pills and chips.
+  1px borders. Shadows only for overlays and raised panels, with a real offset and soft blur.
+- 4px spacing scale; tight groups, generous separation.
+- Balanced density: compact tables, roomy forms and detail panels. Operational buttons ≥44px
+  (24px minimum elsewhere). Lucide icons only, one stroke weight.
+- Theme browser surfaces too: selection, caret, scrollbars, focus rings, link underlines.
 
-## 4. Screens
+## 4. Motion: "live and alive"
 
-1. Sign up / sign in / password recovery (recovery explains when email isn't configured).
-2. Workspaces: my companies, pending invitations (accept), free demo, create company.
-3. Invitation page: company and role, masked intended email, valid/expired/revoked/replaced/
-   accepted states, wrong-account guidance, no requirement to create a company first.
-4. Resumable company setup: services, automation mode + recommended workflows, trucks, team
-   invitations, optional test job; readiness checklist; "Finish later".
-5. Owner home, in this order: (1) Needs you — approvals and items needing attention;
-   (2) Today's operations; (3) What Rigo is doing; (4) Brief business overview from real records.
-   Empty companies show setup actions, never fictional numbers.
-6. Dispatcher jobs: list/table default, switchable status board and day schedule by driver;
-   search, filters, sorting in the URL; inline assign via select (no drag required).
-7. Job form: customer + location (create inline), service with service-specific fields,
-   requested time window in the company time zone, contact, access instructions, notes,
-   optional assignment; Save as draft with a list of what is missing.
-8. Job detail: where/who, service requested, recorded outcome with photos/signature, schedule
-   and assignment, invoice summary, messages, full history including corrections.
-9. Driver "My jobs": Today / Upcoming / Finished; each card shows time, address, service,
-   access instructions, status, next action and sync state.
-10. Driver job: essentials first; big "Start job"; outcome (completed / partial / could not
-    complete + reason); service-specific quantities; notes; photos; signature if configured;
-    problem report; sticky "Submit to office"; states: Saved on this device, Waiting to sync,
-    Accepted by the server, Sync failed, Conflict — needs review.
-11. Customers and locations; Team (members, invitations, role permission matrix, approval
-    delegation); Trucks & equipment; Services & pricing (fields, price lines, tax, photo/
-    signature requirements; empty rate = not set).
-12. Invoices: list by work state; detail with branded document preview, hold reasons, line
-    editing, approve, issue, void, record payment, prepare email, print/save PDF; draft,
-    approval, delivery and payment states shown separately.
-13. Inbox: Needs action (approvals with Approve / Edit / Reject and stated consequences), Warnings,
-    Updates, Decided; unread separate from unresolved.
-14. Automation: mode, company pause (hold or cancel queued work) and resume, waiting/queued
-    steps (run/dismiss), active runs (take over), history with explanations, connected services.
-15. Workflows: list; editor with visual builder (trigger → conditions → steps, add step
-    between nodes, side panel editing, move up/down) and an equivalent form view; plain-language
-    explanation; validation errors/warnings; sample-data test results per mode; Draft → Tested →
-    Active lifecycle; per-workflow pause and mode override; versions and runs.
-16. Recurring & rentals (visit schedule separate from billing schedule), Imports (map, review,
-    confirm), Templates (apply, share), Messages (prepared/simulated/sent/replied), Settings
-    (company, branding, custom fields, connected services), Account (theme, password).
+- The now line moves across the timeline in real time; live and in-progress items get a slow
+  red pulse on their status dot only; changed counts tick to their new value; drawers slide in
+  from where they live; timeline blocks slide to a new time.
+- 100–150ms feedback, 150–300ms state changes, 300–450ms panels. Exits faster than entrances.
+  Ease-out (cubic-bezier(0.16, 1, 0.3, 1)); no bounce. CSS and Web Animations only.
+- Reduced motion: everything static (no pulse, numbers jump, the now line jumps, panels appear
+  instantly).
 
-## 5. Assistant and approvals
+## 5. Shell and navigation
 
-- Assistant states must be distinct: Proposed, Waiting for approval, Running, Completed,
-  Failed, Simulated. Label prepared responses "Prepared response (not AI)"; label real AI output
-  as AI. Proposals are separate from active configuration until accepted, tested and activated.
-- Approvals always show what will happen if approved, what happens if rejected (nothing already
-  done is undone), that editing makes the request out of date, and escalation status. Timeouts
-  never approve.
+- Desktop (≥1024px): black top bar with the wordmark, company switcher (current company
+  always visible with its chip), a search field that opens the command menu (Ctrl/⌘ K hint),
+  role badge, Assistant link, notification bell (unread count announced properly) and the
+  account/theme menu. Black left sidebar with labeled groups that collapses to icons and
+  remembers it: Operations (Home, My jobs, Inbox, Jobs, Recurring & rentals), People & places
+  (Customers, Team), Fleet (Trucks & equipment), Money (Invoices), Communication (Messages),
+  Rigo (Assistant, Automation, Workflows), Setup (Services & pricing, Imports, Templates,
+  Settings). Each role sees only what it can use. Active item: #1C1C1F, white text, small red
+  marker.
+- Command menu (Ctrl/⌘ K): jump to any screen, find jobs, customers and invoices by name or
+  number, quick actions (New job, New customer, Record payment, Pause automation, Invite, Ask
+  Rigo). Permission-aware, grouped, fully keyboard-driven, recent items first.
+- Phone and tablet: black top bar with company context and a search button; bottom navigation
+  of at most five destinations (four + More). Tables become labelled cards below 768px. No
+  horizontal page scrolling at any width.
+- Real routes and deep links (`/c/{company}/...`); filters, sorting and timeline view in the
+  URL; predictable back. Switching company never shows the previous company's data.
 
-## 6. Demo labeling
+## 6. Screens
 
-The demo is clearly marked everywhere: a black "Demo workspace" bar with "Fictional data.
-Nothing is sent, charged or connected.", simulated role switching ("View as"), Reset, "Set up my
-company", an optional guided walkthrough shown inline (not floating over content). Simulated
-results are labeled Simulated.
+1. Sign in / sign up / forgot / reset: a calm centered card on the canvas with the black Rigo
+   wordmark. Password show/hide, autofill and paste allowed. Recovery explains honestly when
+   email isn't configured.
+2. Workspaces: my companies (chip with logo or accent), pending invitations, free demo, create a
+   company. New company flow.
+3. Invitation page: company, role, masked intended email; valid, expired, revoked, replaced and
+   accepted states; wrong-account guidance; no requirement to create a company first.
+4. Resumable company setup: services, automation mode and recommended workflows, trucks, team
+   invitations, optional test job, readiness checklist, "Finish later".
+5. Owner Home (command center): **Today's timeline** leads. Driver lanes (default) with an
+   Unassigned lane on top, hours in the company time zone, blocks with time, customer, service
+   and status icon + text sized by the time window, the moving red now line, a job side panel
+   on click with assignment by select. Feed view on the same toggle (in the URL). Day
+   navigation and filters by service and driver. Around it, compact: a slim **Needs you**
+   strip (approvals, held invoices, problems, each with its action as a visible button) and
+   **What Rigo is doing**. Real records only; empty companies see setup actions, never
+   fictional numbers.
+6. Jobs: table by default, switchable to a status board and to the timeline; search, filters,
+   sorting in the URL; inline assignment by select; bulk select with a visible action bar.
+7. Job form: customer and location (create inline), service-specific fields, requested window,
+   contact, access instructions, notes, optional assignment; sticky actions; "Save as draft"
+   lists what is missing.
+8. Job detail: header with mono number, title, status, customer, when and driver; where and
+   who, service requested, recorded outcome with photos and signature, schedule and assignment,
+   invoice summary, messages, full history including corrections.
+9. Driver "My jobs" (phone): Today, Upcoming, Finished; cards with time (mono), address,
+   service, access instructions, status, next action and sync state; readable outdoors.
+10. Driver job (phone): essentials first, big "Start job", outcome (completed / partial / could
+    not complete + reason), quantities in mono, notes, photos, signature if configured, problem
+    report, sticky "Submit to office". Sync states: Saved on this device, Waiting to sync,
+    Accepted by the server, Sync failed, Conflict — needs review. One-handed at 375px.
+11. Customers and detail; Team (members, invitations, role permission matrix, approval
+    delegation); Trucks & equipment; Services & pricing and the service editor (fields, price
+    lines, tax, photo/signature requirements; an empty rate shows "Not set").
+12. Invoices: list grouped by work state (on hold, draft or awaiting approval, approved, issued
+    awaiting payment, paid, void); detail with separate invoice, approval,
+    delivery, payment and total cells, the branded document, hold reasons, line editing,
+    approve, issue, void, record payment, prepare email, print/save PDF. Amounts mono and
+    right-aligned.
+13. Inbox: Needs action (approvals with Approve / Edit / Reject and the stated consequence of
+    each), Warnings, Updates, Decided; unread shown separately from unresolved.
+14. Automation: mode, company pause (hold or cancel queued work) and resume, waiting and queued
+    steps (run/dismiss), active runs (take over), history with explanations, connected
+    services.
+15. Workflows and editor: visual builder (trigger → conditions → steps; add between nodes;
+    side panel editing; move up/down) with an equivalent form view, plain-language
+    explanation, validation, sample-data tests per mode, Draft → Tested → Active, per-workflow
+    pause and mode override, versions and runs.
+16. Recurring & rentals (visit schedule separate from billing), Imports (map, review, confirm),
+    Templates (apply, share), Messages (prepared / simulated / sent / replied, with a branded
+    email preview), Settings (company, branding with live preview, custom fields, connected
+    services), Account (theme, password).
+17. Assistant, its own full screen: conversation with distinct states (Proposed, Waiting for
+    approval, Running, Completed, Failed, Simulated); prepared answers labeled "Prepared
+    response (not AI)", AI output labeled as AI; workflow proposals as a card with the
+    explanation and Review proposal. Elsewhere only small inline "Ask Rigo" chips (held
+    invoices, blocked or failed steps) that open the Assistant with the question prefilled.
+18. Demo: an unmistakable black "Demo workspace" bar with a red hazard edge ("Fictional data.
+    Nothing is sent, charged or connected."), "View as" role switching, Reset, "Set up my
+    company", optional inline walkthrough. Simulated results are labeled Simulated.
+19. 404, error, not-a-member and dev mailbox pages in the same style.
+20. Printable invoice and customer email preview: always on white, with the company's branding.
 
-## 7. Responsive and accessibility requirements
+## 7. Components and states
 
-- WCAG 2.2 AA. Verify at 375, 768, 1024 and 1440px, portrait and landscape, both themes, 200%
-  text, reduced motion, keyboard only.
-- Visible focus (3px outline, 2px offset); skip link; logical focus order; semantic controls;
-  accessible names and states; no information by color alone; sticky bars and overlays never
-  cover content or focus; dragging always has a button/select alternative.
-- Motion is subtle (120–200ms), meaningful and interruptible; none under reduced motion.
+- UI kit: buttons (primary, default, ghost, danger), inputs, selects, checkboxes, tabs,
+  segmented controls, tables, cards, drawers, dialogs, toasts, status pills, badges, empty
+  states, skeletons, command menu, timeline; every state defined (default, hover, focus,
+  active, disabled, busy).
+- Forms: visible labels, "(optional)", hints, inline errors with an icon, a focused linked error
+  summary after a failed multi-field submit.
+- Every view: loading (skeletons shaped like the content), empty (with the next action), error
+  (with retry), permission denied, offline and stale-data states.
+- Honesty: never fake success, invented data or fake progress; unavailable features are
+  labeled; no control silently does nothing.
+- Dialogs only for confirmations or protected focus; otherwise side panels or inline editing.
+- Copy names the action ("Approve invoice", "Assign driver"); errors say what went wrong and
+  how to recover.
 
-## 8. Acceptance criteria
+## 8. Accessibility and acceptance
 
-- Zero serious/critical axe violations on key pages in light and dark.
-- No horizontal page overflow at the four widths and at 200% text.
-- Every interactive control ≥44px tall for operational actions (≥24px minimum elsewhere).
-- Each form shows inline errors and a focused, linked error summary on failed submit.
-- Driver can complete a job on a 375px phone with one hand, see sync state, and never mistake a
-  local draft for a completed job.
-- Owner can tell from Home what needs them, what Rigo is doing, and whether operations are on
-  track — from real records only.
-- Demo is unmistakable; real companies never show fictional data.
+- WCAG 2.2 AA at 375, 768, 1024 and 1440px, both themes, 200% text, reduced motion, keyboard
+  only. Visible 3px focus with 2px offset (also on the black chrome); skip link; semantic
+  elements; accessible names containing the visible label; live regions only for meaningful
+  changes ("3 items need you", never a bare number); nothing by color alone; sticky bars never
+  cover focus; every drag has a select or button alternative.
+- Zero serious/critical axe violations on key pages in light and dark; no horizontal overflow
+  at the four widths and at 200% text.
+- The owner can tell from Home within seconds what is happening today, who is where and what
+  needs them, from real records only. A driver can complete a job one-handed at 375px and never
+  mistake a local draft for a completed job. The demo is unmistakable.

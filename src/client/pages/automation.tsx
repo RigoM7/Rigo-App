@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PauseCircle, PlayCircle, Hand, Play, X, Plug, CheckCircle2, FlaskConical, Ban } from 'lucide-react';
+import { PauseCircle, PlayCircle, Hand, Play, X, Plug, CheckCircle2, FlaskConical, Ban, History } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, patch, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, ActionStatus, Dialog, ErrorSummary, Pill, useToast, useConfirm } from '../components/ui';
+import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, ActionStatus, Dialog, ErrorSummary, Pill, LiveDot, AskRigo, useToast, useConfirm } from '../components/ui';
 import { relTime } from '../lib/format';
 import { MODE_HELP, type Mode } from '../../shared/workflows';
 
@@ -85,10 +85,10 @@ export function Automation() {
         <ErrorSummary error={setMode.error} />
       </Card>
       <Tabs label="Automation activity" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[
-        { key: 'queue', label: `Waiting and queued (${d.waiting.length})` }, { key: 'runs', label: `Active runs (${d.runs.length})` }, { key: 'history', label: 'History' }, { key: 'services', label: 'Connected services' },
+        { key: 'queue', label: <>Waiting and queued<span className="count">{d.waiting.length}</span></> }, { key: 'runs', label: <>{d.runs.length ? <LiveDot /> : null}Active runs<span className="count">{d.runs.length}</span></> }, { key: 'history', label: 'History' }, { key: 'services', label: 'Connected services' },
       ]} />
       <ErrorSummary error={act.error} />
-      {tab === 'queue' && (d.waiting.length === 0 ? <Card><Empty title="Nothing waiting">When a workflow prepares or proposes something, it appears here and in the inbox.</Empty></Card> : (
+      {tab === 'queue' && (d.waiting.length === 0 ? <Card><Empty icon={<Hand />} title="Nothing waiting">When a workflow prepares or proposes something, it appears here and in the inbox.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{d.waiting.map((a: any) => {
           const link = subjectLink(c, a);
           return (
@@ -103,21 +103,21 @@ export function Automation() {
                     <Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => act.run(a.id, 'dismiss')}>Dismiss</Button>
                   </div>
                 )}
-                {a.status === 'waiting_approval' && <Link className="small" to={c.to('inbox')}>Decide in the inbox</Link>}
+                {a.status === 'waiting_approval' && <div className="row" style={{ marginTop: 6 }}><Link className="btn btn-sm" to={c.to('inbox')}>Decide in the inbox</Link></div>}
               </span>
             </li>
           );
         })}</ul></div>
       ))}
-      {tab === 'runs' && (d.runs.length === 0 ? <Card><Empty title="No active runs" /></Card> : (
+      {tab === 'runs' && (d.runs.length === 0 ? <Card><Empty icon={<Play />} title="No active runs">Workflow runs in progress appear here, and you can take any of them over.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{d.runs.map((r: any) => (
           <li key={r.id} className="list-item">
-            <span style={{ flex: 1, minWidth: 0 }}><strong>{r.workflow_name}</strong><div className="small">{r.subject_label} · step {r.current_step + 1} · {relTime(r.created_at)}</div><div className="small muted">{r.summary}</div></span>
+            <span style={{ flex: 1, minWidth: 0 }}><span className="row" style={{ gap: 8 }}><LiveDot /><strong>{r.workflow_name}</strong></span><div className="small">{r.subject_label} · step {r.current_step + 1} · {relTime(r.created_at)}</div><div className="small muted">{r.summary}</div></span>
             {c.can('automation.control') && <Button size="sm" onClick={() => takeover(r.id)}>Take over</Button>}
           </li>
         ))}</ul></div>
       ))}
-      {tab === 'history' && (d.history.length === 0 ? <Card><Empty title="No activity yet" /></Card> : (
+      {tab === 'history' && (d.history.length === 0 ? <Card><Empty icon={<History />} title="No activity yet">Every step Rigo or a person runs is listed here with an explanation.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{d.history.map((a: any) => {
           const link = subjectLink(c, a);
           return (
@@ -126,6 +126,7 @@ export function Automation() {
                 <div className="row"><strong>{a.label}</strong><ActionStatus status={a.status} /></div>
                 <div className="small">{link ? <Link to={link}>{a.subject_label}</Link> : a.subject_label}{a.workflow_name ? ` · ${a.workflow_name}` : ' · started by a person'} · {a.executed_by === 'rigo' ? 'run by Rigo' : 'run by a person'} · {relTime(a.updated_at)}</div>
                 <div className="small muted">{a.explanation}{a.attempts > 1 ? ` (${a.attempts} attempts)` : ''}</div>
+                {['blocked', 'failed'].includes(a.status) && c.can('assistant.use') ? <div style={{ marginTop: 6 }}><AskRigo to={c.to('assistant')} prompt={`Why did "${a.label}" ${a.status === 'failed' ? 'fail' : 'get blocked'}?`} /></div> : null}
               </span>
             </li>
           );

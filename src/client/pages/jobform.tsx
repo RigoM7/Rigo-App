@@ -18,7 +18,7 @@ export function DynamicField({ f, value, onChange, error, idPrefix = 'details' }
     <Field label={label} id={id} hint={f.help || undefined} error={error}>
       {(p) => f.type === 'select' ? <Select {...p} value={value ?? ''} onChange={(e) => onChange(e.target.value)}><option value="">Choose…</option>{f.options?.map((o) => <option key={o}>{o}</option>)}</Select>
         : f.type === 'longtext' ? <Textarea {...p} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />
-        : f.type === 'number' ? <Input {...p} inputMode="decimal" value={value ?? ''} onChange={(e) => onChange(e.target.value.replace(',', '.'))} />
+        : f.type === 'number' ? <Input {...p} className="input num-input" inputMode="decimal" value={value ?? ''} onChange={(e) => onChange(e.target.value.replace(',', '.'))} />
         : f.type === 'date' ? <Input {...p} type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />
         : <Input {...p} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />}
     </Field>
@@ -151,7 +151,7 @@ export function JobForm() {
             </div>
           </Card>
         )}
-        <div className="form-actions">
+        <div className="form-actions form-bar">
           {editing ? <Button type="submit" variant="primary" size="lg" icon={<Save aria-hidden />} busy={s.busy}>Save changes</Button> : <>
             <Button type="submit" variant="primary" size="lg" icon={<Send aria-hidden />} busy={s.busy}>Create job</Button>
             {isDraft && <Button size="lg" icon={<Save aria-hidden />} busy={s.busy} onClick={() => s.run('draft')}>Save as draft</Button>}

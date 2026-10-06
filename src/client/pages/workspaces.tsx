@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2, FlaskConical, Plus, MailOpen, ChevronRight, LogOut } from 'lucide-react';
+import { FlaskConical, Plus, MailOpen, ChevronRight, LogOut, UserCircle2, ChevronLeft } from 'lucide-react';
 import { useMe } from '../lib/session';
 import { post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, Pill, Banner, LoadingBlock, Checkbox, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, Pill, Banner, LoadingBlock, Checkbox, Wordmark, useToast } from '../components/ui';
+import { CompanyChip } from '../components/shell';
 import { SERVICE_CATEGORIES } from '../../shared/services';
 import { CURRENCIES } from '../../shared/billing';
 
-function TopBar() {
+export function TopBar() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const me = useMe();
@@ -21,11 +22,11 @@ function TopBar() {
     await post('/auth/signout'); qc.clear(); nav('/signin');
   };
   return (
-    <header className="topbar">
-      <Link to="/workspaces" className="brand"><span className="brand-mark" aria-hidden>R</span>Rigo</Link>
+    <header className="plain-top">
+      <Wordmark to="/workspaces" />
       <span className="spacer" />
-      <Link to="/account" className="btn btn-ghost btn-sm">Account</Link>
-      <Button size="sm" variant="ghost" icon={<LogOut aria-hidden />} onClick={signOut}>Sign out</Button>
+      <Link to="/account" className="btn btn-sm"><UserCircle2 aria-hidden />Account</Link>
+      <Button size="sm" icon={<LogOut aria-hidden />} onClick={signOut}>Sign out</Button>
     </header>
   );
 }
@@ -37,15 +38,15 @@ export function Workspaces() {
   const toast = useToast();
   const demo = useSubmit(async () => { const r = await post('/demo'); await qc.invalidateQueries({ queryKey: ['me'] }); nav(`/c/${r.id}`); });
   const accept = useSubmit(async (id: string) => { const r = await post(`/me/invitations/${id}/accept`); await qc.invalidateQueries({ queryKey: ['me'] }); toast('Invitation accepted'); nav(`/c/${r.companyId}`); });
-  if (me.isLoading || !me.data) return <LoadingBlock />;
+  if (me.isLoading || !me.data) return <div className="auth-wrap"><LoadingBlock /></div>;
   const real = me.data.companies.filter((c) => c.kind === 'real');
   const demoCo = me.data.companies.find((c) => c.kind === 'demo');
   return (
     <div className="shell">
       <TopBar />
-      <main className="main" id="main" style={{ paddingBottom: 48 }}>
+      <main className="plain-main" id="main">
         <div className="page page-narrow">
-          <div><h1>Hello, {me.data.user?.name.split(' ')[0]}</h1><p className="muted" style={{ marginTop: 6 }}>Choose a workspace. Each company is separate: what you can see depends on your role there.</p></div>
+          <div><h1>Hello, {me.data.user?.name.split(' ')[0]}</h1><p className="muted" style={{ marginTop: 8 }}>Choose a workspace. Each company is separate: what you can see depends on your role there.</p></div>
           {me.data.invitations.length > 0 && (
             <Card title="Invitations for you" id="inv">
               <ErrorSummary error={accept.error} />
@@ -59,24 +60,25 @@ export function Workspaces() {
               </ul>
             </Card>
           )}
-          <Card title="Your companies" id="cos" actions={<Link to="/workspaces/new" className="btn btn-primary"><Plus aria-hidden />Create a company</Link>}>
+          <section className="stack-sm" aria-labelledby="cos-h">
+            <div className="section-head"><h2 id="cos-h">Your companies</h2><Link to="/workspaces/new" className="btn btn-primary"><Plus aria-hidden />Create a company</Link></div>
             {real.length === 0 ? (
-              <p className="muted">You don't belong to a company yet. Create one (it's free), or ask your employer to invite you by email.</p>
+              <div className="card"><p className="muted" style={{ margin: 0 }}>You don't belong to a company yet. Create one (it's free), or ask your employer to invite you by email.</p></div>
             ) : (
-              <ul className="list">
+              <ul className="workspace-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                 {real.map((c) => (
-                  <li key={c.id}>
-                    <Link to={`/c/${c.id}`} className="list-item" style={{ alignItems: 'center', paddingLeft: 0, paddingRight: 0 }}>
-                      <Building2 aria-hidden />
-                      <span style={{ flex: 1, minWidth: 0 }}><strong>{c.name}</strong><br /><span className="small muted">{c.role_name}</span></span>
+                  <li key={c.id} style={{ minWidth: 0 }}>
+                    <Link to={`/c/${c.id}`} className="workspace">
+                      <CompanyChip cid={c.id} name={c.name} logo={c.branding?.logoFileId} accent={c.branding?.accent} />
+                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at ? '' : ' · setup in progress'}</span></span>
                       <ChevronRight aria-hidden />
                     </Link>
                   </li>
                 ))}
               </ul>
             )}
-          </Card>
-          <Card title={<h2 className="row"><FlaskConical aria-hidden />Free demo</h2>}>
+          </section>
+          <Card title={<h2 className="row" style={{ gap: 8 }}><FlaskConical aria-hidden style={{ width: 18 }} />Free demo</h2>}>
             <p>Explore a fictional fuel, portable toilet and septic company. Try dispatching a job, completing it as a driver and approving the invoice. Nothing is sent, charged or connected.</p>
             <ErrorSummary error={demo.error} />
             <div className="row">
@@ -131,9 +133,9 @@ export function NewCompany() {
   return (
     <div className="shell">
       <TopBar />
-      <main className="main" id="main">
+      <main className="plain-main" id="main">
         <div className="page page-narrow">
-          <div><Link className="back-link" to="/workspaces">← Workspaces</Link><h1 style={{ marginTop: 8 }}>Create a company</h1><p className="muted" style={{ marginTop: 6 }}>You become its owner. Creating a company is free. You can finish setup over several visits.</p></div>
+          <div><Link className="back-link" to="/workspaces"><ChevronLeft aria-hidden />Workspaces</Link><h1 style={{ marginTop: 8 }}>Create a company</h1><p className="muted" style={{ marginTop: 6 }}>You become its owner. Creating a company is free. You can finish setup over several visits.</p></div>
           <Banner tone="info">A new company starts empty: no sample customers, jobs or invoices. Use the demo to try Rigo with fictional data.</Banner>
           <div className="card"><CompanyBasicsForm onSubmit={(v) => s.run(v)} busy={s.busy} error={s.error} submitLabel="Create company" /></div>
         </div>
