@@ -131,7 +131,7 @@ describe('billing lifecycle with the fixture company', () => {
     expect((await t.luis.get(`/c/${t.cid}/my/jobs`)).body.jobs.find((x: any) => x.id === open.id).address).toBe('901 New Rd, Fairview');
     expect((await t.dana.get(`/c/${t.cid}/jobs/${job.id}`)).body.location.address).toBe('812 Willow Ln, Fairview');
     const notes = (await t.luis.get(`/c/${t.cid}/notifications`)).body;
-    expect(JSON.stringify(notes)).toMatch(/the address changed/);
+    expect(JSON.stringify(notes)).toMatch(/New address: 901 New Rd, Fairview/);
   });
 
   it('due date from the customer terms, dated payments, balance due, overpayment credit used on the next invoice (D6, D18, R6-m2)', async () => {

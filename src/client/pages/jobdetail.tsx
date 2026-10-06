@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck, ChevronLeft, CalendarClock, UserRound, Contact, Smartphone } from 'lucide-react';
+import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck, ChevronLeft, CalendarClock, UserRound, Contact, Smartphone, FileText } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
@@ -12,6 +12,7 @@ import { fmtDate, fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase, sh
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
 import { tzLabel } from '../../shared/timezones';
+import { fieldApplies } from '../../shared/services';
 import { DynamicField } from './jobform';
 import { TruckPicker } from '../components/trucks';
 import { useDocumentTitle } from '../lib/title';
@@ -19,7 +20,7 @@ import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
+  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', report_prepared: 'Report email prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
   handed_over: 'Handed over by driver', resources_changed: 'Truck swapped', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
 };
 
@@ -115,7 +116,7 @@ export function JobDetail() {
   const { job, service, customer, location, resources, events, files, invoice, voidedInvoices = [], collected = [], messages, can } = q.data;
   const members = Object.fromEntries(c.members.map((m) => [m.id, m.name]));
   const reqFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'completion');
-  const compFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'request');
+  const compFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...job.completion?.values }));
   const finished = ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(job.status);
   return (
     <div className="page">
@@ -155,7 +156,9 @@ export function JobDetail() {
               {customer?.phone ? <><dt>Customer phone</dt><dd><a href={`tel:${customer.phone}`}>{customer.phone}</a></dd></> : null}
               <dt>Address</dt><dd>{location?.address ?? '—'}{location?.current_address ? <div className="small muted">The location's address is now {location.current_address}. This job keeps the address it was booked for.</div> : null}</dd>
               <dt>Access</dt><dd className="pre">{job.access_instructions || location?.access_instructions || '—'}</dd>
-              <dt>On-site contact</dt><dd>{job.contact_name || location?.site_contact || '—'}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</dd>
+              <dt>On-site contact</dt><dd>{job.contact_name || location?.site_contact || '—'}{job.contact_phone || location?.site_contact_phone ? <> · <a href={`tel:${job.contact_phone || location.site_contact_phone}`}>{job.contact_phone || location.site_contact_phone}</a></> : null}</dd>
+              {(q.data.locationFields ?? []).filter((f: any) => location?.custom?.[f.key] !== undefined && location.custom[f.key] !== '').map((f: any) => <Fragment key={f.key}><dt>{f.label}</dt><dd>{f.type === 'boolean' ? (location.custom[f.key] ? 'Yes' : 'No') : String(location.custom[f.key])}</dd></Fragment>)}
+              {q.data.billTo && <><dt>Who pays</dt><dd>{c.can('customers.view') ? <Link to={c.to(`customers/${q.data.billTo.id}`)}>{q.data.billTo.name}</Link> : q.data.billTo.name}<div className="small muted">The invoice goes to them, at their prices.</div></dd></>}
               <dt>Scheduled</dt><dd className="num">{fmtDateTime(job.scheduled_start, c.company.timezone)}</dd>
               <dt>Driver</dt><dd>{job.assignee_name ?? <Pill tone="warning">Unassigned</Pill>}</dd>
               <dt>Equipment</dt><dd>{resources.length ? resources.map((r: any) => r.name).join(', ') : '—'}</dd>
@@ -169,11 +172,11 @@ export function JobDetail() {
             </dl>
           </Card>
           {job.completion && (
-            <Card id="done" title={<h2 className="row"><CheckCircle2 aria-hidden />Recorded on site</h2>} actions={can.correct ? <Button size="sm" icon={<Pencil aria-hidden />} onClick={() => { setCorr({ values: { ...job.completion.values }, notes: job.completion.notes ?? '', reason: '' }); setCorrectOpen(true); }}>Correct record</Button> : undefined}>
+            <Card id="done" title={<h2 className="row"><CheckCircle2 aria-hidden />Recorded on site</h2>} actions={<span className="row"><LinkButton size="sm" to={c.to(`jobs/${id}/report`)} icon={<FileText aria-hidden />}>Report</LinkButton>{can.correct ? <Button size="sm" icon={<Pencil aria-hidden />} onClick={() => { setCorr({ values: { ...job.completion.values }, notes: job.completion.notes ?? '', reason: '' }); setCorrectOpen(true); }}>Correct record</Button> : null}</span>}>
               <dl className="kv">
                 <dt>Outcome</dt><dd><strong>{(OUTCOMES as any)[job.completion.outcome]}</strong></dd>
                 {job.completion.reason ? <><dt>What happened</dt><dd className="pre">{job.completion.reason}</dd></> : null}
-                {compFields.map((f: any) => <Fragment key={f.key}><dt>{f.label}</dt><dd className="num">{job.completion.values?.[f.key] ?? '—'}{job.completion.values?.[f.key] && f.unit ? ` ${f.unit}` : ''}</dd></Fragment>)}
+                {compFields.map((f: any) => <Fragment key={f.key}><dt>{f.label}</dt><dd className={f.type === 'longtext' ? 'pre' : 'num'}>{job.completion.values?.[f.key] === undefined || job.completion.values[f.key] === '' ? '—' : f.type === 'boolean' ? (job.completion.values[f.key] === true || job.completion.values[f.key] === 'true' ? 'Yes' : 'No') : String(job.completion.values[f.key])}{job.completion.values?.[f.key] && f.unit ? ` ${f.unit}` : ''}</dd></Fragment>)}
                 <dt>Notes</dt><dd className="pre">{job.completion.notes || '—'}</dd>
                 {job.completion.signerName ? <><dt>Signed by</dt><dd>{job.completion.signerName}</dd></> : null}
                 <dt>Submitted</dt><dd>{fmtDateTime(job.completion.submittedAt ?? job.completed_at, c.company.timezone)}</dd>

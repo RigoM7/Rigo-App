@@ -169,7 +169,9 @@ describe('imports', () => {
     const cid = await newCompany(owner);
     await owner.post(`/c/${cid}/customers`, { name: 'Existing Co', email: 'existing@example.test' });
     await owner.post(`/c/${cid}/customers`, { name: 'Twin' });
-    await owner.post(`/c/${cid}/customers`, { name: 'Twin' });
+    // A second customer with the same name is created only when asked (R5-M1).
+    expect((await owner.post(`/c/${cid}/customers`, { name: 'Twin' })).status).toBe(409);
+    await owner.post(`/c/${cid}/customers`, { name: 'Twin', allowDuplicate: true });
     const csv = 'Customer Name,Email,Phone,Service Address\nNew One,new@example.test,555,1 A St\nExisting Co,existing@example.test,,2 B St\nTwin,,,3 C St\nNew One,new@example.test,555,9 Second Site\n,bad,,\n';
     const up = await owner.post(`/c/${cid}/imports`, { kind: 'customers', fileName: 'c.csv', text: csv });
     expect(up.status).toBe(200);

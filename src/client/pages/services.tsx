@@ -155,6 +155,18 @@ export function ServiceEditor() {
                     <Field label="When" id={`f-fs-${i}`}>{(p) => <Select {...p} value={f.stage} onChange={(e) => setField(i, { stage: e.target.value as any })}><option value="request">Request (dispatch)</option><option value="completion">Completion (driver)</option><option value="both">Both</option></Select>}</Field>
                     {f.type === 'number' && <Field label="Unit" optionalText id={`f-fu-${i}`}>{(p) => <Input {...p} maxLength={20} value={f.unit} onChange={(e) => setField(i, { unit: e.target.value })} />}</Field>}
                     {f.type === 'select' && <Field label="Options (one per line)" id={`f-service-fields-${i}-options`} error={s.fieldError(`service.fields.${i}.options`)}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => setField(i, { options: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />}</Field>}
+                    {(() => {
+                      // "Ask only when Service details is Inspection" (R6-M4): conditions use choice and yes/no fields.
+                      const sources = v.fields.filter((o: FieldDef, x: number) => x !== i && (o.type === 'select' || o.type === 'boolean'));
+                      if (!sources.length && !f.when) return null;
+                      const src = sources.find((o: FieldDef) => o.key === f.when?.field);
+                      const values = src ? (src.type === 'boolean' ? ['true', 'false'] : src.options ?? []) : [];
+                      return <>
+                        <Field label="Ask only when" id={`f-fw-${i}`} hint="Leave on Always unless the field only applies to some visits.">{(p) => <Select {...p} value={f.when?.field ?? ''} onChange={(e) => { const o = sources.find((x: FieldDef) => x.key === e.target.value); setField(i, { when: o ? { field: o.key, equals: o.type === 'boolean' ? 'true' : o.options?.[0] ?? '' } : null }); }}>
+                          <option value="">Always</option>{sources.map((o: FieldDef) => <option key={o.key} value={o.key}>{o.label}</option>)}</Select>}</Field>
+                        {src && <Field label={`${src.label} is`} id={`f-fwv-${i}`}>{(p) => <Select {...p} value={f.when?.equals ?? ''} onChange={(e) => setField(i, { when: { field: src.key, equals: e.target.value } })}>{values.map((o: string) => <option key={o} value={o}>{o === 'true' ? 'Yes' : o === 'false' ? 'No' : o}</option>)}</Select>}</Field>}
+                      </>;
+                    })()}
                   </div>
                   <div className="row-between" style={{ marginTop: 8 }}>
                     <Checkbox label="Required" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} />

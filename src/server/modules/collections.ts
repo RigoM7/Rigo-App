@@ -22,7 +22,7 @@ const balanceOf = (i: any) => balanceDue({ totalMinor: Number(i.total_minor), pa
 /** Issued invoices with something still owed, oldest due first. */
 async function openInvoices(q: Q, companyId: string, customerId?: string) {
   const { rows } = await q.query<any>(
-    `select i.id, i.number, i.customer_id, i.issued_at, i.due_date, i.total_minor, i.paid_minor, i.credited_minor, i.currency, i.period_start, i.period_end, c.name as customer_name, c.email as customer_email
+    `select i.id, i.number, i.customer_id, i.issued_at, i.due_date, i.total_minor, i.paid_minor, i.credited_minor, i.currency, i.period_start, i.period_end, c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id
       where i.company_id = $1 and i.status = 'issued' and i.payment_status <> 'paid' and ($2::uuid is null or i.customer_id = $2)
       order by i.due_date nulls last, i.issued_at`, [companyId, customerId ?? null]);
@@ -80,7 +80,7 @@ export async function buildStatement(q: Q, companyId: string, customerId: string
 /** Save a statement and prepare its email (not sent). One per customer per date; re-preparing refreshes it. */
 export async function prepareStatement(q: Q, companyId: string, customerId: string, asOf: string, userId: string | null) {
   const data = await buildStatement(q, companyId, customerId, asOf);
-  const cust = (await q.query<any>(`select name, email from rigo.customers where id = $1 and company_id = $2`, [customerId, companyId])).rows[0];
+  const cust = (await q.query<any>(`select name, coalesce(nullif(billing_contact->>'email', ''), email) as email from rigo.customers where id = $1 and company_id = $2`, [customerId, companyId])).rows[0];
   if (!cust) throw notFound('Customer');
   const co = (await q.query<any>(`select name, phone, currency, settings from rigo.companies where id = $1`, [companyId])).rows[0];
   const st = (await q.query<{ id: string; message_id: string | null }>(

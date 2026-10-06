@@ -21,6 +21,7 @@ const Jobs = lazy(() => import('./pages/jobs').then((m) => ({ default: m.Jobs })
 const JobForm = lazy(() => import('./pages/jobform').then((m) => ({ default: m.JobForm })));
 const DriverRecords = lazy(() => import('./pages/driver-records').then((m) => ({ default: m.DriverRecords })));
 const JobDetail = lazy(() => import('./pages/jobdetail').then((m) => ({ default: m.JobDetail })));
+const JobReport = lazy(() => import('./pages/job-report').then((m) => ({ default: m.JobReport })));
 const Today = lazy(() => import('./pages/driver').then((m) => ({ default: m.Today })));
 const DriverJob = lazy(() => import('./pages/driver').then((m) => ({ default: m.DriverJob })));
 const Customers = lazy(() => import('./pages/customers').then((m) => ({ default: m.Customers })));
@@ -286,6 +287,7 @@ function CompanyRoutes() {
       <Route path="jobs/records" element={<Need any={['jobs.assign']}><DriverRecords /></Need>} />
       <Route path="jobs/:id" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobDetail /></Need>} />
       <Route path="jobs/:id/edit" element={<Need any={['jobs.edit']}><JobForm /></Need>} />
+      <Route path="jobs/:id/report" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobReport /></Need>} />
       <Route path="customers" element={<Need any={['customers.view']}><Customers /></Need>} />
       <Route path="customers/:id" element={<Need any={['customers.view']}><CustomerDetail /></Need>} />
       <Route path="team" element={<Need any={['members.view']}><Team /></Need>} />

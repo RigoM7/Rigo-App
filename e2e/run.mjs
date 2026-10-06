@@ -686,6 +686,46 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     await oc.close(); await f.owner.dispose();
     return `${a}; ${a2}; ${a3}`;
   });
+
+  await step('WP8: the customer picker searches without accents by keyboard, a duplicate is caught, and the customer page answers next visit and balance (R5-M4, R5-M1, R17-M3, R5-m4)', async () => {
+    const f = await fieldCompany('customers');
+    const jose = await f.customer('José Núñez', '9 Sycamore Ct, Fairview');
+    await f.customer('Joseph Brown', '40 Oak Ave, Lakeside');
+    const { c, p } = await ownerContext(f); watch(p, 'wp8-picker');
+    await p.goto(`${f.C}/jobs/new`);
+    const box = p.getByRole('combobox', { name: 'Customer' });
+    await box.click();
+    await box.fill('jose nunez');
+    await p.getByRole('option', { name: /José Núñez.*Fairview/ }).waitFor();
+    await box.press('ArrowDown'); await box.press('ArrowUp'); await box.press('Enter');
+    if ((await box.inputValue()) !== 'José Núñez') throw new Error(`picked "${await box.inputValue()}"`);
+    // Only one location: it is filled in.
+    await p.waitForFunction(() => (document.querySelector('#f-locationId'))?.value);
+    const a1 = await axe(p, 'wp8-picker');
+    // Adding the same person again is caught.
+    await p.getByRole('button', { name: 'New customer' }).click();
+    await p.getByLabel('Customer name').fill('Jose Nunez');
+    await p.getByRole('button', { name: 'Add customer' }).click();
+    await p.getByRole('heading', { name: 'This looks like a customer you already have' }).waitFor();
+    await p.getByText('Same name').waitFor();
+    await p.getByRole('button', { name: 'Use this customer' }).click();
+    // The customer page: next visit, balance, Upcoming/Past, New job with the customer chosen.
+    await f.mkJob(new Date(Date.now() + 2 * 86400_000).toISOString(), { customerId: jose.id, locationId: jose.loc });
+    await p.goto(`${f.C}/customers/${jose.id}`);
+    // Leaving the half-filled job form asked first; discard to continue.
+    const discard = p.getByRole('button', { name: 'Discard changes' });
+    if (await discard.isVisible().catch(() => false)) await discard.click();
+    await p.getByRole('region', { name: 'At a glance' }).getByText('Next visit').waitFor();
+    await p.getByText('Nothing owed').waitFor();
+    await p.getByRole('heading', { name: /Upcoming jobs \(1\)/ }).waitFor();
+    const a2 = await axe(p, 'wp8-customer');
+    await p.getByRole('link', { name: 'New job' }).click();
+    await p.waitForURL(/jobs\/new\?customer=/);
+    await p.waitForFunction(() => document.querySelector('#f-customerId')?.value === 'José Núñez', null, { timeout: 8000 }).catch(async () => { throw new Error(`New job from the customer page did not choose the customer: "${await p.locator('#f-customerId').inputValue()}"`); });
+    await p.waitForFunction(() => document.querySelector('#f-locationId')?.value, null, { timeout: 8000 });
+    await c.close(); await f.owner.dispose();
+    return `${a1}; ${a2}`;
+  });
 }
 if (process.env.E2E_ONLY === 'phase2') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

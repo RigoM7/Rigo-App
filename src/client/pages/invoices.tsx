@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Receipt, CheckCircle2, Send, Printer, Pencil, Plus, Trash2, Ban, CircleDollarSign, Mail, ChevronLeft, ClipboardList, Undo2, FileMinus, Wallet, RotateCcw, XCircle, FilePlus2 } from 'lucide-react';
 import { useCompany } from '../lib/session';
+import { CustomerPicker } from '../components/customer-picker';
 import { get, post, put, newId, type ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, InvoiceStatus, MessageStatus, Banner, Dialog, Checkbox, Tabs, LinkButton, AskRigo, useToast, useConfirm } from '../components/ui';
@@ -193,7 +194,6 @@ export function NewInvoice() {
   const [notes, setNotes] = useState('');
   const [key] = useState(() => newId('inv'));
   const [allowFree, setAllowFree] = useState(false);
-  const custs = useQuery({ queryKey: [c.cid, 'customers', ''], queryFn: () => get(`/c/${c.cid}/customers`) });
   const cust = useQuery({ queryKey: [c.cid, 'customer', customerId], queryFn: () => get(`/c/${c.cid}/customers/${customerId}`), enabled: !!customerId });
   const taxBp = tax.trim() === '' ? null : Math.round(Number(tax.replace(',', '.')) * 100);
   const preview = previewTotals(lines, taxBp, allowFree);
@@ -213,7 +213,7 @@ export function NewInvoice() {
         <FreeConfirm error={s.error} onFree={() => { setAllowFree(true); s.run(true); }} />
         <Card id="who" title="Customer">
           <div className="grid-2">
-            <Field label="Customer" id="f-customerId" error={s.fieldError('customerId')}>{(p) => <Select {...p} value={customerId} onChange={(e) => { setCustomerId(e.target.value); setLocationId(''); }}><option value="">Choose…</option>{(custs.data?.customers ?? []).map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>}</Field>
+            <Field label="Customer" id="f-customerId" error={s.fieldError('customerId')}>{(p) => <CustomerPicker id={p.id} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} value={customerId} onChange={(id) => { setCustomerId(id); setLocationId(''); }} />}</Field>
             <Field label="Site" optionalText id="f-locationId" error={s.fieldError('locationId')}>{(p) => <Select {...p} value={locationId} disabled={!customerId} onChange={(e) => setLocationId(e.target.value)}><option value="">No site</option>{(cust.data?.locations ?? []).map((l: any) => <option key={l.id} value={l.id}>{l.label ? `${l.label}: ` : ''}{l.address}</option>)}</Select>}</Field>
           </div>
           {cust.data?.customer?.taxExempt ? <p className="small muted" style={{ marginTop: 8 }}>This customer is tax exempt: no tax is charged.</p> : null}

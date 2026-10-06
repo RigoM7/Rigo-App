@@ -210,6 +210,24 @@ kbd { display: inline-flex; align-items: center; min-width: 20px; height: 20px; 
 .input-group { position: relative; display: flex; }
 .input-group .input { padding-right: 52px; }
 .input-group .icon-btn { position: absolute; right: 0; top: 0; }
+.combo { position: relative; }
+.combo .input { padding-right: 48px; }
+.combo-clear { position: absolute; right: 2px; top: 2px; width: 40px; height: calc(var(--input-h) - 4px); display: grid; place-items: center; border: 0; background: transparent; color: var(--text-2); border-radius: var(--radius); cursor: pointer; }
+.combo-clear:hover { color: var(--text); background: var(--surface-2); }
+.combo-clear:focus-visible { outline: 3px solid var(--focus); }
+.combo-clear svg { width: 18px; height: 18px; }
+.combo-list { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); max-height: 320px; overflow-y: auto; margin: 0; padding: 6px; list-style: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); }
+.combo-list li[role='option'] { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-height: 44px; justify-content: center; border-radius: var(--radius); cursor: pointer; }
+.combo-list li.active { background: var(--surface-2); outline: 2px solid var(--focus); outline-offset: -2px; }
+.report-table th { width: 45%; font-weight: 500; color: var(--text-2); text-align: left; }
+.report-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 8px; }
+.report-photos figure { margin: 0; }
+.report-photos img { width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--border); break-inside: avoid; }
+.report-signature { max-width: 280px; height: auto; border-bottom: 1px solid var(--border); margin-top: 8px; display: block; }
+.summary-strip { display: flex; flex-wrap: wrap; gap: 12px 32px; padding: 14px 16px; margin-bottom: var(--space-4); border: 1px solid var(--border); border-radius: var(--card-radius); background: var(--surface); }
+.summary-strip > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dup-card { border-color: var(--warning, var(--border)); padding: 12px 14px; }
+.combo-note { padding: 10px; color: var(--text-2); font-size: var(--fs-14); }
 .check { display: flex; gap: 10px; align-items: flex-start; min-height: var(--tap); padding: 10px 0; cursor: pointer; }
 .check input { width: 20px; height: 20px; accent-color: var(--primary); flex: none; margin: 2px 0 0; }
 .radio-cards { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }

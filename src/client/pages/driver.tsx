@@ -11,6 +11,7 @@ import { fmtTime, fmtDate, relTime, mapsUrl } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
 import { OUTCOMES, REASON_CODES, completionProblems, outcomeReason, type ReasonCode } from '../../shared/jobs';
+import { fieldApplies } from '../../shared/services';
 import { quantityChecks } from '../../shared/billing';
 import { useDocumentTitle } from '../lib/title';
 
@@ -226,7 +227,7 @@ function SignaturePad({ value, onChange }: { value: string | null; onChange: (v:
 function snapshot(job: any): JobSnapshot {
   return {
     address: job.address ?? null, scheduled_start: job.scheduled_start ?? null, access: job.access_instructions || job.location_access || null, notes: job.notes || null,
-    contact: [job.contact_name || job.site_contact, job.contact_phone].filter(Boolean).join(' · ') || null, details: job.details ?? {}, resources: (job.resources ?? []).map((r: any) => r.name).join(', '),
+    contact: [job.contact_name || job.site_contact, job.contact_phone || job.site_contact_phone].filter(Boolean).join(' · ') || null, details: job.details ?? {}, resources: (job.resources ?? []).map((r: any) => r.name).join(', '),
   };
 }
 interface Change { label: string; before: string; after: string }
@@ -308,8 +309,8 @@ export function DriverJob() {
     );
   }
   const finished = ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(job.status);
-  const compFields = (job.fields ?? []).filter((f: any) => f.stage !== 'request');
   const d = draft ?? ensureDraft();
+  const compFields = (job.fields ?? []).filter((f: any) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...d?.values }));
   const access = job.access_instructions || job.location_access;
   const started = job.status === 'in_progress' || !!d.startedOffline;
   // Once submitted, the record is out of the driver's hands until it sends (R13-m3).
@@ -361,7 +362,7 @@ export function DriverJob() {
   const submit = async () => {
     const probs: Record<string, string> = {};
     if (!d.outcome) probs.outcome = 'Choose how the job went';
-    else Object.assign(probs, completionProblems({ ...d, outcome: d.outcome, photoCount: d.photos.length, hasSignature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature }));
+    else Object.assign(probs, completionProblems({ ...d, outcome: d.outcome, photoCount: d.photos.length, hasSignature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature }, job.details ?? {}));
     if (typed && d.outcome === 'completed' && job.requires_signature && !d.signatureTyped) probs.signature = 'Tick the box to confirm the customer agreed to a typed signature';
     for (const f of compFields) { const e = numberError(f); if (e) probs[f.key] = e; }
     for (const q of unconfirmed) probs[q.field] ??= `${q.message} Type it again to confirm, or correct it.`;
@@ -417,7 +418,8 @@ export function DriverJob() {
             {job.address && <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}><a className="btn btn-sm" href={mapsUrl(job.address)} target="_blank" rel="noreferrer"><Navigation aria-hidden />Open in Maps</a><Button size="sm" icon={<Copy aria-hidden />} aria-label="Copy address" onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button></div>}</div>
           <div className="row"><Clock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDate(job.scheduled_start, c.company.timezone)}, ${fmtTime(job.scheduled_start, c.company.timezone)}` : 'Any time'}</span></div>
           {access && <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div><strong>Access:</strong> {access}</div></div>}
-          {(job.contact_name || job.site_contact || job.contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</span></div>}
+          {(job.contact_name || job.site_contact || job.contact_phone || job.site_contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact || 'Site contact'}{(job.contact_phone || job.site_contact_phone) ? <> · <a href={`tel:${job.contact_phone || job.site_contact_phone}`}>{job.contact_phone || job.site_contact_phone}</a></> : null}</span></div>}
+          {job.site_fields?.length > 0 && <dl className="kv">{job.site_fields.map((f: any) => <div key={f.label} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>}
           {job.resources?.length ? <div className="row"><Truck aria-hidden /><span>{job.resources.map((r: any) => r.name).join(', ')}</span></div> : null}
           {Object.keys(job.details ?? {}).length > 0 && <dl className="kv">{(job.fields ?? []).filter((f: any) => f.stage !== 'completion' && job.details[f.key]).map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{f.type === 'boolean' ? (job.details[f.key] === true || job.details[f.key] === 'true' ? 'Yes' : 'No') : job.details[f.key]}{f.unit ? ` ${f.unit}` : ''}</dd></div>)}</dl>}
           {job.notes && <p className="pre" style={{ margin: 0 }}><strong>Notes:</strong> {job.notes}</p>}

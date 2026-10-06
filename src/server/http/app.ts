@@ -20,6 +20,7 @@ import { overviewRoutes } from '../modules/overview.js';
 import { invoiceViewPublic } from '../modules/invoice-view.js';
 import { collectionRoutes, runCollections } from '../modules/collections.js';
 import { latePublic, lateRoutes } from '../modules/late-records.js';
+import { customerMergeRoutes } from '../modules/customer-merge.js';
 import { processAll, escalateApprovals } from '../automation/engine.js';
 import { config } from '../config.js';
 
@@ -52,7 +53,7 @@ export function createApp() {
     await next();
     if (config.isServerless && c.req.method !== 'GET' && c.res.status < 400) await processAll(2500).catch((e) => console.error('[automation]', e));
   });
-  for (const r of [companyRoutes, teamRoutes, inboxRoutes, recordRoutes, jobRoutes, billingRoutes, collectionRoutes, lateRoutes, workflowRoutes, recurringRoutes, importRoutes, templateRoutes, assistantRoutes, demoRoutes, overviewRoutes]) {
+  for (const r of [companyRoutes, teamRoutes, inboxRoutes, recordRoutes, jobRoutes, billingRoutes, collectionRoutes, lateRoutes, customerMergeRoutes, workflowRoutes, recurringRoutes, importRoutes, templateRoutes, assistantRoutes, demoRoutes, overviewRoutes]) {
     company.route('/', r);
   }
   app.route('/c/:cid', company);

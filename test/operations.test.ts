@@ -71,7 +71,7 @@ describe('jobs', () => {
     const j2 = (await s.owner.get(`/c/${s.cid}/jobs/${r.body.id}`)).body.job;
     const clash = await s.owner.post(`/c/${s.cid}/jobs/${j2.id}/assign`, { userId: s.driverId, resourceIds: [], version: j2.version });
     expect(clash.status).toBe(409);
-    expect(clash.body.error.message).toMatch(/already has job/);
+    expect(clash.body.error.message).toMatch(/is busy then: job #/);
     const stale = await s.owner.patch(`/c/${s.cid}/jobs/${j2.id}`, { notes: 'x', version: j2.version + 5 });
     expect(stale.status).toBe(409);
   });

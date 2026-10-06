@@ -43,7 +43,8 @@ function CustomFieldsEditor({ onDirty }: { onDirty?: (k: string, v: boolean) => 
             <Field label="Type" id={`f-cft-${i}`}>{(p) => <Select {...p} value={f.type} onChange={(e) => set(i, { type: e.target.value })}><option value="text">Text</option><option value="number">Number</option><option value="select">Choice list</option><option value="boolean">Yes / no</option><option value="date">Date</option></Select>}</Field>
             {f.type === 'select' && <Field label="Options (one per line)" id={`f-cfo-${i}`}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => set(i, { options: e.target.value.split('\n').map((x: string) => x.trim()).filter(Boolean) })} />}</Field>}
           </div>
-          <div className="row-between"><Checkbox label="Required" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} />
+          <div className="row-between"><span className="row"><Checkbox label="Required" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} />
+            {kind === 'locations' && <Checkbox label="Show to drivers" hint="On the driver's job screen, for example a gate code or tank location." checked={!!f.driverVisible} onChange={(e) => set(i, { driverVisible: e.target.checked })} />}</span>
             <span className="row"><Button size="sm" variant="ghost" aria-label="Move up" disabled={i === 0} onClick={() => mv(i, -1)}><ArrowUp aria-hidden /></Button><Button size="sm" variant="ghost" aria-label="Move down" disabled={i === list.length - 1} onClick={() => mv(i, 1)}><ArrowDown aria-hidden /></Button><Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => setV({ ...v, [kind]: list.filter((_: any, x: number) => x !== i) })}>Remove</Button></span></div>
         </li>
       ))}</ol>

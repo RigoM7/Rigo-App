@@ -59,6 +59,9 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
       where j.id = $1 and j.company_id = $2 for update of j`, [jobId, companyId]);
   const job = rows[0];
   if (!job) throw notFound('Job');
+  // The invoice goes to whoever pays: a bill-to customer when the job has one (a realtor paying for an
+  // inspection), with their prices, tax exemption and terms; the service address stays the job's (R6-M4).
+  if (job.bill_to_customer_id) job.customer_id = job.bill_to_customer_id;
   const key = `job:${job.id}`;
   const existing = await q.query<any>(`select id, status from rigo.invoices where company_id = $1 and billable_key = $2`, [companyId, key]);
   if (existing.rows[0]) {
@@ -134,7 +137,7 @@ export async function recalcInvoice(q: Q, invoiceId: string, opts: { taxRateBp?:
 
 /** Rebuild a held invoice's charge lines from its job and the service's current pricing. Manual discount lines are kept. */
 export async function rebuildHeldInvoice(q: Q, invoiceId: string) {
-  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, i.currency, i.free_confirmed, j.details, j.completion, j.status as job_status, j.customer_id, j.service_id, j.booked_rates, s.pricing, s.fields, s.tax_rate_bp
+  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, i.currency, i.free_confirmed, j.details, j.completion, j.status as job_status, coalesce(j.bill_to_customer_id, j.customer_id) as customer_id, j.service_id, j.booked_rates, s.pricing, s.fields, s.tax_rate_bp
       from rigo.invoices i join rigo.jobs j on j.id = i.job_id join rigo.services s on s.id = j.service_id where i.id = $1 for update of i`, [invoiceId]);
   const inv = rows[0];
   if (!inv || inv.status !== 'held') return;
@@ -249,7 +252,7 @@ export async function issueInvoice(q: Q, companyId: string, invoiceId: string, a
   const number = await nextNumber(q, companyId);
   const today = localDate(new Date(), inv.timezone);
   const terms = await termsFor(q, companyId, inv.customer_id);
-  const billTo = (await q.query<any>(`select c.name as customer_name, c.billing_address, c.email,
+  const billTo = (await q.query<any>(`select c.name as customer_name, c.billing_address, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as email,
         coalesce(j.location_snapshot->>'label', l.label) as location_label, coalesce(j.location_snapshot->>'address', l.address) as location_address,
         s.name as service_name, j.number as job_number, j.completed_at
       from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id
@@ -291,7 +294,7 @@ const EMAIL_LINE_LIMIT = 10;
  */
 export async function invoiceEmail(q: Q, invoiceId: string, viewUrl?: string) {
   const { rows } = await q.query<any>(
-    `select i.*, c.name as customer_name, c.email as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
+    `select i.*, c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id join rigo.companies co on co.id = i.company_id left join rigo.jobs j on j.id = i.job_id
       where i.id = $1`, [invoiceId]);
   const i = rows[0];

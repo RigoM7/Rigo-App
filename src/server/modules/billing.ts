@@ -79,7 +79,7 @@ billingRoutes.get('/invoices/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.view');
   const inv = await loadInvoice(cc, cc.db, c.req.param('id'));
-  const extra = (await cc.db.query<any>(`select c.name as customer_name, c.email as customer_email, c.billing_address, j.number as job_number, j.completed_at, j.completion, s.fields, s.invoice_shows_notes,
+  const extra = (await cc.db.query<any>(`select c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email, c.billing_address, j.number as job_number, j.completed_at, j.completion, s.fields, s.invoice_shows_notes,
         coalesce(j.location_snapshot->>'address', l.address) as location_address, coalesce(j.location_snapshot->>'label', l.label) as location_label, s.name as service_name, s.tax_rate_bp as service_tax_rate_bp
       from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id left join rigo.locations l on l.id = coalesce(j.location_id, i.location_id)
       left join rigo.services s on s.id = j.service_id where i.id = $1`, [inv.id])).rows[0];

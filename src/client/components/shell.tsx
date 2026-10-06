@@ -341,7 +341,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
     list.push(...pages.filter((p) => match(p.label)));
     if (needle && remote) {
       for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: `jobs/${j.id}` });
-      for (const cu of (customers.data?.customers ?? []).slice(0, 5)) list.push({ id: `c-${cu.id}`, group: 'Customers', label: cu.name, meta: cu.location_count ? `${cu.location_count} location(s)` : undefined, icon: <Contact aria-hidden />, to: `customers/${cu.id}` });
+      for (const cu of (customers.data?.customers ?? []).slice(0, 5)) list.push({ id: `c-${cu.id}`, group: 'Customers', label: cu.name, meta: cu.firstAddress ?? (cu.location_count ? `${cu.location_count} location(s)` : undefined), icon: <Contact aria-hidden />, to: `customers/${cu.id}` });
       const inv = (invoices.data?.invoices ?? []).filter((i: any) => [i.number, i.customerName, i.jobNumber && `#${i.jobNumber}`, i.jobNumber].filter(Boolean).some((v: any) => String(v).toLowerCase().includes(remote))).slice(0, 5);
       for (const i of inv) list.push({ id: `i-${i.id}`, group: 'Invoices', label: i.number ?? `Draft for job #${i.jobNumber ?? i.job_number ?? '?'}`, meta: i.customerName ?? i.customer_name ?? undefined, icon: <FileText aria-hidden />, to: `invoices/${i.id}` });
     }

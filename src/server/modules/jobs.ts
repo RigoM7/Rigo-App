@@ -4,11 +4,13 @@ import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, needAny, can, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
-import { canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, type JobStatus } from '../../shared/jobs.js';
-import { customFieldsSchema, validateValues, readPricing, type FieldDef } from '../../shared/services.js';
+import { canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, OUTCOMES, type JobStatus } from '../../shared/jobs.js';
+import { customFieldsSchema, validateValues, readPricing, fieldApplies, type FieldDef } from '../../shared/services.js';
 import { quantityChecks, formatMoney, type JobTruck } from '../../shared/billing.js';
 import { paymentState } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
+import { fold, jobNumberQuery } from '../../shared/customers.js';
+import { reportLines, reportText } from '../../shared/report.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
 import { notifyPermission, notifyPermissions, notifyRoles } from './inbox.js';
@@ -165,11 +167,15 @@ jobRoutes.get('/jobs', async (c) => {
   if (from) add('j.scheduled_start >= ?', from);
   if (to) add('j.scheduled_start < ?', to);
   const qtext = (c.req.query('q') ?? '').trim().toLowerCase();
+  // "54", "#54" or "job 54" finds job 54 first; names match without accents ("nunez" finds Núñez) (R5-m1, R17-m1).
+  const num = qtext ? jobNumberQuery(qtext) : null;
+  let first = '';
   if (qtext) {
-    vals.push(`%${qtext}%`);
+    vals.push(`%${fold(qtext)}%`);
     const n = vals.length;
-    where.push(`(lower(coalesce(c.name,'')) like $${n} or lower(coalesce(j.location_snapshot->>'address', l.address, '')) like $${n} or lower(coalesce(s.name,'')) like $${n} or j.number::text = $${n + 1})`);
-    vals.push(qtext.replace(/^#/, ''));
+    vals.push(num ?? -1);
+    where.push(`(rigo.fold(c.name) like $${n} or rigo.fold(coalesce(j.location_snapshot->>'address', l.address, '')) like $${n} or rigo.fold(s.name) like $${n} or j.number = $${n + 1})`);
+    if (num !== null) first = `(j.number = $${n + 1}) desc, `;
   }
   const sorts: Record<string, () => string> = {
     // Only the schedule order uses the company time zone; an unused parameter is an error in PostgreSQL.
@@ -177,7 +183,7 @@ jobRoutes.get('/jobs', async (c) => {
     number: () => 'j.number desc', updated: () => 'j.updated_at desc', customer: () => 'lower(c.name), j.number',
   };
   const order = (sorts[c.req.query('sort') ?? 'schedule'] ?? sorts.schedule)();
-  const { rows } = await cc.db.query(`${listSelect} where ${where.join(' and ')} order by ${order} limit 500`, vals);
+  const { rows } = await cc.db.query(`${listSelect} where ${where.join(' and ')} order by ${first}${order} limit 500`, vals);
   return c.json({
     jobs: rows.map((j: any) => ({ ...j, billing_status: can(cc, 'invoices.view') ? j.billing_status : undefined, nextAction: nextAction(j) })),
     serverTime: new Date().toISOString(),
@@ -192,7 +198,7 @@ jobRoutes.get('/my/jobs', async (c) => {
     `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
             j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at, j.driver_changes,
             c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label,
-            coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact,
+            coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact, l.custom as location_custom, l.site_contact_phone,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
             (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind, 'capacityQuantity', r.capacity_quantity, 'capacityUnit', r.capacity_unit)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
        from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id
@@ -200,7 +206,10 @@ jobRoutes.get('/my/jobs', async (c) => {
         and (j.status in ('open','in_progress') or j.completed_at > now() - interval '2 days' or j.updated_at > now() - interval '2 days')
       order by ${scheduleOrder('$3')}`, [cc.company.id, cc.actingUserId, cc.company.timezone]);
   const driverNext = (j: any) => (j.status === 'open' ? 'Start the job' : j.status === 'in_progress' ? 'Record the outcome' : '');
-  return c.json({ jobs: rows.map((j) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
+  // Location custom fields marked for drivers travel with the job (R5-M2).
+  const siteDefs = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).locations.filter((f) => f.driverVisible);
+  const siteFields = (j: any) => siteDefs.filter((f) => j.location_custom?.[f.key] !== undefined && j.location_custom[f.key] !== '').map((f) => ({ label: f.label, value: f.type === 'boolean' ? (j.location_custom[f.key] ? 'Yes' : 'No') : String(j.location_custom[f.key]) }));
+  return c.json({ jobs: rows.map(({ location_custom, ...j }) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j), site_fields: siteFields({ location_custom }) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
 });
 
 function publicDetails(d: Record<string, unknown> | null) {
@@ -213,6 +222,8 @@ jobRoutes.get('/jobs/:id', async (c) => {
   const svc = await service(cc.db, cc.company.id, job.service_id);
   const customer = job.customer_id ? (await cc.db.query<any>(`select id, name, ${can(cc, 'customers.contact') ? 'email, phone' : 'null as email, null as phone'} from rigo.customers where id = $1`, [job.customer_id])).rows[0] : null;
   const live = job.location_id ? (await cc.db.query<any>(`select * from rigo.locations where id = $1`, [job.location_id])).rows[0] : null;
+  // The site contact's phone is for people who see contact details and the driver doing the job.
+  if (live && !can(cc, 'customers.contact') && !isAssignedWorker(cc, job)) live.site_contact_phone = undefined;
   // The job shows the address it was booked for; if the location was edited since, both are shown.
   const snap = job.location_snapshot;
   const location = live ? { ...live, ...(snap ? { label: snap.label ?? live.label, address: snap.address ?? live.address, access_instructions: snap.access ?? live.access_instructions, site_contact: snap.siteContact ?? live.site_contact } : {}),
@@ -236,6 +247,8 @@ jobRoutes.get('/jobs/:id', async (c) => {
       missing: job.status === 'draft' ? missingForOpen(job, svc?.fields ?? null) : [] },
     service: svc ? { id: svc.id, name: svc.name, category: svc.category, fields: svc.fields, requiresPhoto: svc.requires_photo, requiresSignature: svc.requires_signature } : null,
     customer, location, resources, events, files, invoice, voidedInvoices, collected, messages, customFields,
+    billTo: job.bill_to_customer_id ? (await cc.db.query<any>(`select id, name from rigo.customers where id = $1 and company_id = $2`, [job.bill_to_customer_id, cc.company.id])).rows[0] ?? null : null,
+    locationFields: customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).locations,
     can: {
       edit: can(cc, 'jobs.edit') && !isFinished(job.status), assign: can(cc, 'jobs.assign') && !isFinished(job.status),
       work: isAssignedWorker(cc, job) && ['open', 'in_progress'].includes(job.status), correct: can(cc, 'jobs.correct') && isFinished(job.status) && job.status !== 'cancelled',
@@ -298,6 +311,8 @@ const jobInput = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   priority: z.enum(['normal', 'urgent', 'emergency']).optional(),
+  /** Who pays, when not the customer at the service location (R6-M4). */
+  billToCustomerId: z.string().uuid().nullable().optional(),
 });
 
 async function validateRefs(q: Q, cc: CompanyCtx, input: z.infer<typeof jobInput>) {
@@ -308,6 +323,7 @@ async function validateRefs(q: Q, cc: CompanyCtx, input: z.infer<typeof jobInput
     if (!r.rows.length) throw badRequest('Choose a location from this company.', { fields: { locationId: 'Unknown location' } });
     if (input.customerId && r.rows[0].customer_id !== input.customerId) throw badRequest('That location belongs to a different customer.', { fields: { locationId: 'Belongs to another customer' } });
   }
+  if (input.billToCustomerId) { const r = await q.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [input.billToCustomerId, cc.company.id]); if (!r.rows.length) throw badRequest('Choose who pays from this company\'s customers.', { fields: { billToCustomerId: 'Unknown customer' } }); }
   const svc = input.serviceId ? await service(q, cc.company.id, input.serviceId) : null;
   if (input.serviceId && !svc) throw badRequest('Choose a service from this company.', { fields: { serviceId: 'Unknown service' } });
   if (input.scheduledStart && input.scheduledEnd && input.scheduledEnd <= input.scheduledStart) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
@@ -324,7 +340,7 @@ jobRoutes.post('/jobs', async (c) => {
     if (dup.rows[0]) return { id: dup.rows[0].id, number: dup.rows[0].number, duplicate: true, missing: [] as string[] };
     const svc = await validateRefs(q, cc, input);
     const fields = (svc?.fields ?? []) as FieldDef[];
-    const req = validateValues(fields.filter((f) => f.stage !== 'completion'), input.details ?? {}, { enforceRequired: false });
+    const req = validateValues(fields.filter((f) => f.stage !== 'completion' && fieldApplies(f, input.details)), input.details ?? {}, { enforceRequired: false });
     const custom = validateValues(customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).jobs, input.custom ?? {}, { enforceRequired: input.intent === 'open' });
     const fieldErrors = { ...Object.fromEntries(Object.entries(req.errors).map(([k, v]) => [`details.${k}`, v])), ...Object.fromEntries(Object.entries(custom.errors).map(([k, v]) => [`custom.${k}`, v])) };
     if (Object.keys(fieldErrors).length) throw badRequest('Some information needs attention.', { fields: fieldErrors });
@@ -334,12 +350,12 @@ jobRoutes.post('/jobs', async (c) => {
     const seq = await q.query<{ job_seq: number }>(`update rigo.companies set job_seq = job_seq + 1 where id = $1 returning job_seq`, [cc.company.id]);
     const end = input.scheduledEnd ?? (input.scheduledStart ? new Date(new Date(input.scheduledStart).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString() : null);
     const { rows } = await q.query<{ id: string }>(
-      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, scheduled_start, scheduled_end, contact_name, contact_phone, access_instructions, notes, details, created_by, priority, booked_rates)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id`,
+      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, scheduled_start, scheduled_end, contact_name, contact_phone, access_instructions, notes, details, created_by, priority, booked_rates, bill_to_customer_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) returning id`,
       [cc.company.id, seq.rows[0].job_seq, draftLike.customer_id, draftLike.location_id, draftLike.service_id, input.intent, input.scheduledStart ?? null, end,
         input.contactName ?? '', input.contactPhone ?? '', input.accessInstructions ?? '', input.notes ?? '',
         JSON.stringify({ ...req.clean, ...Object.fromEntries(Object.entries(custom.clean).map(([k, v]) => [`custom_${k}`, v])), _clientRequestId: input.clientRequestId }), cc.user.id, input.priority ?? 'normal',
-        JSON.stringify(await bookedRates(q, svc, draftLike.customer_id))]);
+        JSON.stringify(await bookedRates(q, svc, input.billToCustomerId ?? draftLike.customer_id)), input.billToCustomerId ?? null]);
     await event(q, cc, rows[0].id, 'created', { status: input.intent });
     await emit(q, cc.company.id, 'job.created', { type: 'job', id: rows[0].id }, {}, { actorUserId: cc.user.id });
     if (input.priority === 'emergency') await alertEmergency(q, cc, { id: rows[0].id, number: seq.rows[0].job_seq, priority: 'emergency', status: input.intent, assigned_user_id: null });
@@ -360,7 +376,7 @@ jobRoutes.patch('/jobs/:id', async (c) => {
     const merged = { customerId: input.customerId !== undefined ? input.customerId : job.customer_id, locationId: input.locationId !== undefined ? input.locationId : job.location_id, serviceId: input.serviceId !== undefined ? input.serviceId : job.service_id };
     const svc = await validateRefs(q, cc, { ...input, ...merged });
     const fields = (svc?.fields ?? []) as FieldDef[];
-    const det = input.details ? validateValues(fields.filter((f) => f.stage !== 'completion'), input.details, { enforceRequired: false }) : null;
+    const det = input.details ? validateValues(fields.filter((f) => f.stage !== 'completion' && fieldApplies(f, input.details)), input.details, { enforceRequired: false }) : null;
     if (det && Object.keys(det.errors).length) throw badRequest('Some information needs attention.', { fields: Object.fromEntries(Object.entries(det.errors).map(([k, v]) => [`details.${k}`, v])) });
     const hidden = Object.fromEntries(Object.entries(job.details ?? {}).filter(([k]) => k.startsWith('_') || k.startsWith('custom_')));
     const details = det ? { ...det.clean, ...hidden } : job.details;
@@ -370,17 +386,19 @@ jobRoutes.patch('/jobs/:id', async (c) => {
     }
     const before = { customer_id: job.customer_id, location_id: job.location_id, service_id: job.service_id, scheduled_start: job.scheduled_start, details: publicDetails(job.details), notes: job.notes, priority: job.priority };
     // A different service or customer means different prices: the booking price snapshot is taken again.
-    const rebook = merged.serviceId !== job.service_id || merged.customerId !== job.customer_id || !job.booked_rates;
+    const billTo = input.billToCustomerId !== undefined ? input.billToCustomerId : job.bill_to_customer_id;
+    const rebook = merged.serviceId !== job.service_id || merged.customerId !== job.customer_id || billTo !== job.bill_to_customer_id || !job.booked_rates;
     const movedEnd = keepDuration(job, input.scheduledStart, input.scheduledEnd);
     const newStart = input.scheduledStart ?? job.scheduled_start; const newEnd = movedEnd ?? input.scheduledEnd ?? job.scheduled_end;
     if (newStart && newEnd && new Date(newEnd) <= new Date(newStart)) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
     await q.query(`update rigo.jobs set customer_id = $3, location_id = $4, service_id = $5, scheduled_start = coalesce($6, scheduled_start), scheduled_end = coalesce($7, scheduled_end),
         contact_name = coalesce($8, contact_name), contact_phone = coalesce($9, contact_phone), access_instructions = coalesce($10, access_instructions), notes = coalesce($11, notes),
         details = $12, priority = coalesce($13, priority), booked_rates = case when $14 then $15::jsonb else booked_rates end,
+        bill_to_customer_id = case when $16 then $17::uuid else bill_to_customer_id end,
         version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
       [job.id, cc.company.id, merged.customerId, merged.locationId, merged.serviceId, input.scheduledStart ?? null, movedEnd ?? input.scheduledEnd ?? null,
         input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details), input.priority ?? null,
-        rebook, rebook ? JSON.stringify(await bookedRates(q, svc, merged.customerId)) : null]);
+        rebook, rebook ? JSON.stringify(await bookedRates(q, svc, billTo ?? merged.customerId)) : null, input.billToCustomerId !== undefined, input.billToCustomerId ?? null]);
     await event(q, cc, job.id, 'edited', { before });
     // The assigned driver hears about what changed for them, in plain words (R11-M2).
     const after = (await q.query<any>(`select j.*, coalesce(j.location_snapshot->>'address', l.address) as address from rigo.jobs j left join rigo.locations l on l.id = j.location_id where j.id = $1`, [job.id])).rows[0];
@@ -538,6 +556,39 @@ jobRoutes.post('/jobs/swap-resource', async (c) => {
   return c.json(out);
 });
 
+// ---------------------------------------------------------------- job report (R6-M4)
+/**
+ * Prepare (never send) an email with the job report for whoever pays: the bill-to customer when set
+ * (the realtor who ordered the inspection), otherwise the customer. The office reviews it in Messages.
+ */
+jobRoutes.post('/jobs/:id/report-message', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'messages.send');
+  const out = await cc.db.tx(async (q) => {
+    const job = await loadJob(cc, q, c.req.param('id'), true);
+    if (!['completed', 'partial', 'unsuccessful'].includes(job.status) || !job.completion) throw conflict('The report is ready once the driver has recorded the visit.');
+    const key = `report:${job.id}`;
+    const existing = (await q.query<{ id: string }>(`select id from rigo.messages where company_id = $1 and source_key = $2 and status = 'prepared'`, [cc.company.id, key])).rows[0];
+    if (existing) return { messageId: existing.id, already: true };
+    const to = (await q.query<any>(`select id, name, coalesce(nullif(billing_contact->>'email', ''), email) as email from rigo.customers where id = $1 and company_id = $2`, [job.bill_to_customer_id ?? job.customer_id, cc.company.id])).rows[0];
+    if (!to) throw conflict('Choose the customer for this job before preparing its report.');
+    const svc = await service(q, cc.company.id, job.service_id);
+    const addr = job.location_snapshot?.address ?? (job.location_id ? (await q.query<any>(`select address from rigo.locations where id = $1`, [job.location_id])).rows[0]?.address : null) ?? null;
+    const photos = (await q.query<{ n: number }>(`select count(*)::int n from rigo.files where company_id = $1 and subject_type = 'job' and subject_id = $2 and name not like 'signature%'`, [cc.company.id, job.id])).rows[0].n;
+    const lines = reportLines((svc?.fields ?? []) as FieldDef[], job.details, job.completion.values);
+    const inspection = job.details?.service_detail === 'Inspection';
+    const text = reportText({ company: cc.company.name, companyPhone: cc.company.phone, customer: to.name, jobNumber: job.number, serviceName: svc?.name ?? 'Service', address: addr,
+      date: new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: cc.company.timezone }).format(new Date(job.completed_at ?? job.updated_at)),
+      outcome: OUTCOMES[job.status as keyof typeof OUTCOMES] ?? job.status, ...lines, notes: job.completion.notes ?? '', photoCount: photos, signer: job.completion.signerName || null });
+    const subject = `${inspection ? 'Inspection report' : 'Job report'}: ${addr ?? `job #${job.number}`}`;
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.messages (company_id, customer_id, job_id, channel, recipient, subject, body, source_key, created_by) values ($1,$2,$3,'email',$4,$5,$6,$7,$8) returning id`,
+      [cc.company.id, to.id, job.id, to.email ?? '', subject, text, key, cc.user.id]);
+    await event(q, cc, job.id, 'report_prepared', { messageId: rows[0].id });
+    return { messageId: rows[0].id, already: false };
+  });
+  return c.json(out);
+});
+
 // ---------------------------------------------------------------- driver flow
 /** The driver read what changed ("Got it"): the "Changed" mark goes away. */
 jobRoutes.post('/jobs/:id/seen-changes', async (c) => {
@@ -628,11 +679,12 @@ export type CompletionInput = z.infer<typeof completionInput>;
 export async function validateCompletion(q: Q, companyId: string, job: any, input: CompletionInput) {
   if (input.collected?.method === 'check' && !input.collected.reference) throw badRequest('Enter the check number.', { fields: { 'collected.reference': 'Enter the check number' } });
   const svc = await service(q, companyId, job.service_id);
-  const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request');
+  // Fields that don't apply to this visit (inspection findings on a pump-out) are neither asked nor kept.
+  const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...input.values }));
   const vals = validateValues(fields, input.values, { enforceRequired: false });
   const hasSignature = !!input.signature || (input.signatureTyped && !!input.signerName.trim());
   // A value that isn't valid ("abc", -50) keeps its own message; it must not read as "is required" (R7-m3).
-  const problems = { ...completionProblems({ ...input, values: vals.clean, photoCount: input.photos.length, hasSignature }, { fields: svc?.fields ?? [], requires_photo: !!svc?.requires_photo, requires_signature: !!svc?.requires_signature }), ...vals.errors };
+  const problems = { ...completionProblems({ ...input, values: vals.clean, photoCount: input.photos.length, hasSignature }, { fields: svc?.fields ?? [], requires_photo: !!svc?.requires_photo, requires_signature: !!svc?.requires_signature }, job.details ?? {}), ...vals.errors };
   if (Object.keys(problems).length) throw badRequest(Object.keys(vals.errors).length ? 'Some values need attention.' : 'Some required information is missing.', { fields: problems });
   const quantityReview = await reviewQuantities(q, job, (svc?.fields ?? []) as FieldDef[], vals.clean, input.confirmQuantities);
   return { values: vals.clean, quantityReview };
@@ -792,7 +844,7 @@ jobRoutes.post('/jobs/:id/correct', async (c) => {
     if (job.version !== input.version) throw conflict('This job changed since you loaded it. Reload and try again.');
     if (!['completed', 'partial', 'unsuccessful'].includes(job.status)) throw conflict('Only finished jobs are corrected; edit open jobs directly.');
     const svc = await service(q, cc.company.id, job.service_id);
-    const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request');
+    const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...input.values }));
     const vals = validateValues(fields, input.values, { enforceRequired: job.status === 'completed' });
     if (Object.keys(vals.errors).length) throw badRequest('Some information needs attention.', { fields: vals.errors });
     const before = job.completion;
