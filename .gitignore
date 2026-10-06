@@ -1,6 +1,11 @@
 node_modules/
+dist/
 .vercel/
 .env
 .env.*
 !.env.example
-public/
+data/
+test-results/
+e2e/output/
+__pycache__/
+*.tsbuildinfo
