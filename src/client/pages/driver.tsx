@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog, Navigation, BellRing, Siren } from 'lucide-react';
+import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog, Navigation, BellRing, Siren, Plus } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError, OFFLINE } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, syncPending, onDraftsChanged, isUnsent, needsAttention, WAITING_FOR_SIGNAL, type Draft, type DraftState, type JobSnapshot } from '../lib/offline';
@@ -13,6 +13,7 @@ import { DynamicField } from './jobform';
 import { OUTCOMES, REASON_CODES, completionProblems, outcomeReason, type ReasonCode } from '../../shared/jobs';
 import { fieldApplies } from '../../shared/services';
 import { quantityChecks } from '../../shared/billing';
+import { lineProblems, meterQuantity, totalQuantity } from '../../shared/deliveries';
 import { useDocumentTitle } from '../lib/title';
 
 interface MyJobs { jobs: any[]; userId: string; companyId: string; fetchedAt: string }
@@ -311,6 +312,15 @@ export function DriverJob() {
   const finished = ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(job.status);
   const d = draft ?? ensureDraft();
   const compFields = (job.fields ?? []).filter((f: any) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...d?.values }));
+  // Fuel stops: one line per product or tank (R7-M1); their total is the delivered quantity.
+  const dl: { choice: string; quantity: string } | null = job.delivery_lines ?? null;
+  const lineMode = !!dl && d.outcome !== 'unsuccessful';
+  const qtyField = dl ? (job.fields ?? []).find((f: any) => f.key === dl.quantity) : null;
+  const choiceField = dl ? (job.fields ?? []).find((f: any) => f.key === dl.choice) : null;
+  const tanks: any[] = job.location_tanks ?? [];
+  const blankLine = () => ({ product: String(job.details?.[dl?.choice ?? ''] ?? ''), tank: '', quantity: '', meterStart: '', meterEnd: '', ticket: '' });
+  const lines = d.lines?.length ? d.lines : dl ? [blankLine()] : [];
+  const setLines = (next: typeof lines) => { const t = totalQuantity(next); update({ lines: next, values: { ...d.values, [dl!.quantity]: t === '0' ? '' : t } }); };
   const access = job.access_instructions || job.location_access;
   const started = job.status === 'in_progress' || !!d.startedOffline;
   // Once submitted, the record is out of the driver's hands until it sends (R13-m3).
@@ -365,7 +375,20 @@ export function DriverJob() {
     else Object.assign(probs, completionProblems({ ...d, outcome: d.outcome, photoCount: d.photos.length, hasSignature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature }, job.details ?? {}));
     if (typed && d.outcome === 'completed' && job.requires_signature && !d.signatureTyped) probs.signature = 'Tick the box to confirm the customer agreed to a typed signature';
     for (const f of compFields) { const e = numberError(f); if (e) probs[f.key] = e; }
+    if (lineMode) {
+      lines.forEach((l, i) => {
+        if (!l.product) probs[`lines.${i}.product`] = `Delivery ${i + 1}: choose the ${(choiceField?.label ?? 'product').toLowerCase()}`;
+        for (const [k, v] of Object.entries(lineProblems(l, qtyField?.unit ?? '').errors)) probs[`lines.${i}.${k}`] = `Delivery ${i + 1}: ${v.charAt(0).toLowerCase()}${v.slice(1)}`;
+      });
+      // The total comes from the lines: point at them rather than at a hidden field.
+      if (probs[dl!.quantity] && Object.keys(probs).some((k) => k.startsWith('lines.'))) delete probs[dl!.quantity];
+    }
     for (const q of unconfirmed) probs[q.field] ??= `${q.message} Type it again to confirm, or correct it.`;
+    if (lineMode && probs[dl!.quantity]) {
+      // The quantity field is hidden on fuel stops: link the message to the confirm box or the first line.
+      const msg = probs[dl!.quantity]; delete probs[dl!.quantity];
+      if (unconfirmed.some((q) => q.field === dl!.quantity)) probs[`confirm-${dl!.quantity}`] = msg; else probs['lines.0.quantity'] ??= msg;
+    }
     if (d.collected) {
       if (!/^\d+(\.\d{1,2})?$/.test(d.collected.amount.trim()) || Number(d.collected.amount) <= 0) probs.collectedAmount = 'Enter the amount collected, like 250.00';
       if (d.collected.method === 'check' && !d.collected.reference.trim()) probs.collectedReference = 'Enter the check number';
@@ -477,7 +500,54 @@ export function DriverJob() {
               {d.outcome && d.outcome !== 'completed'
                 ? <Field label={reasonRequired ? 'Describe what happened' : 'Anything to add'} optionalText={!reasonRequired} id="f-details-reason" error={localErrors.reason} hint={!reasonRequired ? `The office sees "${outcomeReason(reasonCode, d.reason)}".` : undefined}>{(p) => <Textarea {...p} maxLength={2000} value={d.reason} onChange={(e) => update({ reason: e.target.value })} />}</Field>
                 : null}
-              {compFields.map((f: any) => {
+              {lineMode && (
+                <fieldset className="stack-sm" id="f-details-lines"><legend>What was delivered</legend>
+                  {lines.map((l, i) => {
+                    const lp = lineProblems(l, qtyField?.unit ?? '');
+                    const meterQ = meterQuantity(l.meterStart, l.meterEnd);
+                    const unit = qtyField?.unit ? ` ${qtyField.unit}` : '';
+                    const set = (patch: Partial<typeof l>) => setLines(lines.map((x, n) => (n === i ? { ...x, ...patch } : x)));
+                    const err = (k: string) => localErrors[`lines.${i}.${k}`];
+                    const num = (v: string) => v.replace(',', '.').trim();
+                    const tank = tanks.find((t) => t.name === l.tank);
+                    return (
+                      <div key={i} className="delivery-line stack-sm" role="group" aria-labelledby={`dl-${i}`}>
+                        <div className="row-between"><strong id={`dl-${i}`}>Delivery {i + 1}</strong>
+                          {lines.length > 1 && <Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} aria-label={`Remove delivery ${i + 1}`} onClick={() => setLines(lines.filter((_, n) => n !== i))}>Remove</Button>}</div>
+                        <div className="grid-2">
+                          <Field label={choiceField?.label ?? 'Product'} id={`f-details-lines.${i}.product`} error={err('product')}>{(p) => <Select {...p} value={l.product} onChange={(e) => set({ product: e.target.value })}><option value="">Choose…</option>{(choiceField?.options ?? []).map((o: string) => <option key={o}>{o}</option>)}</Select>}</Field>
+                          <Field label="Tank or machine" optionalText id={`f-details-lines.${i}.tank`}>{(p) => tanks.length
+                            ? <Select {...p} value={l.tank} onChange={(e) => { const t = tanks.find((x) => x.name === e.target.value); set({ tank: e.target.value, ...(t?.product && choiceField?.options?.includes(t.product) ? { product: t.product } : {}) }); }}><option value="">Not a listed tank</option>{tanks.map((t) => <option key={t.id} value={t.name}>{t.name}{t.size ? ` (${t.size})` : ''}{t.product ? ` · ${t.product}` : ''}</option>)}</Select>
+                            : <Input {...p} maxLength={80} placeholder="For example: Generator day tank" value={l.tank} onChange={(e) => set({ tank: e.target.value })} />}</Field>
+                        </div>
+                        {tank?.notes && <p className="small muted" style={{ margin: 0 }}>{tank.notes}</p>}
+                        <div className="grid-3">
+                          <Field label="Meter start" optionalText id={`f-details-lines.${i}.meterStart`} error={err('meterStart')}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.meterStart} onChange={(e) => set({ meterStart: num(e.target.value) })} />}</Field>
+                          <Field label="Meter end" optionalText id={`f-details-lines.${i}.meterEnd`} error={err('meterEnd')}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.meterEnd} onChange={(e) => set({ meterEnd: num(e.target.value) })} />}</Field>
+                          <Field label={`Quantity${unit ? ` (${unit.trim()})` : ''}`} id={`f-details-lines.${i}.quantity`} error={err('quantity')} hint={meterQ && !l.quantity ? `From the meter: ${meterQ}${unit}` : undefined}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" placeholder={meterQ ?? ''} value={l.quantity} onChange={(e) => set({ quantity: num(e.target.value) })} />}</Field>
+                        </div>
+                        <Field label="Ticket number" optionalText id={`f-details-lines.${i}.ticket`}>{(p) => <Input {...p} maxLength={40} autoComplete="off" value={l.ticket} onChange={(e) => set({ ticket: e.target.value })} />}</Field>
+                        {lp.warning && <p className="qty-confirm-msg" role="status"><AlertTriangle aria-hidden />{lp.warning} The office checks it before invoicing.</p>}
+                      </div>
+                    );
+                  })}
+                  <div><Button icon={<Plus aria-hidden />} onClick={() => setLines([...lines, blankLine()])}>Another tank or product</Button></div>
+                  {lines.length > 1 && <p className="small" style={{ margin: 0 }}>Total {totalQuantity(lines)}{qtyField?.unit ? ` ${qtyField.unit}` : ''} at this stop · one delivery fee</p>}
+                  {(() => {
+                    const check = checks.find((q) => q.field === dl!.quantity);
+                    if (!check) return null;
+                    return (
+                      <div className="qty-confirm" role="group" aria-labelledby="qc-lines">
+                        <p id="qc-lines" className="qty-confirm-msg"><AlertTriangle aria-hidden />{check.message}</p>
+                        <Field label={`Type ${d.values[dl!.quantity]}${qtyField?.unit ? ` ${qtyField.unit}` : ''} again to confirm`} id={`f-details-confirm-${dl!.quantity}`} hint="The office checks it before the invoice goes out.">
+                          {(p) => <Input {...p} className="input num-input" inputMode="decimal" autoComplete="off" value={d.confirmQuantities?.[dl!.quantity] ?? ''} onChange={(e) => update({ confirmQuantities: { ...d.confirmQuantities, [dl!.quantity]: e.target.value.replace(',', '.') } })} />}
+                        </Field>
+                      </div>
+                    );
+                  })()}
+                </fieldset>
+              )}
+              {compFields.filter((f: any) => !(lineMode && f.key === dl?.quantity)).map((f: any) => {
                 const check = checks.find((q) => q.field === f.key);
                 const fieldError = numberError(f) ?? localErrors[f.key];
                 return (

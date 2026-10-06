@@ -12,6 +12,7 @@ import { invalidateApprovalsFor } from '../automation/engine.js';
 import { rebuildHeldInvoice } from './invoicing.js';
 import { notifyUsers, notifyPermission } from './inbox.js';
 import { paymentState } from '../../shared/invoices.js';
+import { tankSchema } from '../../shared/deliveries.js';
 import { fold, digits, nameKey, duplicateReasons, streetLabel, townOf } from '../../shared/customers.js';
 
 // Customers, service locations, resources (trucks/equipment) and service definitions.
@@ -217,6 +218,8 @@ recordRoutes.patch('/customers/:id', async (c) => {
 const locationInput = z.object({
   label: z.string().max(80).optional(), address: z.string().trim().min(1, 'Enter the service address').max(300),
   accessInstructions: z.string().max(1000).optional(), siteContact: z.string().max(200).optional(), siteContactPhone: z.string().max(40).optional(), custom: z.record(z.string(), z.unknown()).optional(),
+  /** Customer tanks at this location (R7-M4). */
+  tanks: z.array(tankSchema).max(20).optional(),
 });
 
 recordRoutes.post('/customers/:id/locations', async (c) => {
@@ -227,8 +230,8 @@ recordRoutes.post('/customers/:id/locations', async (c) => {
   if (!cust.rows.length) throw notFound('Customer');
   const custom = validateValues(customDefs(cc, 'locations'), input.custom ?? {}, { enforceRequired: true });
   if (Object.keys(custom.errors).length) throw badRequest('Some information needs attention.', { fields: custom.errors });
-  const { rows } = await cc.db.query<{ id: string }>(`insert into rigo.locations (company_id, customer_id, label, address, access_instructions, site_contact, site_contact_phone, custom) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-    [cc.company.id, c.req.param('id'), input.label || streetLabel(input.address), input.address, input.accessInstructions ?? '', input.siteContact ?? '', input.siteContactPhone ?? '', JSON.stringify(custom.clean)]);
+  const { rows } = await cc.db.query<{ id: string }>(`insert into rigo.locations (company_id, customer_id, label, address, access_instructions, site_contact, site_contact_phone, custom, tanks) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+    [cc.company.id, c.req.param('id'), input.label || streetLabel(input.address), input.address, input.accessInstructions ?? '', input.siteContact ?? '', input.siteContactPhone ?? '', JSON.stringify(custom.clean), JSON.stringify(input.tanks ?? [])]);
   return c.json({ id: rows[0].id });
 });
 
@@ -243,8 +246,8 @@ recordRoutes.patch('/locations/:id', async (c) => {
   if (custom && Object.keys(custom.errors).length) throw badRequest('Some information needs attention.', { fields: custom.errors });
   const out = await cc.db.tx(async (q) => {
     const { rows } = await q.query(`update rigo.locations set label = coalesce($3,label), address = coalesce($4,address), access_instructions = coalesce($5,access_instructions), site_contact = coalesce($6,site_contact),
-        site_contact_phone = coalesce($7, site_contact_phone), custom = coalesce($8::jsonb, custom) where id = $1 and company_id = $2 returning id`,
-      [c.req.param('id'), cc.company.id, input.label ?? null, input.address ?? null, input.accessInstructions ?? null, input.siteContact ?? null, input.siteContactPhone ?? null, custom ? JSON.stringify(custom.clean) : null]);
+        site_contact_phone = coalesce($7, site_contact_phone), custom = coalesce($8::jsonb, custom), tanks = coalesce($9::jsonb, tanks) where id = $1 and company_id = $2 returning id`,
+      [c.req.param('id'), cc.company.id, input.label ?? null, input.address ?? null, input.accessInstructions ?? null, input.siteContact ?? null, input.siteContactPhone ?? null, custom ? JSON.stringify(custom.clean) : null, input.tanks ? JSON.stringify(input.tanks) : null]);
     if (!rows.length) throw notFound('Location');
     if (!input.updateOpenJobs) return { updatedJobs: 0 };
     const jobs = await q.query<any>(

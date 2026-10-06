@@ -45,6 +45,12 @@ const TEXT: Record<string, (d: any) => string> = {
   'plan.paused': () => 'paused a rental plan',
   'plan.ended': () => 'ended a rental plan',
   'customer.created': () => 'added a customer',
+  'customer.archived': (d) => `archived customer ${d.name ?? ''}`,
+  'customer.unarchived': (d) => `restored customer ${d.name ?? ''}`,
+  'customer.deleted': (d) => `deleted customer ${d.name ?? ''}`,
+  'customer.merged': (d) => `merged ${d.mergedName ?? 'a customer'} into ${d.keptName ?? 'another'}`,
+  'customer.merge_undone': () => 'undid a customer merge',
+  'invoice.hold_released': (d) => `reviewed and released a held invoice${d.note ? `: ${d.note}` : ''}`,
   'location.updated': () => 'changed a service location',
   'import.committed': () => 'imported records',
 };

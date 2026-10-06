@@ -6,6 +6,15 @@ import { addDays } from './schedule.js';
 /** Default payment terms: net 30 (D18). */
 export const DEFAULT_TERMS_DAYS = 30;
 
+/**
+ * What a hold reason asks for (R7-m1): "review" holds (a partly completed visit, a quantity or meter
+ * reading to check) are released by a person who checked; "fix" holds (a missing rate or quantity)
+ * clear once the missing information is added.
+ */
+export function holdKind(reason: string): 'review' | 'fix' {
+  return /^(The visit was only partly completed|Check the quantity before approving)/.test(reason) ? 'review' : 'fix';
+}
+
 export function daysBetween(from: string, to: string) {
   const a = Date.UTC(+from.slice(0, 4), +from.slice(5, 7) - 1, +from.slice(8, 10));
   const b = Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10));

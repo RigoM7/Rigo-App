@@ -10,7 +10,7 @@ import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBloc
 import { InvoiceDocument } from '../components/invoice-doc';
 import { formatMoney, parseMoney, minorToInput, fmtDate, fmtDateTime } from '../lib/format';
 import { computeTotals, lineAmount, parseRate, rateToInput, resolveDiscounts } from '../../shared/billing';
-import { PAYMENT_METHODS } from '../../shared/invoices';
+import { PAYMENT_METHODS, holdKind } from '../../shared/invoices';
 import { localDate } from '../../shared/schedule';
 
 const DELIVERY: Record<string, string> = { not_prepared: 'Not prepared', prepared: 'Email prepared', simulated: 'Simulated (demo)', queued: 'Queued', sent: 'Sent', delivered: 'Delivered', failed: 'Failed' };
@@ -299,13 +299,18 @@ export function InvoiceDetail() {
   const replacement = useSubmit(async () => { const r = await post(`/c/${c.cid}/invoices/${id}/replacement`); toast('Replacement invoice prepared'); refresh(); nav(c.to(`invoices/${r.invoiceId}`)); });
   const confirmPay = useSubmit(async (pid: string) => { const r = await post(`/c/${c.cid}/payments/${pid}/confirm`); toast(r.toCredit ? 'Confirmed. It went to the customer\'s credit and paid their open invoices.' : r.waitingForInvoice ? 'Confirmed. It pays the invoice when it is issued.' : 'Payment confirmed'); refresh(); });
   const rejectPay = useSubmit(async () => { await post(`/c/${c.cid}/payments/${reject!.id}/reject`, { reason: reject!.reason }); setReject(null); setDialog(null); toast('Payment rejected. It no longer counts.'); refresh(); });
+  // Reviewed — release hold (R7-m1): only for holds that ask a person to check something.
+  const release = useSubmit(async () => {
+    if (!(await ask({ title: 'Release the hold?', body: 'Do this after checking the quantities and the visit record. The invoice becomes a draft that can be approved and issued, and the review is recorded in the job history.', confirm: 'Reviewed — release hold' }))) return;
+    await post(`/c/${c.cid}/invoices/${id}/release-hold`, { version: q.data.invoice.version }); toast('Hold released. The invoice is a draft again.'); refresh();
+  });
   const voidIt = useSubmit(async () => { await post(`/c/${c.cid}/invoices/${id}/void`, { reason: voidReason }); setDialog(null); toast('Invoice voided. The job can be billed again.'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
   const d = q.data;
   const i = d.invoice;
   const fin = c.can('finance.view');
-  const err = approve.error ?? issue.error ?? email.error ?? submit.error ?? applyCredit.error ?? replacement.error ?? confirmPay.error;
+  const err = release.error ?? approve.error ?? issue.error ?? email.error ?? submit.error ?? applyCredit.error ?? replacement.error ?? confirmPay.error;
   const amount = i.totalMinor !== undefined && i.totalMinor !== null ? ` · ${formatMoney(i.totalMinor, i.currency)}` : '';
   const approveText = `${issuesOnApprove ? 'Approve and issue' : 'Approve'}${amount}`;
   const money = (n: number) => formatMoney(n, i.currency);
@@ -342,7 +347,10 @@ export function InvoiceDetail() {
         <ErrorSummary error={err} />
         {d.replaces && <Banner tone="info">Replaces <Link to={c.to(`invoices/${d.replaces.id}`)}>{d.replaces.number ?? 'a voided invoice'}</Link>, which was voided.</Banner>}
         {i.status === 'void' && <Banner tone="warning" title="This invoice was voided">{i.voidReason ? `Reason: ${i.voidReason}. ` : ''}{d.replacedBy ? <>It was replaced by <Link to={c.to(`invoices/${d.replacedBy.id}`)}>{d.replacedBy.number ?? 'a new draft'}</Link>.</> : i.jobId ? 'The job can be billed again: prepare a new invoice.' : null}</Banner>}
-        {i.status === 'held' && <Banner tone="warning" title="On hold: this invoice cannot be approved or issued yet">{<ul style={{ margin: 0 }}>{i.holdReasons.map((r: string) => <li key={r}>{r}</li>)}</ul>}{c.can('services.manage') ? <p style={{ margin: '8px 0 0' }}>Set missing rates in <Link to={c.to('services')}>Services &amp; pricing</Link> or edit the lines here.</p> : null}{c.can('assistant.use') ? <div style={{ marginTop: 8 }}><AskRigo to={c.to('assistant')} prompt={`Why is invoice ${i.number ?? `for job #${i.jobNumber ?? ''}`} on hold?`} /></div> : null}</Banner>}
+        {i.status === 'held' && <Banner tone="warning" title="On hold: this invoice cannot be approved or issued yet"
+          action={c.can('invoices.edit') && i.holdReasons.length > 0 && i.holdReasons.every((r: string) => holdKind(r) === 'review') ? <Button size="sm" busy={release.busy} onClick={() => release.run()}>Reviewed — release hold</Button> : undefined}>
+          {<ul style={{ margin: 0 }}>{i.holdReasons.map((r: string) => <li key={r}>{r}{holdKind(r) === 'review' ? <span className="small muted"> Check it, then release the hold.</span> : null}</li>)}</ul>}
+          {i.holdReasons.some((r: string) => holdKind(r) === 'fix') && (c.can('services.manage') ? <p style={{ margin: '8px 0 0' }}>Set missing rates in <Link to={c.to('services')}>Services &amp; pricing</Link> or edit the lines here; the hold clears when nothing is missing.</p> : <p style={{ margin: '8px 0 0' }}>The hold clears once the missing rate or quantity is added.</p>)}{c.can('assistant.use') ? <div style={{ marginTop: 8 }}><AskRigo to={c.to('assistant')} prompt={`Why is invoice ${i.number ?? `for job #${i.jobNumber ?? ''}`} on hold?`} /></div> : null}</Banner>}
         {i.status === 'draft' && d.approvalRequired && <Banner tone="info">This draft needs approval before it can be issued.{d.can.submit ? ' Send it for approval to ask everyone who can approve invoices.' : ''}</Banner>}
         {i.status === 'pending_approval' && <Banner tone="info">Waiting for approval. Editing the lines cancels the request; send it again after.</Banner>}
         {!fin && <Banner tone="info">Amounts are hidden for your role.</Banner>}

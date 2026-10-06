@@ -11,6 +11,7 @@ import { paymentState } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
 import { fold, jobNumberQuery } from '../../shared/customers.js';
 import { reportLines, reportText } from '../../shared/report.js';
+import { deliveryLineSchema, lineKeys, lineProblems, lineQuantity, takesLines, totalQuantity, type DeliveryLine } from '../../shared/deliveries.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
 import { notifyPermission, notifyPermissions, notifyRoles } from './inbox.js';
@@ -198,7 +199,7 @@ jobRoutes.get('/my/jobs', async (c) => {
     `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
             j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at, j.driver_changes,
             c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label,
-            coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact, l.custom as location_custom, l.site_contact_phone,
+            coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact, l.custom as location_custom, l.site_contact_phone, l.tanks as location_tanks, s.pricing as service_pricing,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
             (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind, 'capacityQuantity', r.capacity_quantity, 'capacityUnit', r.capacity_unit)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
        from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id
@@ -209,7 +210,9 @@ jobRoutes.get('/my/jobs', async (c) => {
   // Location custom fields marked for drivers travel with the job (R5-M2).
   const siteDefs = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).locations.filter((f) => f.driverVisible);
   const siteFields = (j: any) => siteDefs.filter((f) => j.location_custom?.[f.key] !== undefined && j.location_custom[f.key] !== '').map((f) => ({ label: f.label, value: f.type === 'boolean' ? (j.location_custom[f.key] ? 'Yes' : 'No') : String(j.location_custom[f.key]) }));
-  return c.json({ jobs: rows.map(({ location_custom, ...j }) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j), site_fields: siteFields({ location_custom }) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
+  // Fuel stops take several delivery lines; drivers get which fields a line fills, never the prices.
+  const linesFor = (j: any) => { const pricing = readPricing(j.service_pricing); return takesLines({ category: j.category, pricing }) ? lineKeys(pricing) : null; };
+  return c.json({ jobs: rows.map(({ location_custom, service_pricing, ...j }) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j), site_fields: siteFields({ location_custom }), delivery_lines: linesFor({ ...j, service_pricing }) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
 });
 
 function publicDetails(d: Record<string, unknown> | null) {
@@ -579,7 +582,8 @@ jobRoutes.post('/jobs/:id/report-message', async (c) => {
     const inspection = job.details?.service_detail === 'Inspection';
     const text = reportText({ company: cc.company.name, companyPhone: cc.company.phone, customer: to.name, jobNumber: job.number, serviceName: svc?.name ?? 'Service', address: addr,
       date: new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: cc.company.timezone }).format(new Date(job.completed_at ?? job.updated_at)),
-      outcome: OUTCOMES[job.status as keyof typeof OUTCOMES] ?? job.status, ...lines, notes: job.completion.notes ?? '', photoCount: photos, signer: job.completion.signerName || null });
+      outcome: OUTCOMES[job.status as keyof typeof OUTCOMES] ?? job.status, ...lines, notes: job.completion.notes ?? '', photoCount: photos, signer: job.completion.signerName || null,
+      deliveries: job.completion.lines ?? [], unit: ((svc?.fields ?? []) as FieldDef[]).find((f) => f.type === 'number' && f.stage !== 'request')?.unit ?? '' });
     const subject = `${inspection ? 'Inspection report' : 'Job report'}: ${addr ?? `job #${job.number}`}`;
     const { rows } = await q.query<{ id: string }>(`insert into rigo.messages (company_id, customer_id, job_id, channel, recipient, subject, body, source_key, created_by) values ($1,$2,$3,'email',$4,$5,$6,$7,$8) returning id`,
       [cc.company.id, to.id, job.id, to.email ?? '', subject, text, key, cc.user.id]);
@@ -665,6 +669,8 @@ export const completionInput = z.object({
   /** The customer's name typed instead of drawn, with their agreement (R9-m4); recorded as typed. */
   signatureTyped: z.boolean().default(false),
   problem: z.string().max(2000).default(''),
+  /** Fuel stops: one line per product or tank delivered, with meter readings and a ticket (R7-M1, R7-M4). */
+  lines: z.array(deliveryLineSchema).max(12).default([]),
   /** The driver retyped these quantities to confirm them after a "more than the truck holds" warning. */
   confirmQuantities: z.record(z.string(), z.string()).default({}),
   /** Payment taken at the stop (D21): check, cash or a card on a separate terminal. The office confirms it. */
@@ -679,6 +685,27 @@ export type CompletionInput = z.infer<typeof completionInput>;
 export async function validateCompletion(q: Q, companyId: string, job: any, input: CompletionInput) {
   if (input.collected?.method === 'check' && !input.collected.reference) throw badRequest('Enter the check number.', { fields: { 'collected.reference': 'Enter the check number' } });
   const svc = await service(q, companyId, job.service_id);
+  // Delivery lines (fuel): each is checked; their total is the job's delivered quantity, and a meter
+  // reading that doesn't match the quantity holds the invoice for the office to check.
+  let lines: DeliveryLine[] | undefined;
+  const lineWarnings: string[] = [];
+  if (input.lines.length && input.outcome !== 'unsuccessful') {
+    const pricing = readPricing(svc?.pricing);
+    const keys = lineKeys(pricing);
+    if (!svc || !keys || !takesLines({ category: svc.category, pricing })) throw badRequest('This service records one quantity per job, not delivery lines.');
+    const choice = ((svc.fields ?? []) as FieldDef[]).find((f) => f.key === keys.choice);
+    const unit = ((svc.fields ?? []) as FieldDef[]).find((f) => f.key === keys.quantity)?.unit ?? '';
+    const errs: Record<string, string> = {};
+    input.lines.forEach((l, i) => {
+      if (choice?.type === 'select' && !choice.options?.includes(l.product)) errs[`lines.${i}.product`] = `Choose a listed ${choice.label.toLowerCase()}`;
+      const p = lineProblems(l, unit);
+      for (const [k, v] of Object.entries(p.errors)) errs[`lines.${i}.${k}`] = v;
+      if (p.warning) lineWarnings.push(`Line ${i + 1} (${l.product}${l.tank ? `, ${l.tank}` : ''}): ${p.warning}`);
+    });
+    if (Object.keys(errs).length) throw badRequest('Check the delivery lines.', { fields: errs });
+    lines = input.lines.map((l) => ({ ...l, quantity: lineQuantity(l)! }));
+    input = { ...input, values: { ...input.values, [keys.quantity]: totalQuantity(lines) } };
+  }
   // Fields that don't apply to this visit (inspection findings on a pump-out) are neither asked nor kept.
   const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...input.values }));
   const vals = validateValues(fields, input.values, { enforceRequired: false });
@@ -686,8 +713,9 @@ export async function validateCompletion(q: Q, companyId: string, job: any, inpu
   // A value that isn't valid ("abc", -50) keeps its own message; it must not read as "is required" (R7-m3).
   const problems = { ...completionProblems({ ...input, values: vals.clean, photoCount: input.photos.length, hasSignature }, { fields: svc?.fields ?? [], requires_photo: !!svc?.requires_photo, requires_signature: !!svc?.requires_signature }, job.details ?? {}), ...vals.errors };
   if (Object.keys(problems).length) throw badRequest(Object.keys(vals.errors).length ? 'Some values need attention.' : 'Some required information is missing.', { fields: problems });
-  const quantityReview = await reviewQuantities(q, job, (svc?.fields ?? []) as FieldDef[], vals.clean, input.confirmQuantities);
-  return { values: vals.clean, quantityReview };
+  const reviewed = await reviewQuantities(q, job, (svc?.fields ?? []) as FieldDef[], vals.clean, input.confirmQuantities);
+  const quantityReview = [reviewed, ...lineWarnings].filter(Boolean).join(' ') || null;
+  return { values: vals.clean, quantityReview, ...(lines ? { lines } : {}) };
 }
 
 /** Store an image from the driver's phone (checked to be a real image, at most 2 MB). */
@@ -722,7 +750,7 @@ export async function recordCollected(q: Q, cc: CompanyCtx, job: any, input: Com
  * submission and for a held record the office accepts later (`files` already stored, `submittedBy`
  * the driver). `implicitStart` is set when the job was never started: history says so.
  */
-export async function finishJob(q: Q, cc: CompanyCtx, job: any, input: CompletionInput, checked: { values: Record<string, unknown>; quantityReview: string | null },
+export async function finishJob(q: Q, cc: CompanyCtx, job: any, input: CompletionInput, checked: { values: Record<string, unknown>; quantityReview: string | null; lines?: DeliveryLine[] },
   opts: { files?: { photoIds: string[]; signatureId: string | null; checkPhotoId: string | null }; submittedBy?: string; acceptedFrom?: string } = {}) {
   const ctx = { companyId: cc.company.id, isDemo: cc.isDemo, userId: cc.user.id, subjectType: 'job', subjectId: job.id };
   let files = opts.files;
@@ -734,7 +762,7 @@ export async function finishJob(q: Q, cc: CompanyCtx, job: any, input: Completio
   if (job.status === 'open') await event(q, cc, job.id, 'started', { implicit: true, note: 'Recorded with the outcome; the job was not started first.' });
   const completion = { outcome: input.outcome, values: checked.values, notes: input.notes, reason: input.reason, reasonCode: input.reasonCode, photoIds: files.photoIds, signatureId: files.signatureId,
     signerName: input.signerName, signatureTyped: input.signatureTyped && !input.signature, submittedAt: new Date().toISOString(), submittedBy: opts.submittedBy ?? cc.user.id,
-    ...(opts.acceptedFrom ? { acceptedBy: cc.user.id, acceptedFrom: opts.acceptedFrom } : {}), ...(checked.quantityReview ? { quantityReview: checked.quantityReview } : {}) };
+    ...(opts.acceptedFrom ? { acceptedBy: cc.user.id, acceptedFrom: opts.acceptedFrom } : {}), ...(checked.quantityReview ? { quantityReview: checked.quantityReview } : {}), ...(checked.lines?.length ? { lines: checked.lines } : {}) };
   const billing = billingAfterOutcome(input.outcome);
   await q.query(`update rigo.jobs set status = $2, completion = $3, completion_submission_id = $4, billing_status = $5, completed_at = now(), problem_open = problem_open or $6, version = version + 1, updated_at = now() where id = $1`,
     [job.id, input.outcome, JSON.stringify(completion), input.submissionId, billing, !!input.problem.trim()]);

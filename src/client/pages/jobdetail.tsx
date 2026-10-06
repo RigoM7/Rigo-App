@@ -20,7 +20,7 @@ import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', report_prepared: 'Report email prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
+  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', report_prepared: 'Report email prepared', hold_released: 'Invoice hold released after review', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
   handed_over: 'Handed over by driver', resources_changed: 'Truck swapped', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
 };
 
@@ -177,6 +177,7 @@ export function JobDetail() {
                 <dt>Outcome</dt><dd><strong>{(OUTCOMES as any)[job.completion.outcome]}</strong></dd>
                 {job.completion.reason ? <><dt>What happened</dt><dd className="pre">{job.completion.reason}</dd></> : null}
                 {compFields.map((f: any) => <Fragment key={f.key}><dt>{f.label}</dt><dd className={f.type === 'longtext' ? 'pre' : 'num'}>{job.completion.values?.[f.key] === undefined || job.completion.values[f.key] === '' ? '—' : f.type === 'boolean' ? (job.completion.values[f.key] === true || job.completion.values[f.key] === 'true' ? 'Yes' : 'No') : String(job.completion.values[f.key])}{job.completion.values?.[f.key] && f.unit ? ` ${f.unit}` : ''}</dd></Fragment>)}
+                {job.completion.lines?.length > 0 && <><dt>Deliveries</dt><dd><DeliveryList lines={job.completion.lines} unit={(service?.fields ?? []).find((f: any) => f.type === 'number' && f.stage !== 'request')?.unit ?? ''} /></dd></>}
                 <dt>Notes</dt><dd className="pre">{job.completion.notes || '—'}</dd>
                 {job.completion.signerName ? <><dt>Signed by</dt><dd>{job.completion.signerName}</dd></> : null}
                 <dt>Submitted</dt><dd>{fmtDateTime(job.completion.submittedAt ?? job.completed_at, c.company.timezone)}</dd>
@@ -243,5 +244,17 @@ export function JobDetail() {
         </div>
       </Dialog>
     </div>
+  );
+}
+
+/** What was delivered at a fuel stop, line by line (R7-M1, R7-M4). */
+export function DeliveryList({ lines, unit }: { lines: any[]; unit: string }) {
+  return (
+    <ul className="list" style={{ margin: 0 }}>{lines.map((l, i) => (
+      <li key={i} style={{ padding: '4px 0' }}>
+        <strong>{l.product}</strong> <span className="num">{l.quantity}{unit ? ` ${unit}` : ''}</span>{l.tank ? ` · ${l.tank}` : ''}
+        {(l.meterStart || l.ticket) && <div className="small muted">{[l.meterStart && l.meterEnd ? `Meter ${l.meterStart} → ${l.meterEnd}` : '', l.ticket ? `Ticket ${l.ticket}` : ''].filter(Boolean).join(' · ')}</div>}
+      </li>
+    ))}</ul>
   );
 }

@@ -403,7 +403,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
     await c.setOffline(true);
     await p.getByLabel('Completed successfully').check();
-    await p.getByLabel(/Delivered quantity/).fill('95');
+    await p.getByLabel('Quantity (gal)', { exact: true }).fill('95');
     await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).click();
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
     await p.getByText('Saved on this phone. It sends automatically when you have signal; you can close the app.').waitFor({ timeout: 8000 });
@@ -445,7 +445,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
     await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
     await p.getByLabel('Completed successfully').check();
-    await p.getByLabel(/Delivered quantity/).fill('60');
+    await p.getByLabel('Quantity (gal)', { exact: true }).fill('60');
     await p.getByText(/Saved .*ago|Saved just now|Saved/).first().waitFor();
     const member = (await f.o.get('/members')).members.find((m) => m.user_id === f.driverId);
     if (member.started_jobs !== 1) throw new Error('the team list does not show the started job');
@@ -472,7 +472,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
     await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
     await p.getByLabel('Completed successfully').check();
-    await p.getByLabel(/Delivered quantity/).fill('70');
+    await p.getByLabel('Quantity (gal)', { exact: true }).fill('70');
     // Dispatch takes it away (confirming the warning) while the driver is still on site.
     const v = (await f.o.get(`/jobs/${j.id}`)).job.version;
     const warn = await f.o.post(`/jobs/${j.id}/assign`, { userId: null, resourceIds: [], version: v });
@@ -508,7 +508,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
     await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
     await p.getByLabel('Completed successfully').check();
-    await p.getByLabel(/Delivered quantity/).fill('44');
+    await p.getByLabel('Quantity (gal)', { exact: true }).fill('44');
     await p.goto(`${BASE}/account?signout=1`);
     await p.getByText(/1 job record hasn't reached the office/).waitFor({ timeout: 8000 });
     await p.getByRole('button', { name: 'Switch driver' }).click();
@@ -522,7 +522,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await p.goto(`${BASE}/open`);
     await p.waitForURL(/\/today$/, { timeout: 8000 });
     await p.goto(`${f.C}/today/${j.id}`);
-    if ((await p.getByLabel(/Delivered quantity/).inputValue()) !== '44') throw new Error('the draft did not come back');
+    if ((await p.getByLabel('Quantity (gal)', { exact: true }).inputValue()) !== '44') throw new Error('the draft did not come back');
     const manifest = await (await p.request.get(`${BASE}/manifest.webmanifest`)).json();
     const meta = await p.locator('meta[name="theme-color"]').getAttribute('content');
     if (manifest.start_url !== '/open' || manifest.theme_color !== '#0A0A0B' || !meta) throw new Error(`manifest ${manifest.start_url} ${manifest.theme_color}, meta ${meta}`);
@@ -726,6 +726,59 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     await c.close(); await f.owner.dispose();
     return `${a1}; ${a2}`;
   });
+
+  await step('WP9 390px: a driver records two products into two tanks at one stop, with a meter mismatch the office reviews and releases (R7-M1, R7-M4, R7-m1)', async () => {
+    const f = await fieldCompany('fuel-lines');
+    // Prices so the invoice can be complete; tanks on the customer's location.
+    const svc = (await f.o.get('/services')).services.find((x) => x.category === 'fuel');
+    const pricing = svc.pricing.map((p) => ({ ...p, rateE4: p.id === 'fuel_diesel' ? 38990 : p.id === 'fuel_dyed_diesel' ? 34990 : p.id === 'delivery' ? 250000 : p.rateE4 ?? 10000 }));
+    const put = await f.owner.put(`/api/c/${f.cid}/services/${svc.id}`, { data: { service: { ...svc, pricing, taxRateBp: 725 }, version: svc.version } });
+    if (put.status() !== 200) throw new Error(`service: ${await put.text()}`);
+    const cust = (await f.o.get('/customers')).customers.find((x) => x.name === 'Acme Farms');
+    const locId = (await f.o.get(`/customers/${cust.id}`)).locations[0].id;
+    const tp = await f.owner.patch(`/api/c/${f.cid}/locations/${locId}`, { data: { tanks: [{ id: 't1', name: 'Shop tank', product: 'Diesel', size: '500 gal', notes: 'Fill pipe on the north side' }, { id: 't2', name: 'Loader', product: 'Dyed diesel', size: '', notes: '' }] } });
+    if (tp.status() !== 200) throw new Error(`tanks: ${await tp.text()}`);
+    const job = await f.mkJob(chicagoAt(10, 0));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp9-driver');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/today/${job.id}`);
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
+    await p.getByLabel('Completed successfully').check();
+    const first = p.getByRole('group', { name: 'Delivery 1' });
+    await first.getByLabel(/Tank or machine/).selectOption('Shop tank');
+    await first.getByText('Fill pipe on the north side').waitFor();
+    await first.getByLabel('Quantity (gal)', { exact: true }).fill('120');
+    await first.getByLabel(/Ticket number/).fill('T-881');
+    await p.getByRole('button', { name: 'Another tank or product' }).click();
+    const second = p.getByRole('group', { name: 'Delivery 2' });
+    await second.getByLabel(/Tank or machine/).selectOption('Loader');
+    if ((await second.getByLabel('Product').inputValue()) !== 'Dyed diesel') throw new Error('choosing the tank did not fill in its product');
+    await second.getByLabel(/Meter start/).fill('20410');
+    await second.getByLabel(/Meter end/).fill('20490');
+    await second.getByLabel('Quantity (gal)', { exact: true }).fill('95');
+    await second.getByText('The meter shows 80 gal (20490 − 20410) but 95 gal was entered.').waitFor();
+    await p.getByText('Total 215 gal at this stop · one delivery fee').waitFor();
+    const a1 = await axe(p, 'wp9-driver-lines');
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
+    await p.getByText(/Sent\. The office has your record\.|The office has your record\./).first().waitFor({ timeout: 10000 });
+    await c.close();
+    // The office: the invoice lists both products and one fee, and is held for the meter mismatch.
+    const inv = await f.o.post(`/jobs/${job.id}/invoice`);
+    const { c: oc, p: op } = await ownerContext(f); watch(op, 'wp9-office');
+    await op.goto(`${f.C}/invoices/${inv.body.invoiceId}`);
+    await op.getByText('Diesel (Shop tank, ticket T-881)').waitFor({ timeout: 10000 });
+    await op.getByText('Dyed diesel (Loader)').waitFor();
+    if (await op.getByText('Delivery fee').count() !== 1) throw new Error('the delivery fee is not charged exactly once');
+    await op.getByText(/The meter shows 80 gal/).waitFor();
+    const a2 = await axe(op, 'wp9-held');
+    await op.getByRole('button', { name: 'Reviewed — release hold' }).click();
+    await op.getByRole('dialog').getByRole('button', { name: 'Reviewed — release hold' }).click();
+    await op.getByText('Hold released. The invoice is a draft again.').waitFor();
+    await oc.close(); await f.owner.dispose();
+    return `${a1}; ${a2}`;
+  });
 }
 if (process.env.E2E_ONLY === 'phase2') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
@@ -783,7 +836,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByText('Job started').waitFor();
     await highlighted(p, 'driver-record').waitFor();
     await p.getByLabel('Completed successfully').check();
-    await p.getByLabel(/Delivered quantity/).fill('187.4');
+    await p.getByLabel('Quantity (gal)', { exact: true }).fill('187.4');
     await p.getByRole('button', { name: 'Submit to office' }).click();
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
     await p.getByText('Sent. The office has your record.').waitFor();
@@ -1570,7 +1623,7 @@ await step('driver (simulated): completes a job with offline-capable draft and s
   await page.getByRole('button', { name: 'Start job' }).click();
   await page.getByText('Job started').waitFor();
   await page.getByLabel('Completed successfully').check();
-  await page.getByLabel(/Delivered quantity/).fill('432.5');
+  await page.getByLabel('Quantity (gal)', { exact: true }).fill('432.5');
   await page.getByText('Saved on this phone').first().waitFor();
   await page.screenshot({ path: `${OUT}/driver-job-390.png`, fullPage: true });
   await page.getByRole('button', { name: 'Submit to office' }).click();

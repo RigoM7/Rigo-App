@@ -64,6 +64,8 @@ export const priceLineSchema = z.preprocess(legacyRate, z.object({
   minimumMinor: z.number().int().min(0).max(1_000_000_000).nullable().optional().default(null),
   /** The date the current rate took effect (set by the server when the rate changes). */
   rateSince: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().default(null),
+  /** How the rate is set, printed under the line ("OPIS rack Chicago + $0.35"; R7-M4). */
+  indexNote: z.string().trim().max(120).optional().default(''),
 }));
 export type PriceLine = z.output<typeof priceLineSchema>;
 
@@ -130,7 +132,7 @@ export type ServiceInput = z.infer<typeof serviceInputSchema>;
 
 /** A price line with every optional setting at its default. */
 export function priceLine(p: Pick<PriceLine, 'id' | 'label' | 'basis'> & Partial<PriceLine>): PriceLine {
-  return { quantityField: '', unit: '', rateE4: null, taxable: false, when: null, includedQuantity: null, overageRateE4: null, minimumMinor: null, rateSince: null, ...p };
+  return { quantityField: '', unit: '', rateE4: null, taxable: false, when: null, includedQuantity: null, overageRateE4: null, minimumMinor: null, rateSince: null, indexNote: '', ...p };
 }
 
 // Built fresh on each call: a shared object here would carry one company's edits into the next starter.

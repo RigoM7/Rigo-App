@@ -8,6 +8,7 @@ import { Button, ErrorState, ErrorSummary, LinkButton, LoadingBlock, PageHeader,
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { OUTCOMES } from '../../shared/jobs';
 import { reportLines } from '../../shared/report';
+import { DeliveryList } from './jobdetail';
 
 /**
  * The job report (R6-M4): what was asked for, what the driver found, notes, photos and signature, on
@@ -67,6 +68,10 @@ export function JobReport() {
             {job.completion.reason ? <><dt>What happened</dt><dd className="pre">{job.completion.reason}</dd></> : null}
             {lines.request.map((l) => <div key={l.label} style={{ display: 'contents' }}><dt>{l.label}</dt><dd>{l.value}</dd></div>)}
           </dl>
+          {job.completion.lines?.length > 0 && <section style={{ marginTop: 20 }}>
+            <h2 className="h3">Delivered</h2>
+            <DeliveryList lines={job.completion.lines} unit={(service?.fields ?? []).find((f: any) => f.type === 'number' && f.stage !== 'request')?.unit ?? ''} />
+          </section>}
           {lines.findings.length > 0 && <section style={{ marginTop: 20 }}>
             <h2 className="h3">Findings</h2>
             <table className="table report-table"><tbody>{lines.findings.map((l) => <tr key={l.label}><th scope="row">{l.label}</th><td className="pre">{l.value}</td></tr>)}</tbody></table>

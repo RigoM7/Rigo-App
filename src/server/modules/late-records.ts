@@ -40,7 +40,7 @@ export async function holdForReview(q: Q, a: { companyId: string; isDemo: boolea
   await recordCall(q, `late-record:${a.userId}`);
   // Check the record the same way a normal submission is checked, but keep it even when something is
   // missing: the driver may no longer be able to fix it, and the office decides.
-  let checked: { values: Record<string, unknown>; quantityReview: string | null } = { values: input.values, quantityReview: null };
+  let checked: { values: Record<string, unknown>; quantityReview: string | null; lines?: unknown[] } = { values: input.values, quantityReview: null };
   let problems: Record<string, string> = {};
   try {
     checked = await validateCompletion(q, a.companyId, job, input);
@@ -54,7 +54,7 @@ export async function holdForReview(q: Q, a: { companyId: string; isDemo: boolea
   for (let i = 0; i < input.photos.length; i++) photoIds.push(await saveImage(q, ctx, input.photos[i], `photo-${i + 1}.${input.photos[i].includes('png') ? 'png' : 'jpg'}`));
   const files = { photoIds, signatureId: input.signature ? await saveImage(q, ctx, input.signature, 'signature.png') : null, checkPhotoId: input.collected?.photo ? await saveImage(q, ctx, input.collected.photo, 'check.jpg') : null };
   const { photos: _p, signature: _s, ...rest } = input;
-  const payload = { ...rest, values: checked.values, quantityReview: checked.quantityReview, collected: input.collected ? { ...input.collected, photo: null } : null, files };
+  const payload = { ...rest, values: checked.values, quantityReview: checked.quantityReview, lines: checked.lines ?? input.lines, collected: input.collected ? { ...input.collected, photo: null } : null, files };
   await q.query(`insert into rigo.pending_submissions (id, company_id, job_id, user_id, submission_id, reason, payload, problems) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [id, a.companyId, job.id, a.userId, input.submissionId, reason, JSON.stringify(payload), JSON.stringify(problems)]);
   await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'record_held',$3,$4)`,
@@ -170,7 +170,7 @@ lateRoutes.post('/pending-submissions/:id/accept', async (c) => {
       await recordCollected(q, cc, job, input, files.checkPhotoId, s.user_id);
       result = 'Added to the job history. The job keeps its earlier outcome.';
     } else {
-      await finishJob(q, cc, job, input, { values: p.values ?? {}, quantityReview: p.quantityReview ?? null }, { files, submittedBy: s.user_id, acceptedFrom: s.reason });
+      await finishJob(q, cc, job, input, { values: p.values ?? {}, quantityReview: p.quantityReview ?? null, lines: p.lines?.length ? p.lines : undefined }, { files, submittedBy: s.user_id, acceptedFrom: s.reason });
       result = `Job #${job.number} recorded as ${p.outcome === 'partial' ? 'partly completed' : p.outcome === 'unsuccessful' ? 'could not complete' : 'completed'}.`;
     }
     await q.query(`update rigo.pending_submissions set status = 'accepted', decided_by = $2, decided_at = now() where id = $1`, [s.id, cc.user.id]);

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Users, MapPin, Upload, Search, Pencil } from 'lucide-react';
+import { Plus, Users, MapPin, Upload, Search, Pencil, Trash2 } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch, del, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
@@ -138,7 +138,7 @@ export function CustomerDetail() {
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [merging, setMerging] = useState(false);
-  const [loc, setLoc] = useState<null | { id?: string; label: string; address: string; accessInstructions: string; siteContact: string; siteContactPhone: string; custom: Record<string, unknown>; openJobs?: number; updateOpenJobs?: boolean }>(null);
+  const [loc, setLoc] = useState<null | { id?: string; label: string; address: string; accessInstructions: string; siteContact: string; siteContactPhone: string; custom: Record<string, unknown>; tanks: { id: string; name: string; product: string; size: string; notes: string }[]; openJobs?: number; updateOpenJobs?: boolean }>(null);
   const q = useQuery({ queryKey: [c.cid, 'customer', id], queryFn: () => get(`/c/${c.cid}/customers/${id}`) });
   const saveLoc = useSubmit(async () => {
     const { openJobs, ...body } = loc!;
@@ -207,15 +207,16 @@ export function CustomerDetail() {
               <dt>Customer since</dt><dd>{fmtDate(customer.createdAt, c.company.timezone)}</dd>
             </dl>
           </Card>
-          <Card id="locs" title={<h2 className="row"><MapPin aria-hidden />Service locations</h2>} actions={c.can('customers.edit') && !archived ? <Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLoc({ label: '', address: '', accessInstructions: '', siteContact: '', siteContactPhone: '', custom: {} })}>Add location</Button> : undefined}>
+          <Card id="locs" title={<h2 className="row"><MapPin aria-hidden />Service locations</h2>} actions={c.can('customers.edit') && !archived ? <Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLoc({ label: '', address: '', accessInstructions: '', siteContact: '', siteContactPhone: '', custom: {}, tanks: [] })}>Add location</Button> : undefined}>
             {locations.length === 0 ? <p className="muted">No locations yet. Jobs need a service location.</p> : (
               <ul className="list">{locations.map((l: any) => (
                 <li key={l.id} style={{ padding: '10px 0' }} className="row-between">
                   <span style={{ minWidth: 0 }}><strong>{l.label || 'Location'}</strong><div>{l.address}</div>
                     {l.access_instructions && <div className="small muted">Access: {l.access_instructions}</div>}
                     {(l.site_contact || l.site_contact_phone) && <div className="small muted">Site contact: {[l.site_contact, l.site_contact_phone].filter(Boolean).join(', ')}</div>}
-                    {locDefs.filter((f) => l.custom?.[f.key] !== undefined && l.custom?.[f.key] !== '').map((f) => <div key={f.key} className="small muted">{f.label}: {f.type === 'boolean' ? (l.custom[f.key] ? 'Yes' : 'No') : String(l.custom[f.key])}</div>)}</span>
-                  {c.can('customers.edit') && !archived && <Button size="sm" variant="ghost" aria-label={`Edit location ${l.label || l.address}`} onClick={() => setLoc({ id: l.id, label: l.label, address: l.address, accessInstructions: l.access_instructions, siteContact: l.site_contact, siteContactPhone: l.site_contact_phone ?? '', custom: l.custom ?? {}, openJobs: l.open_jobs ?? 0, updateOpenJobs: false })}>Edit</Button>}
+                    {locDefs.filter((f) => l.custom?.[f.key] !== undefined && l.custom?.[f.key] !== '').map((f) => <div key={f.key} className="small muted">{f.label}: {f.type === 'boolean' ? (l.custom[f.key] ? 'Yes' : 'No') : String(l.custom[f.key])}</div>)}
+                    {(l.tanks ?? []).length > 0 && <div className="small muted">Tanks: {l.tanks.map((t: any) => [t.name, t.size, t.product].filter(Boolean).join(' · ')).join('; ')}</div>}</span>
+                  {c.can('customers.edit') && !archived && <Button size="sm" variant="ghost" aria-label={`Edit location ${l.label || l.address}`} onClick={() => setLoc({ id: l.id, label: l.label, address: l.address, accessInstructions: l.access_instructions, siteContact: l.site_contact, siteContactPhone: l.site_contact_phone ?? '', custom: l.custom ?? {}, tanks: l.tanks ?? [], openJobs: l.open_jobs ?? 0, updateOpenJobs: false })}>Edit</Button>}
                 </li>
               ))}</ul>
             )}
@@ -255,6 +256,27 @@ export function CustomerDetail() {
             <Field label="Site contact" optionalText id="f-siteContact">{(p) => <Input {...p} maxLength={200} value={loc.siteContact} onChange={(e) => setLoc({ ...loc, siteContact: e.target.value })} />}</Field>
             {c.can('customers.contact') && <Field label="Site contact phone" optionalText id="f-siteContactPhone" hint="Drivers can call it from the stop.">{(p) => <Input {...p} maxLength={40} type="tel" value={loc.siteContactPhone} onChange={(e) => setLoc({ ...loc, siteContactPhone: e.target.value })} />}</Field>}
           </div>
+          {(c.company.service_categories ?? []).includes('fuel') && (
+            <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
+              <legend className="label">Tanks <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></legend>
+              <p className="small muted" style={{ margin: 0 }}>Drivers pick the tank on each delivery; its product is filled in for them.</p>
+              {loc.tanks.map((t, i) => {
+                const setT = (p: Partial<typeof t>) => setLoc({ ...loc, tanks: loc.tanks.map((x, n) => (n === i ? { ...x, ...p } : x)) });
+                return (
+                  <div key={t.id} className="tank-row stack-sm" role="group" aria-label={`Tank ${i + 1}`}>
+                    <div className="grid-3">
+                      <Field label="Tank name" id={`f-tanks-${i}-name`} error={saveLoc.fieldError(`tanks.${i}.name`)}>{(p) => <Input {...p} maxLength={80} placeholder="Shop tank" value={t.name} onChange={(e) => setT({ name: e.target.value })} />}</Field>
+                      <Field label="Product" optionalText id={`f-tanks-${i}-product`}>{(p) => <Input {...p} maxLength={60} placeholder="Dyed diesel" value={t.product} onChange={(e) => setT({ product: e.target.value })} />}</Field>
+                      <Field label="Size" optionalText id={`f-tanks-${i}-size`}>{(p) => <Input {...p} maxLength={40} placeholder="500 gal" value={t.size} onChange={(e) => setT({ size: e.target.value })} />}</Field>
+                    </div>
+                    <Field label="Fill instructions" optionalText id={`f-tanks-${i}-notes`}>{(p) => <Input {...p} maxLength={300} placeholder="Fill pipe on the north side; stop at 90%" value={t.notes} onChange={(e) => setT({ notes: e.target.value })} />}</Field>
+                    <div><Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} aria-label={`Remove tank ${t.name || i + 1}`} onClick={() => setLoc({ ...loc, tanks: loc.tanks.filter((_, n) => n !== i) })}>Remove</Button></div>
+                  </div>
+                );
+              })}
+              <div><Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLoc({ ...loc, tanks: [...loc.tanks, { id: `tank_${Date.now().toString(36)}`, name: '', product: '', size: '', notes: '' }] })}>Add a tank</Button></div>
+            </fieldset>
+          )}
           {locDefs.map((f) => <DynamicField key={f.key} f={f} idPrefix="loc-custom" value={loc.custom[f.key]} error={saveLoc.fieldError(`custom.${f.key}`)} onChange={(x) => setLoc({ ...loc, custom: { ...loc.custom, [f.key]: x } })} />)}
           {loc.id && <Banner tone="info">Changes apply to new jobs. Finished jobs and issued invoices keep the address they had.</Banner>}
           {loc.id && (loc.openJobs ?? 0) > 0 && <Checkbox label={`Also update the ${loc.openJobs} open job${loc.openJobs === 1 ? '' : 's'} at this location`} hint="Their drivers are told the address changed." checked={!!loc.updateOpenJobs} onChange={(e) => setLoc({ ...loc, updateOpenJobs: e.target.checked })} />}

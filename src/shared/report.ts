@@ -25,12 +25,14 @@ export function reportLines(fields: FieldDef[], details: Record<string, unknown>
 }
 
 /** Plain text for the prepared email. */
-export function reportText(o: { company: string; companyPhone?: string | null; customer: string; jobNumber: number; serviceName: string; address: string | null; date: string; outcome: string; request: ReportLine[]; findings: ReportLine[]; notes: string; photoCount: number; signer?: string | null }) {
+export function reportText(o: { company: string; companyPhone?: string | null; customer: string; jobNumber: number; serviceName: string; address: string | null; date: string; outcome: string; request: ReportLine[]; findings: ReportLine[]; notes: string; photoCount: number; signer?: string | null;
+  deliveries?: { product: string; quantity: string; tank?: string; ticket?: string }[]; unit?: string }) {
   return [
     `Hello ${o.customer},`, '',
     `Here is the report for job #${o.jobNumber}: ${o.serviceName}${o.address ? ` at ${o.address}` : ''}, ${o.date}.`, '',
     `Outcome: ${o.outcome}`,
     ...o.request.map((l) => `${l.label}: ${l.value}`),
+    ...(o.deliveries?.length ? ['', 'Delivered', ...o.deliveries.map((d) => `- ${d.product}: ${d.quantity}${o.unit ? ` ${o.unit}` : ''}${d.tank ? `, ${d.tank}` : ''}${d.ticket ? ` (ticket ${d.ticket})` : ''}`)] : []),
     ...(o.findings.length ? ['', 'Findings', ...o.findings.map((l) => `- ${l.label}: ${l.value}`)] : []),
     ...(o.notes ? ['', 'Notes', o.notes] : []),
     ...(o.photoCount ? ['', `${o.photoCount} photo${o.photoCount === 1 ? ' was' : 's were'} taken on site. Reply to this email if you'd like copies.`] : []),

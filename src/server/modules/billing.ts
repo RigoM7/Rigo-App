@@ -5,7 +5,7 @@ import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.
 import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
-import { balanceDue, paymentState, termsLabel, PAYMENT_METHODS } from '../../shared/invoices.js';
+import { balanceDue, paymentState, termsLabel, holdKind, PAYMENT_METHODS } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
 import { emit, invalidateApprovalsFor, requestApproval, settleInvoiceSteps, advanceRun } from '../automation/engine.js';
 import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, applyCredit, refreshPayment, creditBalance, termsFor, prepareInvoiceForJob, invoiceViewLink } from './invoicing.js';
@@ -289,6 +289,35 @@ billingRoutes.post('/invoices/:id/approve', async (c) => {
     for (const id of out.pending) await decideApproval({ db: cc.db, companyId: cc.company.id, userId: cc.user.id, perms: cc.perms, isOwner: cc.isOwner, isDemo: cc.isDemo }, id, 'approve', 'Approved from the invoice').catch(() => {});
   }
   return c.json({ ok: true });
+});
+
+/**
+ * "Reviewed — release hold" (R7-m1): a person checked the partly completed visit or the flagged
+ * quantity. Holds for missing rates or quantities stay until those are added.
+ */
+billingRoutes.post('/invoices/:id/release-hold', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'invoices.edit');
+  const input = await body(c, z.object({ version: z.number().int(), note: z.string().trim().max(500).default('') }));
+  const out = await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    if (inv.version !== input.version) throw conflict('This invoice changed since you opened it. Review the latest version first.');
+    if (inv.status !== 'held') throw conflict('This invoice is not on hold.');
+    const reasons = (inv.hold_reasons ?? []) as string[];
+    const toFix = reasons.filter((r) => holdKind(r) === 'fix');
+    if (toFix.length) throw conflict(`Fix these first: ${toFix.join(' ')}`, { reasons: toFix });
+    const { recalcInvoice } = await import('./invoicing.js');
+    const r = await recalcInvoice(q, inv.id);
+    if (r.held) throw conflict(`Fix these first: ${r.reasons.join(' ')}`, { reasons: r.reasons });
+    if (inv.job_id) {
+      // Reviewed once: rebuilding the invoice later doesn't hold it again for the same quantity.
+      await q.query(`update rigo.jobs set completion = completion || '{"quantityReviewed": true}'::jsonb where id = $1 and completion is not null`, [inv.job_id]);
+      await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'hold_released',$3,$4)`, [cc.company.id, inv.job_id, cc.user.id, JSON.stringify({ invoiceId: inv.id, reviewed: reasons, note: input.note })]);
+    }
+    await audit(q, cc, 'invoice.hold_released', { id: inv.id, reviewed: reasons, note: input.note });
+    return { ok: true };
+  });
+  return c.json(out);
 });
 
 /** A draft someone prepared by hand goes to the people who may approve invoices (R6-M3). */

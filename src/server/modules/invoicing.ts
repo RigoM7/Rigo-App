@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Q } from '../db/index.js';
 import { config } from '../config.js';
-import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, lineAmount, type DraftLine } from '../../shared/billing.js';
+import { buildDeliveryLines, type DeliveryLine } from '../../shared/deliveries.js';
+import { computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, lineAmount, type DraftLine } from '../../shared/billing.js';
 import { readBillingRule, isPeriodic, PLAN_VISIT_LABEL, type PlanVisit } from '../../shared/rentals.js';
 import { balanceDue, dueDateFor, termsLabel } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
@@ -45,6 +46,8 @@ async function pricingContext(q: Q, job: any) {
     labels: Object.fromEntries(fields.map((f) => [f.key, f.label])),
     types: Object.fromEntries(fields.map((f) => [f.key, f.type])),
     values: { ...(job.details ?? {}), ...(job.completion?.values ?? {}) },
+    // Several products or tanks at one stop (R7-M1): one charge line each, the delivery fee once.
+    deliveries: (job.completion?.lines ?? []) as DeliveryLine[],
     overrides: (job.service_id && cust?.price_overrides?.[job.service_id]) || {},
     taxExempt: !!cust?.tax_exempt,
     // A confirmed quantity the driver flagged as over the truck's capacity or far over the request.
@@ -92,7 +95,7 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
   }
   if (!job.service_id && !planLines) throw conflict('The job has no service, so there is no pricing to use.');
   const ctx = await pricingContext(q, job);
-  const built = planLines ? { lines: planLines, holdReasons: [] as string[] } : buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
+  const built = planLines ? { lines: planLines, holdReasons: [] as string[] } : buildDeliveryLines(ctx.pricing, ctx.values, ctx.deliveries, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
   const totals = computeTotals(built.lines, job.tax_rate_bp, [], { taxExempt: ctx.taxExempt });
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
   if (ctx.quantityHold) reasons.unshift(ctx.quantityHold);
@@ -142,7 +145,7 @@ export async function rebuildHeldInvoice(q: Q, invoiceId: string) {
   const inv = rows[0];
   if (!inv || inv.status !== 'held') return;
   const ctx = await pricingContext(q, inv);
-  const built = buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: inv.booked_rates ?? undefined, currency: inv.currency });
+  const built = buildDeliveryLines(ctx.pricing, ctx.values, ctx.deliveries, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: inv.booked_rates ?? undefined, currency: inv.currency });
   const discounts = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 and kind = 'discount' order by position`, [invoiceId])).rows
     .map((l) => ({ ...lineFromRow(l), taxable: false, kind: 'discount' as const }));
   const all = resolveDiscounts([...built.lines, ...discounts], { allowFree: inv.free_confirmed }).lines;

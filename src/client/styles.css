@@ -224,6 +224,8 @@ kbd { display: inline-flex; align-items: center; min-width: 20px; height: 20px; 
 .report-photos figure { margin: 0; }
 .report-photos img { width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--border); break-inside: avoid; }
 .report-signature { max-width: 280px; height: auto; border-bottom: 1px solid var(--border); margin-top: 8px; display: block; }
+.delivery-line { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface); }
+.tank-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .summary-strip { display: flex; flex-wrap: wrap; gap: 12px 32px; padding: 14px 16px; margin-bottom: var(--space-4); border: 1px solid var(--border); border-radius: var(--card-radius); background: var(--surface); }
 .summary-strip > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dup-card { border-color: var(--warning, var(--border)); padding: 12px 14px; }
