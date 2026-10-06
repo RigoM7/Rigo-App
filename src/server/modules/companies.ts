@@ -61,7 +61,7 @@ export async function setupChecklist(q: Q, companyId: string) {
   const { rows } = await q.query<any>(`select settings, branding,
       (select count(*)::int from rigo.services s where s.company_id = c.id and s.active) as services,
       (select count(*)::int from rigo.services s where s.company_id = c.id and s.active and exists (
-          select 1 from jsonb_array_elements(s.pricing) p where p->'rateMinor' = 'null'::jsonb)) as unpriced,
+          select 1 from jsonb_array_elements(s.pricing) p where coalesce(p->'rateE4', p->'rateMinor', 'null'::jsonb) = 'null'::jsonb)) as unpriced,
       (select count(*)::int from rigo.resources r where r.company_id = c.id) as resources,
       (select count(*)::int from rigo.memberships m where m.company_id = c.id and m.status = 'active') as members,
       (select count(*)::int from rigo.invitations i where i.company_id = c.id and i.status = 'pending') as invites,

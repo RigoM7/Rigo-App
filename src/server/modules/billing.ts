@@ -6,7 +6,7 @@ import { body } from '../lib/util.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, type DraftLine } from '../../shared/billing.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
-import { issueInvoice, invoiceEmail } from './invoicing.js';
+import { issueInvoice, invoiceEmail, persistLines, lineFromRow } from './invoicing.js';
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
 
@@ -52,10 +52,15 @@ billingRoutes.get('/invoices/:id', async (c) => {
   const extra = (await cc.db.query<any>(`select c.name as customer_name, c.email as customer_email, c.billing_address, j.number as job_number, j.completed_at, l.address as location_address, s.name as service_name
       from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id where i.id = $1`, [inv.id])).rows[0];
   const fin = can(cc, 'finance.view');
-  const lines = (await cc.db.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [inv.id])).rows.map((l) => ({
-    id: l.id, description: l.description, quantity: String(l.quantity), unit: l.unit, kind: l.kind, taxable: l.taxable,
-    rateMinor: fin ? l.rate_minor : undefined, amountMinor: fin ? l.amount_minor : undefined, rateMissing: l.rate_minor === null,
-  }));
+  const lines = (await cc.db.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [inv.id])).rows.map((row) => {
+    const l = lineFromRow(row);
+    // Rates, amounts and price-change notes are financial: removed here without finance.view.
+    return {
+      id: row.id, description: l.description, quantity: l.quantity, unit: l.unit, kind: l.kind, taxable: l.taxable, rateMissing: l.rateE4 === null,
+      rateE4: fin ? l.rateE4 : undefined, amountMinor: fin ? l.amountMinor : undefined, priceDate: fin ? l.priceDate : undefined,
+      bookedRateE4: fin ? l.bookedRateE4 : undefined, note: fin ? l.note : (l.note?.startsWith('Price changed') || l.note?.startsWith('Minimum') ? '' : l.note),
+    };
+  });
   const payments = fin ? (await cc.db.query(`select p.*, u.name as recorded_by_name from rigo.payments p left join rigo.users u on u.id = p.recorded_by where p.invoice_id = $1 order by p.recorded_at`, [inv.id])).rows : [];
   const approvals = (await cc.db.query(`select a.id, a.status, a.title, a.created_at, a.decided_at, a.decision_note, a.subject_version, x.type as action_type, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id left join rigo.users u on u.id = a.decided_by where a.subject_type = 'invoice' and a.subject_id = $1 order by a.created_at`, [inv.id])).rows;
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, status_detail, recipient, created_at from rigo.messages where invoice_id = $1 order by created_at desc`, [inv.id])).rows : [];
@@ -74,7 +79,8 @@ billingRoutes.get('/invoices/:id', async (c) => {
 
 const lineSchema = z.object({
   description: z.string().trim().min(1, 'Enter a description').max(200), quantity: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Enter a quantity like 12 or 12.5'),
-  unit: z.string().max(20).default(''), rateMinor: z.number().int().min(0).max(1_000_000_000).nullable(), taxable: z.boolean().default(false), kind: z.enum(['charge', 'discount']).default('charge'),
+  unit: z.string().max(20).default(''), rateE4: z.number().int().min(0).max(1_000_000_000_000).nullable(), taxable: z.boolean().default(false), kind: z.enum(['charge', 'discount']).default('charge'),
+  note: z.string().max(300).default(''),
 });
 
 billingRoutes.put('/invoices/:id/lines', async (c) => {
@@ -85,12 +91,11 @@ billingRoutes.put('/invoices/:id/lines', async (c) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
     if (inv.version !== input.version) throw conflict('This invoice changed since you opened it. Reload to see the latest version.');
     if (!['held', 'draft', 'pending_approval', 'approved'].includes(inv.status)) throw conflict('Issued or voided invoices cannot be edited.');
-    const lines: DraftLine[] = input.lines.map((l) => ({ ...l, amountMinor: l.kind === 'discount' ? (l.rateMinor === null ? null : -Math.abs(lineAmount(l.quantity, l.rateMinor) as number)) : lineAmount(l.quantity, l.rateMinor) }));
+    const lines: DraftLine[] = input.lines.map((l) => ({ ...l, amountMinor: l.kind === 'discount' ? (l.rateE4 === null ? null : -Math.abs(lineAmount(l.quantity, l.rateE4) as number)) : lineAmount(l.quantity, l.rateE4) }));
     const svcTax = (await q.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1`, [inv.job_id])).rows[0]?.tax_rate_bp ?? null;
-    const totals = computeTotals(lines, input.taxRateBp !== undefined ? input.taxRateBp : svcTax);
-    await q.query(`delete from rigo.invoice_lines where invoice_id = $1`, [inv.id]);
-    let pos = 0;
-    for (const l of lines) await q.query(`insert into rigo.invoice_lines (invoice_id, company_id, position, description, quantity, unit, rate_minor, amount_minor, taxable, kind) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [inv.id, cc.company.id, pos++, l.description, l.quantity, l.unit, l.rateMinor, l.amountMinor, l.taxable, l.kind]);
+    const taxExempt = !!(await q.query<any>(`select tax_exempt from rigo.customers where id = $1`, [inv.customer_id])).rows[0]?.tax_exempt;
+    const totals = computeTotals(lines, input.taxRateBp !== undefined ? input.taxRateBp : svcTax, [], { taxExempt });
+    await persistLines(q, cc.company.id, inv.id, lines);
     const held = totals.totalMinor === null;
     // Editing invalidates any approval given for the previous version.
     await q.query(`update rigo.invoices set subtotal_minor = $2, discount_minor = $3, tax_minor = $4, total_minor = $5, hold_reasons = $6, status = $7, notes = coalesce($8, notes), approved_by = null, approved_at = null, version = version + 1, updated_at = now() where id = $1`,

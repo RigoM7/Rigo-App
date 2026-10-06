@@ -14,7 +14,8 @@ async function setup(mode: 'manual' | 'assisted' | 'automatic' = 'assisted', rat
   if (rates) {
     const fuel = svcs.fuel;
     const def = starterService('fuel');
-    def.pricing[0].rateMinor = 389;
+    def.pricing[0].rateE4 = 38900;
+    def.pricing = def.pricing.filter((p) => p.id !== 'delivery'); // this company charges no delivery fee
     await owner.put(`/c/${cid}/services/${fuel.id}`, { service: def, version: fuel.version });
   }
   await activateAll(owner, cid);
@@ -54,7 +55,7 @@ describe('jobs', () => {
     expect((await s.driver.get(`/c/${s.cid}/jobs/${other.body.id}`)).status).toBe(404);
     const svc = await s.driver.get(`/c/${s.cid}/services`);
     expect(JSON.stringify(svc.body)).not.toContain('389');
-    expect(svc.body.services[0].pricing[0].rateMinor).toBeUndefined();
+    expect(svc.body.services[0].pricing[0].rateE4).toBeUndefined();
     expect((await s.driver.get(`/c/${s.cid}/invoices`)).status).toBe(403);
     expect((await s.driver.get(`/c/${s.cid}/customers`)).status).toBe(403);
     const detail = await s.driver.get(`/c/${s.cid}/jobs/${j.id}`);
@@ -164,7 +165,7 @@ describe('invoices and automation', () => {
     expect((await s.owner.post(`/c/${s.cid}/invoices/${inv.id}/approve`, { version: inv.version })).status).toBe(409);
     // Setting the rate rebuilds the held draft; it then needs approval (automatic did not bypass it).
     const fuel = (await services(s.owner, s.cid)).fuel;
-    const def = starterService('fuel'); def.pricing[0].rateMinor = 400;
+    const def = starterService('fuel'); def.pricing[0].rateE4 = 40000; def.pricing = def.pricing.filter((p) => p.id !== 'delivery');
     await s.owner.put(`/c/${s.cid}/services/${fuel.id}`, { service: def, version: fuel.version });
     const fixed = (await s.owner.get(`/c/${s.cid}/invoices/${inv.id}`)).body.invoice;
     expect(fixed.status).toBe('draft');

@@ -10,7 +10,8 @@ import { proposeFromText } from '../src/shared/proposal.js';
 describe('billing arithmetic', () => {
   it('rounds half up in minor units and never treats a missing rate as zero', () => {
     const svc = starterService('fuel');
-    svc.pricing[0].rateMinor = 389;
+    svc.pricing[0].rateE4 = 38900;
+    svc.pricing = svc.pricing.filter((p) => p.id !== 'delivery'); // a company that charges no delivery fee
     const { lines, holdReasons } = buildLines(svc.pricing, { product: 'Diesel', delivered_qty: '0.5' }, {});
     expect(holdReasons).toEqual([]);
     expect(lines[0].amountMinor).toBe(195); // 194.5 -> 195
@@ -22,8 +23,8 @@ describe('billing arithmetic', () => {
   });
   it('applies discounts and tax deterministically and holds when tax is unconfigured', () => {
     const lines = [
-      { description: 'A', quantity: '3', unit: '', rateMinor: 333, amountMinor: 999, taxable: true, kind: 'charge' as const },
-      { description: 'B', quantity: '1', unit: '', rateMinor: 1001, amountMinor: 1001, taxable: false, kind: 'charge' as const },
+      { description: 'A', quantity: '3', unit: '', rateE4: 33300, amountMinor: 999, taxable: true, kind: 'charge' as const },
+      { description: 'B', quantity: '1', unit: '', rateE4: 100100, amountMinor: 1001, taxable: false, kind: 'charge' as const },
     ];
     const t = computeTotals(lines, 825, [{ label: '10%', type: 'percent', percentBp: 1000 }]);
     expect(t).toMatchObject({ subtotalMinor: 2000, discountMinor: 200, taxMinor: 74, totalMinor: 1874 });
@@ -38,7 +39,8 @@ describe('price lines that depend on a field value', () => {
   const fuel = () => {
     const svc = starterService('fuel');
     const rates: Record<string, number> = { Diesel: 419, Gasoline: 389, 'Heating oil': 359 };
-    for (const p of svc.pricing) if (p.when?.field === 'product') p.rateMinor = rates[p.when.equals];
+    for (const p of svc.pricing) if (p.when?.field === 'product') p.rateE4 = rates[p.when.equals] * 100;
+    svc.pricing = svc.pricing.filter((p) => p.id !== 'delivery' && p.when?.equals !== 'Dyed diesel'); // these tests use three products, no delivery fee
     return svc;
   };
   const types = (svc: ReturnType<typeof starterService>) => Object.fromEntries(svc.fields.map((f) => [f.key, f.type]));
@@ -47,10 +49,11 @@ describe('price lines that depend on a field value', () => {
   it('the fuel example has one per-gallon line per product, rates empty', () => {
     const svc = starterService('fuel');
     const perProduct = svc.pricing.filter((p) => p.when?.field === 'product');
-    expect(perProduct.map((p) => p.when?.equals)).toEqual(['Diesel', 'Gasoline', 'Heating oil']);
-    expect(perProduct.every((p) => p.basis === 'per_quantity' && p.quantityField === 'delivered_qty' && p.rateMinor === null)).toBe(true);
+    expect(perProduct.map((p) => p.when?.equals)).toEqual(['Diesel', 'Dyed diesel', 'Gasoline', 'Heating oil']);
+    expect(svc.pricing.find((p) => p.id === 'delivery')).toMatchObject({ basis: 'flat', when: null, rateE4: null });
+    expect(perProduct.every((p) => p.basis === 'per_quantity' && p.quantityField === 'delivered_qty' && p.rateE4 === null)).toBe(true);
     expect(svc.fields.find((f) => f.key === 'after_hours')?.type).toBe('boolean');
-    expect(svc.pricing.find((p) => p.when?.field === 'after_hours')).toMatchObject({ when: { field: 'after_hours', equals: 'true' }, rateMinor: null });
+    expect(svc.pricing.find((p) => p.when?.field === 'after_hours')).toMatchObject({ when: { field: 'after_hours', equals: 'true' }, rateE4: null });
     expect(starterService('septic').pricing.some((p) => p.when?.field === 'after_hours')).toBe(true);
     expect(serviceInputSchema.safeParse(svc).success).toBe(true);
   });
@@ -60,7 +63,7 @@ describe('price lines that depend on a field value', () => {
     const { lines, holdReasons } = buildLines(svc.pricing, { product: 'Gasoline', delivered_qty: '187.4' }, labels(svc), types(svc));
     expect(holdReasons).toEqual([]);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ description: 'Gasoline', quantity: '187.4', unit: 'gal', rateMinor: 389, amountMinor: 72899 }); // 187.4 x $3.89 = $728.986
+    expect(lines[0]).toMatchObject({ description: 'Gasoline', quantity: '187.4', unit: 'gal', rateE4: 38900, amountMinor: 72899 }); // 187.4 x $3.89 = $728.986
     const diesel = buildLines(svc.pricing, { product: 'Diesel', delivered_qty: '10' }, labels(svc), types(svc));
     expect(diesel.lines.map((l) => [l.description, l.amountMinor])).toEqual([['Diesel', 4190]]);
   });
@@ -81,15 +84,17 @@ describe('price lines that depend on a field value', () => {
 
   it('adds a yes/no fee only when it applies, and combines taxable and non-taxable lines', () => {
     const svc = starterService('septic');
-    for (const p of svc.pricing) p.rateMinor = p.when?.field === 'after_hours' ? 15000 : p.basis === 'per_quantity' ? 35 : 9500;
+    for (const p of svc.pricing) p.rateE4 = p.when?.field === 'after_hours' ? 1500000 : p.basis === 'per_quantity' ? 3500 : 950000;
+    Object.assign(svc.pricing.find((p) => p.id === 'pump_out')!, { rateE4: 3750000, overageRateE4: 3500 }); // $375 incl. 1,000 gal, then $0.35
     const fee = svc.pricing.find((p) => p.when?.field === 'after_hours')!;
     fee.taxable = true;
     const night = buildLines(svc.pricing, { service_detail: 'Pump-out', volume_pumped: '1200', after_hours: true }, labels(svc), types(svc));
     expect(night.holdReasons).toEqual([]);
-    expect(night.lines.map((l) => [l.description, l.quantity, l.amountMinor, l.taxable])).toEqual([['Pump-out', '1200', 42000, false], ['After-hours visit', '1', 15000, true]]);
-    expect(computeTotals(night.lines, 825)).toMatchObject({ subtotalMinor: 57000, taxMinor: 1238, totalMinor: 58238 }); // 8.25% of $150.00 = $12.375
+    expect(night.lines.map((l) => [l.description, l.quantity, l.amountMinor, l.taxable])).toEqual([
+      ['Pump-out (includes 1,000 gal)', '1', 37500, false], ['Pump-out: 200 gal over 1,000 included', '200', 7000, false], ['After-hours visit', '1', 15000, true]]);
+    expect(computeTotals(night.lines, 825)).toMatchObject({ subtotalMinor: 59500, taxMinor: 1238, totalMinor: 60738 }); // 8.25% of $150.00 = $12.375
     const day = buildLines(svc.pricing, { service_detail: 'Pump-out', volume_pumped: '1200', after_hours: false }, labels(svc), types(svc));
-    expect(day.lines.map((l) => l.description)).toEqual(['Pump-out']);
+    expect(day.lines.map((l) => l.description)).toEqual(['Pump-out (includes 1,000 gal)', 'Pump-out: 200 gal over 1,000 included']);
     const unset = buildLines(svc.pricing, { service_detail: 'Inspection' }, labels(svc), types(svc));
     expect(unset.lines.map((l) => l.description)).toEqual(['Inspection']);
   });

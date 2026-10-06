@@ -6,7 +6,7 @@ import { type AppEnv, requireUser, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, forbidden } from '../http/errors.js';
 import { seedRoles, insertService, seedDefaultWorkflows, exportStructure } from './structure.js';
-import { starterService } from '../../shared/services.js';
+import { starterService, type PriceLine } from '../../shared/services.js';
 import { stableHash } from '../../shared/workflows.js';
 import { createCompany, createCompanySchema } from './companies.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
@@ -49,13 +49,18 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   }
   await q.query(`update rigo.companies set settings = jsonb_set(settings, '{demo,driverUserId}', to_jsonb($2::text)) where id = $1`, [cid, dana]);
 
-  // Services with fictional example rates (not recommendations). Fuel is priced per product; septic
+  // Services with fictional example rates (not recommendations), in ten-thousandths of a dollar.
+  // Fuel is priced per product (diesel to the tenth of a cent); septic pump-outs include 1,000 gal;
   // inspections are deliberately left without a rate so the demo shows an invoice on hold.
-  const rate = (svc: ReturnType<typeof starterService>, rates: Record<string, number | null>) => { for (const p of svc.pricing) if (p.id in rates) p.rateMinor = rates[p.id]; return svc; };
-  const fuel = rate(starterService('fuel'), { fuel_diesel: 419, fuel_gasoline: 389, fuel_heating_oil: 359, after_hours: 7500 });
-  fuel.pricing.splice(3, 0, { id: 'delivery', label: 'Delivery fee', basis: 'flat', quantityField: '', unit: '', rateMinor: 4500, taxable: false, when: null });
-  const toilet = starterService('portable_toilet'); toilet.pricing[0].rateMinor = 3500; toilet.requiresPhoto = false;
-  const septic = rate(starterService('septic'), { pump_out: 35, inspection: null, repair_visit: 12500, after_hours: 15000 }); septic.requiresPhoto = false;
+  const today0 = localDate(new Date(), TZ);
+  const rate = (svc: ReturnType<typeof starterService>, rates: Record<string, Partial<PriceLine>>) => {
+    for (const p of svc.pricing) if (p.id in rates) Object.assign(p, rates[p.id], { rateSince: rates[p.id].rateE4 ? today0 : null });
+    return svc;
+  };
+  const fuel = rate(starterService('fuel'), { fuel_diesel: { rateE4: 41990 }, fuel_dyed_diesel: { rateE4: 37990 }, fuel_gasoline: { rateE4: 38900 }, fuel_heating_oil: { rateE4: 35900 }, delivery: { rateE4: 450000 }, after_hours: { rateE4: 750000 } });
+  const toilet = starterService('portable_toilet'); toilet.pricing[0].rateE4 = 350000; toilet.requiresPhoto = false;
+  const septic = rate(starterService('septic'), { pump_out: { rateE4: 3750000, overageRateE4: 3500 }, inspection: { rateE4: null }, grease_trap: { rateE4: 9500, minimumMinor: 20000 }, repair_visit: { rateE4: 1250000 }, after_hours: { rateE4: 1500000 } });
+  septic.requiresPhoto = false;
   const sFuel = await insertService(q, cid, fuel), sToilet = await insertService(q, cid, toilet), sSeptic = await insertService(q, cid, septic);
 
   const res: Record<string, string> = {};

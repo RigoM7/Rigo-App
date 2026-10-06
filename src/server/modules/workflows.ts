@@ -9,6 +9,7 @@ import {
 } from '../../shared/workflows.js';
 import { capabilities } from '../adapters/index.js';
 import { insertWorkflow } from './structure.js';
+import { readPricing } from '../../shared/services.js';
 import { visibleApprovals, approvalSummary } from './approvals.js';
 export { approvalSummary };
 import { runActionNow, dismissAction, takeOver, decideApproval, isEligibleApprover, processAll, type Actor } from '../automation/engine.js';
@@ -115,7 +116,7 @@ async function sampleFacts(q: Q, cc: CompanyCtx, def: Definition) {
   const cat = def.conditions.find((x) => x.field === 'job.service_category')?.value;
   const { rows } = await q.query<any>(`select * from rigo.services where company_id = $1 and active ${cat ? 'and category = $2' : ''} order by created_at limit 1`, cat ? [cc.company.id, cat] : [cc.company.id]);
   const svc = rows[0];
-  const hasRates = !!svc && (svc.pricing as any[]).length > 0 && (svc.pricing as any[]).every((p) => p.rateMinor !== null);
+  const hasRates = !!svc && (svc.pricing as any[]).length > 0 && readPricing(svc.pricing).every((p) => p.rateE4 !== null);
   const facts: Record<string, unknown> = {
     'job.service_category': svc?.category ?? cat ?? 'other', 'job.service_name': svc?.name ?? 'Sample service', 'job.problem_open': false, 'job.has_assignee': true,
     'customer.name': 'Sample Customer (test data)', 'invoice.total_minor': 25000, 'invoice.held': !hasRates,

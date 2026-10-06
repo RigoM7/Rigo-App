@@ -67,7 +67,7 @@ describe('demo workspace', () => {
     const svcs = (await a.get(`/c/${real}/services`)).body.services;
     expect(svcs.length).toBe(3);
     // Fictional demo rates are not copied.
-    expect(svcs.every((s: any) => s.pricing.every((p: any) => p.rateMinor === null))).toBe(true);
+    expect(svcs.every((s: any) => s.pricing.every((p: any) => p.rateE4 === null && p.overageRateE4 === null && p.minimumMinor === null))).toBe(true);
     const wfs = (await a.get(`/c/${real}/workflows`)).body.workflows;
     expect(wfs.length).toBeGreaterThan(0);
     expect(wfs.every((w: any) => w.active_version_id === null)).toBe(true);

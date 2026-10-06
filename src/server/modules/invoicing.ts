@@ -1,6 +1,6 @@
 import type { Q } from '../db/index.js';
-import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, type DraftLine } from '../../shared/billing.js';
-import type { FieldDef, PriceLine } from '../../shared/services.js';
+import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, type DraftLine } from '../../shared/billing.js';
+import { readPricing, type FieldDef } from '../../shared/services.js';
 import { conflict, notFound } from '../http/errors.js';
 import { emit } from '../automation/engine.js';
 
@@ -9,13 +9,41 @@ import { emit } from '../automation/engine.js';
 
 export interface PrepareResult { invoiceId: string; created: boolean; held: boolean; reasons: string[] }
 
-async function persistLines(q: Q, companyId: string, invoiceId: string, lines: DraftLine[]) {
+export async function persistLines(q: Q, companyId: string, invoiceId: string, lines: DraftLine[]) {
   await q.query(`delete from rigo.invoice_lines where invoice_id = $1`, [invoiceId]);
   let pos = 0;
   for (const l of lines) {
-    await q.query(`insert into rigo.invoice_lines (invoice_id, company_id, position, description, quantity, unit, rate_minor, amount_minor, taxable, kind) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [invoiceId, companyId, pos++, l.description, l.quantity, l.unit, l.rateMinor, l.amountMinor, l.taxable, l.kind]);
+    // rate_minor (whole cents) is still written for older readers; rate_e4 is the rate that's charged.
+    await q.query(`insert into rigo.invoice_lines (invoice_id, company_id, position, description, quantity, unit, rate_minor, rate_e4, amount_minor, taxable, kind, price_date, booked_rate_e4, note)
+                   values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [invoiceId, companyId, pos++, l.description, l.quantity, l.unit, rateToMinor(l.rateE4), l.rateE4, l.amountMinor, l.taxable, l.kind, l.priceDate ?? null, l.bookedRateE4 ?? null, l.note ?? '']);
   }
+}
+
+/** A stored invoice line as a draft line (older lines only have whole-cent rates). */
+export function lineFromRow(l: any): DraftLine {
+  const rateE4 = l.rate_e4 !== null && l.rate_e4 !== undefined ? Number(l.rate_e4) : l.rate_minor !== null && l.rate_minor !== undefined ? Number(l.rate_minor) * 100 : null;
+  return {
+    description: l.description, quantity: String(l.quantity), unit: l.unit, rateE4, amountMinor: l.amount_minor === null ? null : Number(l.amount_minor),
+    taxable: l.taxable, kind: l.kind, note: l.note ?? '', priceDate: l.price_date ? String(l.price_date instanceof Date ? l.price_date.toISOString().slice(0, 10) : l.price_date).slice(0, 10) : null,
+    bookedRateE4: l.booked_rate_e4 === null || l.booked_rate_e4 === undefined ? null : Number(l.booked_rate_e4),
+  };
+}
+
+/** Everything about a job that decides its invoice lines: service pricing, customer prices and tax exemption. */
+async function pricingContext(q: Q, job: any) {
+  const cust = job.customer_id ? (await q.query<any>(`select tax_exempt, price_overrides from rigo.customers where id = $1`, [job.customer_id])).rows[0] : null;
+  const fields = (job.fields ?? []) as FieldDef[];
+  return {
+    pricing: readPricing(job.pricing),
+    labels: Object.fromEntries(fields.map((f) => [f.key, f.label])),
+    types: Object.fromEntries(fields.map((f) => [f.key, f.type])),
+    values: { ...(job.details ?? {}), ...(job.completion?.values ?? {}) },
+    overrides: (job.service_id && cust?.price_overrides?.[job.service_id]) || {},
+    taxExempt: !!cust?.tax_exempt,
+    // A confirmed quantity the driver flagged as over the truck's capacity or far over the request.
+    quantityHold: job.completion?.quantityReview && !job.completion?.quantityReviewed ? `Check the quantity before approving: ${job.completion.quantityReview}` : null,
+  };
 }
 
 export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: string, actor: { userId: string | null; depth?: number }): Promise<PrepareResult> {
@@ -35,15 +63,13 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
     throw conflict(job.status === 'unsuccessful' ? 'Unsuccessful visits are not billed automatically. Create an invoice manually if a charge applies.' : 'Only completed or partially completed jobs can be invoiced.');
   }
   if (!job.service_id) throw conflict('The job has no service, so there is no pricing to use.');
-  const fields = (job.fields ?? []) as FieldDef[];
-  const labels = Object.fromEntries(fields.map((f) => [f.key, f.label]));
-  const types = Object.fromEntries(fields.map((f) => [f.key, f.type]));
-  const values = { ...(job.details ?? {}), ...(job.completion?.values ?? {}) };
-  const built = buildLines((job.pricing ?? []) as PriceLine[], values, labels, types);
-  const totals = computeTotals(built.lines, job.tax_rate_bp);
+  const ctx = await pricingContext(q, job);
+  const built = buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
+  const totals = computeTotals(built.lines, job.tax_rate_bp, [], { taxExempt: ctx.taxExempt });
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
+  if (ctx.quantityHold) reasons.unshift(ctx.quantityHold);
   if (job.status === 'partial') reasons.unshift('The visit was only partly completed. Review quantities before approving.');
-  const held = built.holdReasons.length > 0 || totals.totalMinor === null || job.status === 'partial';
+  const held = built.holdReasons.length > 0 || totals.totalMinor === null || job.status === 'partial' || !!ctx.quantityHold;
   const ins = await q.query<{ id: string }>(
     `insert into rigo.invoices (company_id, billable_key, customer_id, job_id, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, due_days)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, coalesce((select (settings->>'invoiceDueDays')::int from rigo.companies where id = $1), 30)) returning id`,
@@ -61,13 +87,12 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
  * also clears the "partial visit" review hold; missing rates or quantities still hold it.
  */
 export async function recalcInvoice(q: Q, invoiceId: string, opts: { taxRateBp?: number | null; bumpVersion?: boolean } = {}) {
-  const { rows } = await q.query<any>(`select i.*, s.tax_rate_bp from rigo.invoices i left join rigo.jobs j on j.id = i.job_id left join rigo.services s on s.id = j.service_id where i.id = $1`, [invoiceId]);
+  const { rows } = await q.query<any>(`select i.*, s.tax_rate_bp, coalesce(c.tax_exempt, false) as tax_exempt from rigo.invoices i left join rigo.jobs j on j.id = i.job_id left join rigo.services s on s.id = j.service_id
+      left join rigo.customers c on c.id = i.customer_id where i.id = $1`, [invoiceId]);
   const inv = rows[0];
-  const lines = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows.map((l) => ({
-    description: l.description, quantity: String(l.quantity), unit: l.unit, rateMinor: l.rate_minor, amountMinor: l.amount_minor, taxable: l.taxable, kind: l.kind,
-  })) as DraftLine[];
+  const lines = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows.map(lineFromRow);
   const tax = opts.taxRateBp !== undefined ? opts.taxRateBp : inv.tax_rate_bp ?? null;
-  const totals = computeTotals(lines, tax);
+  const totals = computeTotals(lines, tax, [], { taxExempt: inv.tax_exempt });
   const reasons = [...totals.holdReasons];
   const held = totals.totalMinor === null;
   await q.query(`update rigo.invoices set subtotal_minor = $2, discount_minor = $3, tax_minor = $4, total_minor = $5, hold_reasons = $6,
@@ -81,19 +106,18 @@ export async function recalcInvoice(q: Q, invoiceId: string, opts: { taxRateBp?:
 
 /** Rebuild a held invoice's charge lines from its job and the service's current pricing. Manual discount lines are kept. */
 export async function rebuildHeldInvoice(q: Q, invoiceId: string) {
-  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, j.details, j.completion, j.status as job_status, s.pricing, s.fields, s.tax_rate_bp
+  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, i.currency, j.details, j.completion, j.status as job_status, j.customer_id, j.service_id, j.booked_rates, s.pricing, s.fields, s.tax_rate_bp
       from rigo.invoices i join rigo.jobs j on j.id = i.job_id join rigo.services s on s.id = j.service_id where i.id = $1 for update of i`, [invoiceId]);
   const inv = rows[0];
   if (!inv || inv.status !== 'held') return;
-  const fields = (inv.fields ?? []) as FieldDef[];
-  const labels = Object.fromEntries(fields.map((f) => [f.key, f.label]));
-  const types = Object.fromEntries(fields.map((f) => [f.key, f.type]));
-  const built = buildLines(inv.pricing ?? [], { ...(inv.details ?? {}), ...(inv.completion?.values ?? {}) }, labels, types);
+  const ctx = await pricingContext(q, inv);
+  const built = buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: inv.booked_rates ?? undefined, currency: inv.currency });
   const discounts = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 and kind = 'discount' order by position`, [invoiceId])).rows
-    .map((l) => ({ description: l.description, quantity: String(l.quantity), unit: l.unit, rateMinor: l.rate_minor, amountMinor: l.amount_minor, taxable: false, kind: 'discount' as const }));
+    .map((l) => ({ ...lineFromRow(l), taxable: false, kind: 'discount' as const }));
   await persistLines(q, inv.company_id, invoiceId, [...built.lines, ...discounts]);
-  const totals = computeTotals([...built.lines, ...discounts], inv.tax_rate_bp);
+  const totals = computeTotals([...built.lines, ...discounts], inv.tax_rate_bp, [], { taxExempt: ctx.taxExempt });
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
+  if (ctx.quantityHold) reasons.unshift(ctx.quantityHold);
   if (inv.job_status === 'partial') reasons.unshift('The visit was only partly completed. Review quantities before approving.');
   const held = reasons.length > 0 || totals.totalMinor === null;
   await q.query(`update rigo.invoices set subtotal_minor = $2, discount_minor = $3, tax_minor = $4, total_minor = $5, hold_reasons = $6, status = $7, version = version + 1, updated_at = now() where id = $1`,
@@ -116,11 +140,11 @@ export async function issueInvoice(q: Q, companyId: string, invoiceId: string, a
 }
 
 /** Plain-text line for the customer email: "Gasoline: 187.4 gal × $3.89 = $728.99" or "Delivery fee: $45.00". */
-function emailLine(l: { description: string; quantity: string; unit: string; rate_minor: number | null; amount_minor: number | null; kind: string }, currency: string) {
-  if (l.kind === 'discount') return `${l.description}: -${formatMoney(Math.abs(l.amount_minor ?? 0), currency)}`;
-  const qty = String(l.quantity);
-  if (qty === '1' && !l.unit) return `${l.description}: ${formatMoney(l.amount_minor, currency)}`;
-  return `${l.description}: ${qty}${l.unit ? ` ${l.unit}` : ''} × ${formatMoney(l.rate_minor, currency)} = ${formatMoney(l.amount_minor, currency)}`;
+function emailLine(row: any, currency: string) {
+  const l = lineFromRow(row);
+  if (l.kind === 'discount') return `${l.description}: -${formatMoney(Math.abs(l.amountMinor ?? 0), currency)}`;
+  if (l.quantity === '1' && !l.unit) return `${l.description}: ${formatMoney(l.amountMinor, currency)}`;
+  return `${l.description}: ${l.quantity}${l.unit ? ` ${l.unit}` : ''} × ${formatRate(l.rateE4, currency)} = ${formatMoney(l.amountMinor, currency)}${l.note?.startsWith('Minimum') ? ' (minimum charge)' : ''}`;
 }
 
 /** Due date in the company's time zone, e.g. "November 5, 2026". */
@@ -139,7 +163,7 @@ export async function invoiceEmail(q: Q, invoiceId: string) {
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id join rigo.companies co on co.id = i.company_id left join rigo.jobs j on j.id = i.job_id
       where i.id = $1`, [invoiceId]);
   const i = rows[0];
-  const lines = (await q.query<any>(`select description, quantity, unit, rate_minor, amount_minor, kind from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows;
+  const lines = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows;
   const due = dueDate(i.issued_at, i.due_days, i.timezone);
   const pay = String(i.company_settings?.paymentInstructions ?? '').trim();
   const subject = `${i.company_name} invoice ${i.number ?? '(draft)'}`;
