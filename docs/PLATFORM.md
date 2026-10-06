@@ -116,6 +116,20 @@ audit checksums and version 60 identical before and after); memberships:
 1 Owner (`owner_id`), 2 Administrators (both active, verified accounts). A
 fourth account with no membership evidence received nothing.
 
+### All migrations (applied to production in this order)
+
+| File | Adds | Applied |
+| --- | --- | --- |
+| `20261005120000_companies.sql` | memberships, invitations, creation requests, access rules | 2026-10-05 |
+| `20261006090000_company_limit.sql` | 10 new companies per account per day (replaces one function) | 2026-10-05 |
+| `20261006100000_templates.sql` | templates and template versions | 2026-10-06 |
+| `20261006110000_shares.sql` | sharing agreements | 2026-10-06 |
+| `20261006120000_usage.sql` | paid-service usage counts | 2026-10-06 |
+
+All of them are additive. After each one, the live company's data checksum
+and version were unchanged. The deployed code ignores the new tables until
+this branch is merged.
+
 ### Recovery
 
 - Code: revert the merge commit; the old code ignores the new tables.
@@ -123,6 +137,10 @@ fourth account with no membership evidence received nothing.
   `rigo_workspaces_owner_id_key` only if `owner_id` is still unique (no
   companies were created after the migration); otherwise keep it dropped.
 - No existing row was changed, so there is nothing to restore.
+- Later migrations: their tables (`rigo_templates`, `rigo_template_versions`,
+  `rigo_shares`, `rigo_usage`) and functions can be dropped the same way. Company
+  data inside `rigo_workspaces.state` gains only new optional fields, which older
+  code ignores.
 
 ## 3. Verification
 
@@ -459,10 +477,54 @@ structures are invented here.
   all-companies view without combined money.
 - Screenshots: `docs/screenshots/rigo-f-*.png`.
 
-## 9. Milestone G: native distribution and commercial billing
+## 9. Milestone G groundwork: installable app, billing off
 
-Not started. The plan says this happens only when approved: app store
-accounts, a billing provider, pricing and plans are owner decisions.
+The owner approved groundwork only. Nothing is published to app stores,
+nothing is charged, and no payment details are collected.
+
+- **Installable app.**
+  - `sw.js` is stamped per build. It caches only the app's own files and
+    never `/api/`, sign-in or other sites. Fresh files are used whenever
+    the device is online.
+  - The manifest now has an id, description, categories and separate
+    maskable icons.
+  - Offline start-up: browser-only Rigo opens normally. A shared company
+    shows "You're offline" with Try again; offline updates stay on the device.
+- **Store packaging.** `docs/DISTRIBUTION.md` covers the owner steps. The
+  build publishes `/.well-known/assetlinks.json` only when
+  `RIGO_ANDROID_PACKAGE` and `RIGO_ANDROID_SHA256` are set.
+- **Plan and usage** (App settings › Capabilities, owners and
+  administrators):
+  - The plan reads "Early access: free, prices not set" and billing is off.
+  - Paid address lookups are counted per company per month (table
+    `rigo_usage`, function `rigo_count_usage`, applied in production
+    2026-10-06).
+  - `RIGO_GEOCODE_MONTHLY_LIMIT` optionally caps lookups. Once the cap is
+    reached, no paid call is made.
+  - The `billing` route refuses any change.
+- **Capabilities list** now describes messages, recurring work and app
+  readiness accurately.
+
+### Still the owner's decision
+
+- Prices and plans.
+- A payment provider.
+- Apple and Google developer accounts and store listings.
+- Subscriptions bought inside store apps.
+
+### Verification
+
+- `tests/pwa.browser.cjs` (real local server):
+  - manifest basics;
+  - service worker stamped per build;
+  - offline launch;
+  - company data never cached;
+  - connected-offline screen;
+  - no app-link file without owner details.
+- `tests/companies-server.test.cjs`: billing off and changes refused, usage
+  counted per lookup, cap enforced with no paid call after it, outsiders
+  refused.
+- `tests/companies.browser.cjs`: plan and usage shown.
 
 ## 10. Progress
 
@@ -472,4 +534,4 @@ accounts, a billing provider, pricing and plans are owner decisions.
 - [x] Milestone D — dashboard, exceptions, approvals, recurring work
 - [x] Milestone E — configuration, imports, communication, templates (provider choices pending)
 - [x] Milestone F — authorized cross-company sharing
-- [ ] Milestone G — native distribution and billing (waiting for owner approval)
+- [x] Milestone G groundwork — installable app, plan and usage, billing off (store publishing and charging wait for owner accounts and prices)

@@ -37,6 +37,7 @@ function fakeApi() {
         if (body.op === 'accept') { api.members[invite.workspace] = invite.role; return json({ status: 'accepted', workspace: invite.workspace }); }
         return json({ status: 'declined' });
       }
+      if (name === 'billing') return json({ plan: { name: 'Early access', price: null, note: 'Free during early access. Prices are not set yet.' }, billing: { enabled: false, note: 'Billing is off: no payment details are collected and nothing is charged.' }, usage: [{ kind: 'geocoding', label: 'Address lookups', month: '2026-10', count: 4, limit: null }] });
       if (name === 'integrations') {
         if (body) { api.geocoding = body.geocoding; api.integrationPosts.push(body); }
         return json({ geocoding: { available: true, enabled: api.geocoding } });
@@ -208,6 +209,9 @@ const companyOf = page => page.evaluate(() => window.Rigo.workspaceId);
       first.once('dialog', d => d.accept());
       await first.getByRole('button', { name: 'Turn on' }).click();
       await first.getByText(/On: Create job can look up/).waitFor();
+      await first.getByText('Plan and usage').waitFor();
+      await first.getByText(/Billing is off: no payment details are collected/).waitFor();
+      await first.getByText('4 this month (2026-10)').waitFor();
       assert.deepEqual(api.integrationPosts, [{ workspace: A, geocoding: true }]);
       await first.screenshot({ path: shots + '/rigo-a-paid-services.png' });
       // Leave a company from the switcher (with confirmation).

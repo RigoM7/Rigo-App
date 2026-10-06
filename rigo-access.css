@@ -251,3 +251,4 @@ button.small, .small { min-height:36px; padding:6px 12px; font-size:13px; }
 .rigo-overview-table th small { display:block; font-weight:400; color:#4d5d64; }
 .rigo-shared-table input { width:20px; height:20px; }
 .rigo-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.rigo-plan-title { margin:20px 0 4px; font-size:16px; }

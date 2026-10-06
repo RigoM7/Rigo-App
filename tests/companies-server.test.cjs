@@ -223,6 +223,21 @@ test('milestone A: accounts, companies, invitations and isolation', { skip: !loc
     await assert.rejects(bare.run({ method: 'POST', headers: { authorization: 'Bearer newbie' }, query: { route: 'integrations' }, body: { workspace: acme, geocoding: true } }), e => e.status === 409);
   });
 
+  await t.test('billing is off; paid lookups are counted per company and a set monthly cap is enforced', async () => {
+    const plan = await call('owner', 'billing', { query: { workspace: LIVE } });
+    assert.equal(plan.billing.enabled, false);
+    assert.equal(plan.plan.price, null);
+    const before = plan.usage[0].count;
+    await post('owner', 'geocode', { workspace: LIVE, address: '2 Main St' });
+    assert.equal((await call('owner', 'billing', { query: { workspace: LIVE } })).usage[0].count, before + 1);
+    await assert.rejects(post('owner', 'billing', { workspace: LIVE, plan: 'pro' }), e => e.status === 503);
+    await denied(call('newbie', 'billing', { query: { workspace: LIVE } }));
+    const capped = createServer({ env: { ...env, RIGO_GEOCODE_MONTHLY_LIMIT: String(before + 1) }, fetchImpl: fake.fetchImpl });
+    const mapbox = fake.calls.filter(c => c.host === 'api.mapbox.com').length;
+    await assert.rejects(capped.run({ method: 'POST', headers: { authorization: 'Bearer owner' }, query: { route: 'geocode' }, body: { workspace: LIVE, address: '3 Main St' } }), e => e.status === 429);
+    assert.equal(fake.calls.filter(c => c.host === 'api.mapbox.com').length, mapbox, 'no paid call once the cap is reached');
+  });
+
   await t.test('demo identifiers are not companies on the server', async () => {
     const paidBefore = fake.calls.filter(c => c.host === 'api.mapbox.com').length;
     for (const ws of ['demo-workspace', 'standalone-app']) {

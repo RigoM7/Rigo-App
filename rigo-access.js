@@ -407,14 +407,37 @@
     localStorage.removeItem('fieldbase-html-pending');
     location.assign('/');
   }
+  // Installed-app support: offline launch for the app's own files only (never company data).
+  // Not registered under browser automation, so tests always see the live files.
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || location.protocol !== 'https:' || navigator.webdriver) return;
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+  function rememberMode(mode) { try { localStorage.setItem('rigo-last-mode', mode); } catch {} }
+  function offline() {
+    screen("You're offline", 'Rigo needs a connection to open your company. Updates you saved offline stay on this device and sync when you reconnect.',
+      '<div class="rigo-actions"><button class="primary" id="offline-retry">Try again</button></div>');
+    document.getElementById('offline-retry').onclick = () => location.reload();
+    window.addEventListener('online', () => location.reload(), { once: true });
+  }
   async function start(mount) {
+    registerServiceWorker();
     // file:// exports retain their existing standalone behavior.
     if (location.protocol === 'file:') { config = { configured: false }; return mount(); }
     try {
-      const response = await fetch('/api/rigo?route=config', { cache: 'no-store' });
-      if (response.status === 404) { config = { configured: false }; return mount(); }
+      let response;
+      try { response = await fetch('/api/rigo?route=config', { cache: 'no-store' }); }
+      catch (error) {
+        // No connection. A browser-only Rigo opens as usual; a shared company needs the server.
+        let mode = null;
+        try { mode = localStorage.getItem('rigo-last-mode'); } catch {}
+        if (mode === 'standalone') { config = { configured: false }; return mount(); }
+        return offline();
+      }
+      if (response.status === 404) { config = { configured: false }; rememberMode('standalone'); return mount(); }
       if (!response.ok) throw new Error('Rigo connection could not be checked. Refresh and try again.');
       config = await response.json();
+      rememberMode(config.configured ? 'connected' : 'standalone');
       if (!config.configured) return mount();
       session = readSession();
       const hash = new URLSearchParams(location.hash.slice(1));
@@ -475,6 +498,15 @@
     };
     try { show(await api('/api/integrations?workspace=' + encodeURIComponent(company.id))); }
     catch (error) { status.textContent = error.message; }
+    if (!['Owner', 'Administrator'].includes(company.role)) return;
+    // Plan and usage: early access is free and billing is off.
+    try {
+      const b = await api('/api/billing?workspace=' + encodeURIComponent(company.id));
+      target.insertAdjacentHTML('beforeend', `<h3 class="rigo-plan-title">Plan and usage</h3>
+        <div class="rigo-integration-row"><div><strong>${esc(b.plan.name)}</strong><small>${esc(b.plan.note)}</small></div><span class="rigo-tag">Billing off</span></div>
+        <p class="rigo-help">${esc(b.billing.note)}</p>
+        <ul class="rigo-items">${b.usage.map(u => `<li><strong>${esc(u.label)}</strong><small>${u.count} this month (${esc(u.month)})${u.limit ? ' of ' + u.limit + ' allowed' : ''}</small></li>`).join('')}</ul>`);
+    } catch {}
   }
   let companyGeocoding = false;
   new MutationObserver(() => {

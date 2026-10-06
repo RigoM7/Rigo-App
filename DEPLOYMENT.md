@@ -17,6 +17,10 @@ are present. Invitations stay disabled in that mode; it never reports a fake sen
    - `SUPABASE_SERVICE_ROLE_KEY`: the project's server-only service-role key.
    - `RIGO_APP_URL`: the canonical production HTTPS origin, without a trailing slash.
    - Optional `MAPBOX_TOKEN`: address lookup (see below).
+   - Optional `RIGO_GEOCODE_MONTHLY_LIMIT`: monthly cap on paid address lookups
+     per company (unset means no cap).
+   - Optional `RIGO_ANDROID_PACKAGE` and `RIGO_ANDROID_SHA256`: only when
+     publishing to Google Play (see `docs/DISTRIBUTION.md`).
    `RIGO_OWNER_USER_ID` is no longer used: ownership lives in `rigo_memberships`.
 3. In Supabase Authentication > URL Configuration, set Site URL to that origin
    and add `https://YOUR-DOMAIN/?invite=1` to the redirect allowlist.
