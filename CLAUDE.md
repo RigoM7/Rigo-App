@@ -32,7 +32,44 @@
   (`ignoreCommand`). On branches other than `main`, a commit whose first line
   contains `[checkpoint]` is also skipped; use it for work-in-progress pushes.
   `main` always builds (squash merges carry checkpoint lines in their body).
+- `.claude/settings.json` allows the routine commands (npm installs and scripts, the
+  checks above, Playwright, everyday git) without a prompt, and denies force pushes
+  and `git reset --hard`. Add to that list when the owner approves a new command.
 
 ## Skills
-- `.claude/skills/ui-ux-pro-max`: third-party UI/UX design skill (MIT, from
-  nextlevelbuilder/ui-ux-pro-max-skill v2.13.0). Use it for UI design work.
+Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
+(MIT; `ui-styling` is Apache-2.0), in `.claude/skills/`:
+- `ui-ux-pro-max`: UI/UX design intelligence. Use it for UI design work.
+- `design-system`, `brand`, `design`, `banner-design`, `slides`, `ui-styling`:
+  tokens/components, brand voice and identity, logos and design assets, banners,
+  HTML presentations, and shadcn/Tailwind styling. Rigo's UI is plain CSS with its
+  own tokens, so `ui-styling` advice applies only to separate projects. Scripts that
+  call outside services (logo generation, stock backgrounds) need their own API
+  keys and are never run automatically.
+- `design-taste-frontend`: Taste Skill v2 (Leonxlnx/taste-skill, MIT), an
+  "anti-slop" guide for landing pages, portfolios and redesigns. It is not meant for
+  dashboards or dense product UI, so use it for marketing pages, not the app screens.
+- `impeccable`: Impeccable v4.5.0 (pbakaus/impeccable, Apache-2.0), design commands
+  for building, critiquing, auditing and polishing UI (`/impeccable audit`, `polish`,
+  `harden`, `adapt` and others). Its `scripts/impeccable` launcher downloads a
+  version-pinned, checksum-verified engine binary from the project's GitHub releases
+  into `~/.impeccable/` on first use; if that fails, the skill falls back to reading
+  the context files directly. Rigo's product and design context lives in
+  `docs/PRODUCT-VISION.md` and `docs/DESIGN-SYSTEM.md`: point the skill there rather
+  than letting `init`/`document` create competing root `PRODUCT.md`/`DESIGN.md`
+  files, and don't install its editor hooks.
+- `playwright-cli`: Microsoft's Playwright CLI skill (microsoft/playwright-cli,
+  Apache-2.0, from commit b85c7a7), for driving a browser from the command line:
+  open pages, click, fill, take snapshots and screenshots, mock requests, trace, and
+  generate or debug Playwright tests. It needs the `playwright-cli` command, which is
+  not part of the project; install it globally with
+  `npm install -g @playwright/cli@latest` (allowed in `.claude/settings.json`). In the
+  cloud container it defaults to Chrome, which isn't installed, so set
+  `PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_EXECUTABLE_PATH=/opt/pw-browsers/chromium`
+  and run it from the scratchpad so its `.playwright-cli/` output stays out of the repo. Use it for
+  checking pages by hand; `e2e/run.mjs` stays the automated browser check. Point it at
+  a local build or a preview, and never sign in to or change data on the live site
+  without the owner's go-ahead.
+
+Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
+any skill's suggestions.
