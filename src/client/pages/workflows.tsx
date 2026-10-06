@@ -193,7 +193,7 @@ export function WorkflowEditor() {
   );
   return (
     <div className="page">
-      <PageHeader back={{ to: c.to('workflows'), label: 'Workflows' }} title={<span className="row">{wf.name}<Pill tone={VERSION_TONE[working.status]}>v{working.version} {working.status}</Pill>{dirty ? <Pill tone="warning">Unsaved changes</Pill> : null}</span>}
+      <PageHeader back={{ to: c.to('workflows'), label: 'Workflows' }} docTitle={wf.name} title={<span className="row">{wf.name}<Pill tone={VERSION_TONE[working.status]}>v{working.version} {working.status}</Pill>{dirty ? <Pill tone="warning">Unsaved changes</Pill> : null}</span>}
         sub={active ? `Active: v${active.version}, activated ${relTime(active.activatedAt)}${active.activatedByName ? ` by ${active.activatedByName}` : ''}` : 'Not active'}
         actions={<>
           {c.can('automation.control') && (wf.paused ? <Button icon={<PlayCircle aria-hidden />} onClick={() => setWf.run({ paused: false })}>Resume workflow</Button> : <Button icon={<PauseCircle aria-hidden />} onClick={() => setWf.run({ paused: true })}>Pause workflow</Button>)}

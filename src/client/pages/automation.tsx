@@ -8,6 +8,7 @@ import { useSubmit } from '../lib/form';
 import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, ActionStatus, Dialog, ErrorSummary, Pill, LiveDot, AskRigo, useToast, useConfirm } from '../components/ui';
 import { relTime } from '../lib/format';
 import { MODE_HELP, type Mode } from '../../shared/workflows';
+import { useDocumentTitle } from '../lib/title';
 
 export function ModePicker({ value, onChange, disabled }: { value: Mode; onChange: (m: Mode) => void; disabled?: boolean }) {
   return (
@@ -50,6 +51,7 @@ function subjectLink(c: ReturnType<typeof useCompany>, a: any) {
 
 export function Automation() {
   const c = useCompany();
+  useDocumentTitle('Automation');
   const qc = useQueryClient();
   const toast = useToast();
   const { ask, node } = useConfirm();

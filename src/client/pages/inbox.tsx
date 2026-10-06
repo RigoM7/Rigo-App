@@ -7,6 +7,7 @@ import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, Pill, Dialog, Field, Textarea, ErrorSummary, useToast } from '../components/ui';
 import { relTime, fmtDateTime } from '../lib/format';
+import { useDocumentTitle } from '../lib/title';
 
 function ApprovalCard({ a, onDone }: { a: any; onDone: () => void }) {
   const c = useCompany();
@@ -54,6 +55,7 @@ function ApprovalCard({ a, onDone }: { a: any; onDone: () => void }) {
 
 export function InboxPage() {
   const c = useCompany();
+  useDocumentTitle('Inbox');
   const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const tab = (sp.get('tab') ?? 'action') as 'action' | 'warnings' | 'updates' | 'decided';

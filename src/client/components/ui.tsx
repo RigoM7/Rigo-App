@@ -2,6 +2,7 @@ import { createContext, forwardRef, useCallback, useContext, useEffect, useId, u
 import { Link } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand, Sparkles, PlayCircle } from 'lucide-react';
 import type { ApiError } from '../lib/api';
+import { useDocumentTitle } from '../lib/title';
 
 // ------------------------------------------------------------ buttons
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; block?: boolean; busy?: boolean; icon?: ReactNode };
@@ -184,7 +185,9 @@ export function Card({ title, actions, children, flush, id }: { title?: ReactNod
   );
 }
 
-export function PageHeader({ title, sub, actions, back }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; back?: { to: string; label: string } }) {
+export function PageHeader({ title, sub, actions, back, docTitle }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; back?: { to: string; label: string }; docTitle?: string }) {
+  // The tab title follows the page heading; pages with a non-text heading pass docTitle.
+  useDocumentTitle(docTitle ?? (typeof title === 'string' ? title : null));
   return (
     <div className="stack-sm">
       {back && <Link className="back-link" to={back.to}><ChevronLeft aria-hidden />{back.label}</Link>}

@@ -3,9 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { get } from '../lib/api';
 import { Banner, LoadingBlock, Wordmark } from '../components/ui';
 import { fmtDateTime } from '../lib/format';
+import { useDocumentTitle } from '../lib/title';
 
 /** Local-only stand-in for an email inbox. Disabled in production deployments. */
 export function DevMailbox() {
+  useDocumentTitle('Simulated mailbox');
   const q = useQuery({ queryKey: ['mailbox'], queryFn: () => get('/auth/dev/mailbox'), refetchInterval: 5000 });
   return (
     <div className="shell">

@@ -120,7 +120,7 @@ export function RecurringDetail() {
   const missed = occurrences.filter((o: any) => o.occurrence_date < today && o.job_id && ['draft', 'open', 'in_progress'].includes(o.status));
   return (
     <div className="page">
-      <PageHeader back={{ to: c.to('recurring'), label: 'Recurring' }} title={<span className="row">{plan.name}<Pill tone={plan.status === 'active' ? 'success' : 'warning'}>{plan.status}</Pill></span>} sub={`${describeRule(plan.visit_rule)} at ${plan.visit_rule.time} · ${describeBilling(plan.billing_rule, c.company.currency)}`}
+      <PageHeader back={{ to: c.to('recurring'), label: 'Recurring' }} docTitle={plan.name} title={<span className="row">{plan.name}<Pill tone={plan.status === 'active' ? 'success' : 'warning'}>{plan.status}</Pill></span>} sub={`${describeRule(plan.visit_rule)} at ${plan.visit_rule.time} · ${describeBilling(plan.billing_rule, c.company.currency)}`}
         actions={c.can('jobs.edit') && plan.status !== 'ended' ? <>
           {plan.status === 'paused' ? <Button icon={<PlayCircle aria-hidden />} busy={resume.busy} onClick={() => resume.run()}>Resume</Button> : <Button icon={<PauseCircle aria-hidden />} onClick={() => setDlg('pause')}>Pause</Button>}
           <Button onClick={() => { setRule(structuredClone(plan.visit_rule)); setDlg('change'); }}>Change schedule</Button>

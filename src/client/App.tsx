@@ -1,10 +1,14 @@
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
-import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme } from './lib/session';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme, refreshMe, safeNext } from './lib/session';
+import { useDocumentTitle } from './lib/title';
+import { post } from './lib/api';
 import { AppShell, MorePage } from './components/shell';
 import { ToastProvider, LoadingBlock, ErrorState, LinkButton, Wordmark, Empty } from './components/ui';
 import { Lock, SearchX } from 'lucide-react';
-import { SignIn, SignUp, Forgot, Reset } from './pages/auth';
+import { SignIn, SignUp, Forgot, Reset, ConfirmEmail } from './pages/auth';
+import { Landing } from './pages/landing';
 import { Workspaces, NewCompany } from './pages/workspaces';
 import { InvitePage } from './pages/invite';
 import { Account } from './pages/account';
@@ -50,16 +54,55 @@ function RequireUser({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Signed out, "/" explains what Rigo is; signed in, it goes straight to the workspaces. */
 function Home() {
   const me = useMe();
   if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  if (!me.data?.user) return <Navigate to="/signin" replace />;
-  return <Navigate to="/workspaces" replace />;
+  if (me.data?.user) return <Navigate to="/workspaces" replace />;
+  return <Landing />;
+}
+
+/** Sign-in and sign-up are for people who aren't signed in; everyone else continues where they were going. */
+function SignedOutOnly({ children }: { children: ReactNode }) {
+  const me = useMe();
+  const [sp] = useSearchParams();
+  if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
+  if (me.data?.user) return <Navigate to={safeNext(sp.get('next'))} replace />;
+  return <>{children}</>;
+}
+
+/** "Try the demo" from the landing page: after signing up, open the person's demo (creating it if needed). */
+function StartDemo() {
+  const me = useMe();
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  const [error, setError] = useState<unknown>(null);
+  useDocumentTitle('Opening the demo');
+  const start = useCallback(async () => {
+    setError(null);
+    try {
+      const existing = me.data?.companies.find((c) => c.kind === 'demo');
+      const id = existing ? existing.id : (await post('/demo')).id;
+      await refreshMe(qc);
+      nav(`/c/${id}`, { replace: true });
+    } catch (e) { setError(e); }
+  }, [me.data, qc, nav]);
+  useEffect(() => { if (me.data?.user) start(); }, [me.data?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="auth-wrap"><main className="auth-card" id="main">
+      <Wordmark to="/workspaces" />
+      <div className="auth-panel stack">
+        <h1>Opening the demo</h1>
+        {error ? <><ErrorState error={error} retry={start} /><LinkButton to="/workspaces">Go to my workspaces</LinkButton></> : <LoadingBlock rows={2} />}
+      </div>
+    </main></div>
+  );
 }
 
 function CompanyRoot() {
   const { cid = '' } = useParams();
   const boot = useCompanyBoot(cid);
+  useDocumentTitle(boot.error ? 'No access' : null);
   useEffect(() => { try { localStorage.setItem('rigo-last-company', cid); } catch { /* ignore */ } }, [cid]);
   if (boot.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
   if (boot.error) {
@@ -92,6 +135,7 @@ function CompanyRoot() {
 
 function NotFound() {
   const c = useCompany();
+  useDocumentTitle('Page not found');
   return (
     <div className="page page-narrow">
       <h1 className="sr-only">Page not found</h1>
@@ -151,10 +195,12 @@ export function App() {
       <ToastProvider>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
+          <Route path="/signin" element={<SignedOutOnly><SignIn /></SignedOutOnly>} />
+          <Route path="/signup" element={<SignedOutOnly><SignUp /></SignedOutOnly>} />
           <Route path="/forgot" element={<Forgot />} />
           <Route path="/reset/:token" element={<Reset />} />
+          <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
+          <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
           <Route path="/invite/:token" element={<InvitePage />} />
           <Route path="/dev/mailbox" element={<DevMailbox />} />
           <Route path="/workspaces" element={<RequireUser><Workspaces /></RequireUser>} />

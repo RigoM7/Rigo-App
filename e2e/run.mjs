@@ -39,6 +39,101 @@ async function noOverflow(page, label) {
   if (o.sw > o.w + 1) throw new Error(`${label}: page is ${o.sw}px wide in a ${o.w}px viewport`);
 }
 
+// ---------------------------------------------------------------- accounts and sign-in
+// Run only this section with E2E_ONLY=auth.
+const { request: pwRequest } = require('playwright');
+const STRONG = 'tidy-lantern-orchard-42';
+let accountN = 0;
+async function apiAccount(name, opts = {}) {
+  const api = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: { 'x-rigo': '1' } });
+  const mail = `${name.toLowerCase().replace(/\W+/g, '.')}-${Date.now()}-${++accountN}@example.test`;
+  const r = await api.post('/api/auth/signup', { data: { name, email: mail, password: STRONG } });
+  if (!r.ok()) throw new Error(`signup ${r.status()} ${await r.text()}`);
+  let demoId = null;
+  if (opts.demo) demoId = (await (await api.post('/api/demo')).json()).id;
+  if (opts.company) {
+    const c = await api.post('/api/companies', { data: { name: opts.company, timezone: 'America/Chicago', currency: 'USD', categories: ['fuel'], start: 'blank' } });
+    if (!c.ok()) throw new Error(`company ${c.status()} ${await c.text()}`);
+  }
+  await api.dispose();
+  return { email: mail, name, demoId };
+}
+async function signInHere(p, who) {
+  await p.getByLabel('Email').fill(who.email);
+  await p.getByLabel('Password', { exact: true }).fill(STRONG);
+  await p.getByRole('button', { name: 'Sign in', exact: true }).click();
+}
+async function openSignInFromHome(p) {
+  await p.goto(`${BASE}/`);
+  await p.waitForLoadState('networkidle');
+  // Signed out, "/" is the landing page with "Sign in" in its top bar (older builds redirected).
+  if (!/\/signin/.test(p.url())) await p.getByRole('link', { name: 'Sign in', exact: true }).first().click();
+  await p.waitForURL(/\/signin/);
+}
+
+for (const [vw, vh] of [[1440, 900], [390, 844]]) {
+  await step(`C1 ${vw}px: from "/", sign in once and land on workspaces`, async () => {
+    const who = await apiAccount('Sam Returning');
+    const c = await browser.newContext({ viewport: { width: vw, height: vh } });
+    const p = await c.newPage(); watch(p, `c1-signin-${vw}`);
+    await openSignInFromHome(p);
+    await signInHere(p, who);
+    await p.waitForURL(/\/workspaces$/, { timeout: 8000 });
+    await p.getByRole('heading', { name: 'Hello, Sam' }).waitFor({ timeout: 8000 });
+    await c.close();
+  });
+  await step(`C1 ${vw}px: from "/", create a free account and land on workspaces`, async () => {
+    const c = await browser.newContext({ viewport: { width: vw, height: vh } });
+    const p = await c.newPage(); watch(p, `c1-signup-${vw}`);
+    await p.goto(`${BASE}/`);
+    await p.getByRole('link', { name: 'Create a free account' }).first().click();
+    await p.waitForURL(/\/signup/);
+    await p.getByLabel('Your name').fill('Nina New');
+    await p.getByLabel('Email').fill(`nina-${Date.now()}-${vw}@example.test`);
+    await p.getByLabel('Password', { exact: true }).fill(STRONG);
+    await p.getByRole('button', { name: 'Create account' }).click();
+    await p.waitForURL(/\/workspaces$/, { timeout: 8000 });
+    await p.getByRole('heading', { name: 'Hello, Nina' }).waitFor({ timeout: 8000 });
+    await c.close();
+  });
+  await step(`C1 ${vw}px: bookmarked pages return to the same page after one sign-in`, async () => {
+    const who = await apiAccount('Bea Bookmark', { demo: true });
+    for (const path of ['/workspaces', `/c/${who.demoId}/today`]) {
+      const c = await browser.newContext({ viewport: { width: vw, height: vh } });
+      const p = await c.newPage(); watch(p, `c1-bookmark-${vw}`);
+      await p.goto(`${BASE}${path}`);
+      await p.waitForURL(/\/signin\?next=/);
+      await signInHere(p, who);
+      await p.waitForURL((u) => u.pathname === path, { timeout: 8000 });
+      await p.locator('main h1').first().waitFor({ timeout: 8000 });
+      if (/\/signin/.test(p.url())) throw new Error(`bounced back to sign-in from ${path}`);
+      await c.close();
+    }
+  });
+  await step(`C1 ${vw}px: sign out, sign in as someone else in the same tab, no data carries over`, async () => {
+    const a = await apiAccount('Alma First', { company: `Alma Fuel ${vw}` });
+    const b = await apiAccount('Bruno Second');
+    const c = await browser.newContext({ viewport: { width: vw, height: vh } });
+    const p = await c.newPage(); watch(p, `c1-switch-${vw}`);
+    await p.goto(`${BASE}/signin`);
+    await signInHere(p, a);
+    await p.getByRole('heading', { name: 'Hello, Alma' }).waitFor({ timeout: 8000 });
+    await p.getByText(`Alma Fuel ${vw}`).waitFor();
+    await p.getByRole('button', { name: 'Sign out' }).click();
+    await p.waitForURL(/\/signin/);
+    await signInHere(p, b);
+    await p.getByRole('heading', { name: 'Hello, Bruno' }).waitFor({ timeout: 8000 });
+    if (await p.getByText(`Alma Fuel ${vw}`).count()) throw new Error("the first user's company is still on screen");
+    await c.close();
+  });
+}
+if (process.env.E2E_ONLY === 'auth') {
+  await browser.close();
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
+
 const email = `owner-${Date.now()}@example.test`;
 const empEmail = `employee-${Date.now()}@example.test`;
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

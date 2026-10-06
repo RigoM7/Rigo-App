@@ -10,6 +10,7 @@ import { fmtTime, fmtDate, relTime } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
 import { OUTCOMES, completionProblems } from '../../shared/jobs';
+import { useDocumentTitle } from '../lib/title';
 
 interface MyJobs { jobs: any[]; userId: string; companyId: string; fetchedAt: string }
 
@@ -52,6 +53,7 @@ export function SyncState({ state, message }: { state: DraftState | null; messag
 
 export function Today() {
   const c = useCompany();
+  useDocumentTitle('My jobs');
   const { data, stale, error, loading, reload, uid } = useMyJobs();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [syncing, setSyncing] = useState(false);
@@ -154,6 +156,7 @@ export function DriverJob() {
   const { ask, node } = useConfirm();
   const { data, stale, loading, reload, uid } = useMyJobs();
   const job = data?.jobs.find((j) => j.id === jobId);
+  useDocumentTitle(job ? `Job #${job.number}` : 'Job');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
   const [startErr, setStartErr] = useState<ApiError | null>(null);

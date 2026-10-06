@@ -1,18 +1,40 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { get } from './api';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { get, post } from './api';
 import type { Permission } from '../../shared/permissions';
 import { applyTheme, type ThemePref } from './theme';
 
 export interface Me {
-  user: { id: string; email: string; name: string; theme: ThemePref } | null;
+  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean } | null;
   companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null }[];
   invitations: { id: string; role_name: string; company_name: string; expires_at: string }[];
   devMailbox: boolean;
+  /** How account email reaches people here: a real service, the local simulated mailbox, or none. */
+  emailChannel: 'email' | 'mailbox' | 'none';
 }
 
+const fetchMe = () => get<Me>('/auth/me');
+
 export function useMe() {
-  return useQuery({ queryKey: ['me'], queryFn: () => get<Me>('/auth/me'), staleTime: 30_000 });
+  return useQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 30_000 });
+}
+
+/**
+ * Loads who is signed in into the cache before navigating. Use it after anything that changes
+ * the signed-in person or their companies (sign-in, sign-up, password reset, accepting an
+ * invitation, starting or resetting the demo, creating a company, changing email). An
+ * invalidate alone would leave a stale "signed out" answer when nothing is observing it.
+ */
+export function refreshMe(qc: QueryClient) {
+  return qc.fetchQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 0 });
+}
+
+/** Signs out and forgets everything cached, so the next person on this device sees nothing of it. */
+export async function signOutAndForget(qc: QueryClient) {
+  await post('/auth/signout').catch(() => {});
+  qc.clear();
+  qc.setQueryData(['me'], { user: null } as Me);
+  try { localStorage.removeItem('rigo-last-company'); } catch { /* ignore */ }
 }
 
 export interface Capability { state: 'available' | 'simulated' | 'disabled'; reason: string }
@@ -74,6 +96,16 @@ export function useCompany() {
   return v;
 }
 
+/** The current company, or null outside a company workspace. */
+export function useOptionalCompany() {
+  return useContext(Ctx);
+}
+
 export function useApplyUserTheme(pref: ThemePref | undefined) {
   useEffect(() => { if (pref) applyTheme(pref); }, [pref]);
+}
+
+/** Where to go after signing in: a same-site path from ?next=, otherwise the workspace list. */
+export function safeNext(n: string | null | undefined) {
+  return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/workspaces';
 }

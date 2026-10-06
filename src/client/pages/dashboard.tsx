@@ -8,6 +8,7 @@ import { LoadingBlock, ErrorState, LinkButton, Pill, Empty, TickNumber, LiveDot 
 import { formatMoney } from '../lib/format';
 import { DispatchTimeline } from '../components/timeline';
 import { SetupChecklist } from './setup';
+import { useDocumentTitle } from '../lib/title';
 
 // The owner's command center. Today's timeline leads; "Needs you" and "What Rigo is doing" sit
 // around it, compact. Every number comes from real records; empty companies get setup actions.
@@ -26,6 +27,7 @@ function useClock(tz: string) {
 
 export function Dashboard() {
   const c = useCompany();
+  useDocumentTitle('Home');
   const q = useQuery({ queryKey: [c.cid, 'overview'], queryFn: () => get(`/c/${c.cid}/overview`), refetchInterval: 30_000 });
   const clock = useClock(c.company.timezone);
   if (q.isLoading) return <div className="page page-wide"><LoadingBlock rows={8} /></div>;

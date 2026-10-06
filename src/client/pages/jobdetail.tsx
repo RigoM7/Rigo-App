@@ -10,6 +10,7 @@ import { fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../l
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES } from '../../shared/jobs';
 import { DynamicField } from './jobform';
+import { useDocumentTitle } from '../lib/title';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
@@ -67,6 +68,7 @@ export function JobDetail() {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: [c.cid, 'job', id], queryFn: () => get(`/c/${c.cid}/jobs/${id}`) });
+  useDocumentTitle(q.data?.job ? `Job #${q.data.job.number}` : 'Job');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [problemOpen, setProblemOpen] = useState(false);

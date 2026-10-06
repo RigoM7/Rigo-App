@@ -7,7 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { config } from '../config.js';
 import { sendSystemEmail } from '../adapters/index.js';
 import { ALL_PERMISSIONS } from '../../shared/permissions.js';
-import { notifyRoles } from './inbox.js';
+import { notifyRoles, notifyUsers } from './inbox.js';
 
 export const teamRoutes = new Hono<AppEnv>();
 export const invitationPublic = new Hono<AppEnv>();
@@ -25,6 +25,17 @@ async function activeOwnerCount(q: Q, companyId: string) {
     `select count(*)::int n from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
       where m.company_id = $1 and m.status = 'active' and r.is_owner and not m.is_fictional`, [companyId]);
   return rows[0].n;
+}
+
+/** Ends a membership. Open work assigned to the person returns to the unassigned queue, with history. */
+export async function removeMember(q: Q, companyId: string, m: { id: string; user_id: string }, actorId: string, reason = 'Assignee was removed from the company') {
+  await q.query(`update rigo.memberships set status = 'removed', updated_at = now() where id = $1`, [m.id]);
+  const jobs = await q.query<{ id: string }>(`update rigo.jobs set assigned_user_id = null, version = version + 1, updated_at = now() where company_id = $1 and assigned_user_id = $2 and status in ('draft','open','in_progress') returning id`, [companyId, m.user_id]);
+  for (const j of jobs.rows) {
+    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason })]);
+  }
+  if (jobs.rows.length) await notifyRoles(q, companyId, ['dispatcher', 'owner'], { category: 'warning', title: `${jobs.rows.length} job(s) need a new driver`, body: 'A member was removed and their open jobs were unassigned.', link: 'jobs?assignee=none' });
+  return jobs.rows.length;
 }
 
 teamRoutes.get('/members', async (c) => {
@@ -74,16 +85,58 @@ teamRoutes.delete('/members/:mid', async (c) => {
     if (!m) throw notFound('Member');
     if (m.is_owner && !cc.isOwner) throw forbidden('Only owners can remove an owner.');
     if (m.is_owner && (await activeOwnerCount(q, cc.company.id)) <= 1) throw conflict('You cannot remove the last active owner. Add another owner first.');
-    await q.query(`update rigo.memberships set status = 'removed', updated_at = now() where id = $1`, [m.id]);
-    // Open work assigned to them returns to the unassigned queue, with history.
-    const jobs = await q.query<{ id: string }>(`update rigo.jobs set assigned_user_id = null, version = version + 1, updated_at = now() where company_id = $1 and assigned_user_id = $2 and status in ('draft','open','in_progress') returning id`, [cc.company.id, m.user_id]);
-    for (const j of jobs.rows) {
-      await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [cc.company.id, j.id, cc.user.id, JSON.stringify({ reason: 'Assignee was removed from the company' })]);
-    }
-    await audit(q, cc, 'member.removed', { memberId: m.id, unassignedJobs: jobs.rows.length });
-    if (jobs.rows.length) await notifyRoles(q, cc.company.id, ['dispatcher', 'owner'], { category: 'warning', title: `${jobs.rows.length} job(s) need a new driver`, body: 'A member was removed and their open jobs were unassigned.', link: 'jobs?assignee=none' });
+    const unassigned = await removeMember(q, cc.company.id, m, cc.user.id);
+    await audit(q, cc, 'member.removed', { memberId: m.id, unassignedJobs: unassigned });
   });
   return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- owner-created password reset links
+// Recovery without email: an owner (or anyone allowed to manage members) creates a single-use link
+// and gives it to the person, for example by text message.
+const RESET_LINK_HOURS = 24;
+
+teamRoutes.post('/members/:mid/reset-link', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'members.manage');
+  const result = await cc.db.tx(async (q) => {
+    const { rows } = await q.query<{ id: string; user_id: string; name: string; is_owner: boolean; is_fictional: boolean }>(
+      `select m.id, m.user_id, coalesce(m.display_name, u.name) as name, r.is_owner, m.is_fictional
+         from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+        where m.id = $1 and m.company_id = $2 and m.status = 'active' and u.deleted_at is null`, [c.req.param('mid'), cc.company.id]);
+    const m = rows[0];
+    if (!m) throw notFound('Member');
+    if (m.user_id === cc.user.id) throw badRequest('To change your own password, use Account.');
+    if (m.is_owner && !cc.isOwner) throw forbidden('Only owners can create a reset link for another owner.');
+    const first = m.name.split(' ')[0];
+    if (cc.isDemo || m.is_fictional) {
+      // The demo stays fictional: no real link is created and nothing leaves Rigo.
+      return { simulated: true, name: m.name, link: `${config.appUrl}/reset/demo-example-link-not-real`, expiresInHours: RESET_LINK_HOURS };
+    }
+    // Someone who also works for another company could lose access to it if this company's owners
+    // could set their password, so only they (or email recovery) can reset it.
+    const elsewhere = await q.query(
+      `select 1 from rigo.memberships m join rigo.companies co on co.id = m.company_id
+        where m.user_id = $1 and m.company_id <> $2 and m.status = 'active' and co.kind = 'real' limit 1`, [m.user_id, cc.company.id]);
+    if (elsewhere.rows.length) {
+      throw conflict(`${first} also belongs to another company in Rigo, so for their security only they can reset their password. They can use "Forgot your password?" on the sign-in page.`);
+    }
+    const tok = token();
+    // A new link replaces any earlier unused link from an owner.
+    await q.query(`update rigo.password_resets set expires_at = now() where user_id = $1 and used_at is null and company_id is not null and expires_at > now()`, [m.user_id]);
+    await q.query(`insert into rigo.password_resets (token_hash, user_id, expires_at, issued_by, company_id) values ($1, $2, now() + interval '${RESET_LINK_HOURS} hours', $3, $4)`,
+      [sha256(tok), m.user_id, cc.user.id, cc.company.id]);
+    await audit(q, cc, 'member.reset_link_created', { memberId: m.id, userId: m.user_id });
+    const owners = await q.query<{ user_id: string }>(
+      `select m.user_id from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+        where m.company_id = $1 and m.status = 'active' and r.is_owner and not m.is_fictional and m.user_id <> $2 and m.user_id <> $3`, [cc.company.id, cc.user.id, m.user_id]);
+    await notifyUsers(q, cc.company.id, owners.rows.map((o) => o.user_id), {
+      category: 'update', title: `${cc.user.name} created a password reset link for ${m.name}`,
+      body: `The link works once and expires in ${RESET_LINK_HOURS} hours. Using it signs ${first} out everywhere else.`, link: 'team',
+    });
+    return { simulated: false, name: m.name, link: `${config.appUrl}/reset/${tok}`, expiresInHours: RESET_LINK_HOURS };
+  });
+  return c.json(result);
 });
 
 // ---------------------------------------------------------------- roles

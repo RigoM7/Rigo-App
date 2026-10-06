@@ -44,7 +44,7 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     const id = sha256(tok);
     const { rows } = await db.query<User & { last_seen_at: string }>(
       `select u.id, u.email, u.name, u.theme, s.last_seen_at from rigo.sessions s join rigo.users u on u.id = s.user_id
-       where s.id = $1 and s.expires_at > now()`, [id]);
+       where s.id = $1 and s.expires_at > now() and u.deleted_at is null`, [id]);
     if (rows[0]) {
       const { last_seen_at, ...user } = rows[0];
       c.set('user', user);
