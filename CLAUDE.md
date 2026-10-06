@@ -55,6 +55,15 @@ Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
   `docs/PRODUCT-VISION.md` and `docs/DESIGN-SYSTEM.md`: point the skill there rather
   than letting `init`/`document` create competing root `PRODUCT.md`/`DESIGN.md`
   files, and don't install its editor hooks.
+- `playwright-cli`: Microsoft's Playwright CLI skill (microsoft/playwright-cli,
+  Apache-2.0, from commit b85c7a7), for driving a browser from the command line:
+  open pages, click, fill, take snapshots and screenshots, mock requests, trace, and
+  generate or debug Playwright tests. It needs the `playwright-cli` command, which is
+  not part of the project; installing it globally
+  (`npm install -g @playwright/cli@latest`) needs approval in each session. Use it for
+  checking pages by hand; `e2e/run.mjs` stays the automated browser check. Point it at
+  a local build or a preview, and never sign in to or change data on the live site
+  without the owner's go-ahead.
 
 Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
 any skill's suggestions.
