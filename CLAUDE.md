@@ -46,6 +46,15 @@ Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
 - `design-taste-frontend`: Taste Skill v2 (Leonxlnx/taste-skill, MIT), an
   "anti-slop" guide for landing pages, portfolios and redesigns. It is not meant for
   dashboards or dense product UI, so use it for marketing pages, not the app screens.
+- `impeccable`: Impeccable v4.5.0 (pbakaus/impeccable, Apache-2.0), design commands
+  for building, critiquing, auditing and polishing UI (`/impeccable audit`, `polish`,
+  `harden`, `adapt` and others). Its `scripts/impeccable` launcher downloads a
+  version-pinned, checksum-verified engine binary from the project's GitHub releases
+  into `~/.impeccable/` on first use; if that fails, the skill falls back to reading
+  the context files directly. Rigo's product and design context lives in
+  `docs/PRODUCT-VISION.md` and `docs/DESIGN-SYSTEM.md`: point the skill there rather
+  than letting `init`/`document` create competing root `PRODUCT.md`/`DESIGN.md`
+  files, and don't install its editor hooks.
 
 Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
 any skill's suggestions.
