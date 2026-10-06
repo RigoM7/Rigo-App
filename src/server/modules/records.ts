@@ -10,7 +10,7 @@ import { parseCapacity } from '../../shared/billing.js';
 import { insertService } from './structure.js';
 import { invalidateApprovalsFor } from '../automation/engine.js';
 import { rebuildHeldInvoice } from './invoicing.js';
-import { notifyUsers } from './inbox.js';
+import { notifyUsers, notifyPermission } from './inbox.js';
 import { paymentState } from '../../shared/invoices.js';
 
 // Customers, service locations, resources (trucks/equipment) and service definitions.
@@ -179,11 +179,12 @@ recordRoutes.patch('/locations/:id', async (c) => {
       [c.req.param('id'), cc.company.id, input.label ?? null, input.address ?? null, input.accessInstructions ?? null, input.siteContact ?? null]);
     if (!rows.length) throw notFound('Location');
     if (!input.updateOpenJobs) return { updatedJobs: 0 };
-    const jobs = await q.query<{ id: string; number: number; assigned_user_id: string | null }>(
-      `update rigo.jobs set location_snapshot = null, version = version + 1, updated_at = now() where location_id = $1 and company_id = $2 and status in ('draft','open','in_progress') returning id, number, assigned_user_id`, [c.req.param('id'), cc.company.id]);
+    const jobs = await q.query<any>(
+      `update rigo.jobs set location_snapshot = null, version = version + 1, updated_at = now() where location_id = $1 and company_id = $2 and status in ('draft','open','in_progress') returning *`, [c.req.param('id'), cc.company.id]);
+    const { noteDriverChange } = await import('./jobs.js');
     for (const j of jobs.rows) {
       await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'edited',$3,$4)`, [cc.company.id, j.id, cc.user.id, JSON.stringify({ addressUpdated: true })]);
-      if (j.assigned_user_id) await notifyUsers(q, cc.company.id, [j.assigned_user_id], { category: 'update', title: `Job #${j.number}: the address changed`, body: input.address ?? 'Check the job details before you go.', link: `today/${j.id}`, refType: 'job', refId: j.id });
+      if (j.assigned_user_id) await noteDriverChange(q, cc, j, [input.address ? `New address: ${input.address}` : 'The site details changed', ...(input.accessInstructions !== undefined ? ['New access instructions'] : [])]);
     }
     await audit(q, cc, 'location.updated', { id: c.req.param('id'), updatedJobs: jobs.rows.length });
     return { updatedJobs: jobs.rows.length };
@@ -198,12 +199,29 @@ const resourceInput = z.object({
   /** What it holds as a number and unit (3000 gal); read from the capacity text when not given. */
   capacityQuantity: z.number().min(0).max(1_000_000).nullable().optional(), capacityUnit: z.string().max(20).optional(),
   status: z.enum(['available', 'in_service', 'out_of_service', 'retired']).optional(), notes: z.string().max(1000).optional(),
+  /** Back in service on this day (shown to dispatch; the truck returns to "Available" then). */
+  outOfServiceUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  /** The person confirmed taking a truck with open jobs out of service. */
+  confirmJobs: z.boolean().optional(),
 });
+
+/** Two trucks or units with the same name make assignment ambiguous (R11-m5). */
+async function uniqueName(q: Q, companyId: string, name: string, exceptId: string | null) {
+  const { rows } = await q.query(`select 1 from rigo.resources where company_id = $1 and lower(name) = lower($2) and ($3::uuid is null or id <> $3) limit 1`, [companyId, name.trim(), exceptId]);
+  if (rows.length) throw badRequest(`Something is already called "${name.trim()}". Use a different name, like "${name.trim()} 2".`, { fields: { name: 'Name already used' } });
+}
+
+/** Trucks whose "out of service until" day has passed are available again. */
+export async function returnToService(q: Q, companyId: string, today: string) {
+  await q.query(`update rigo.resources set status = 'available', out_of_service_until = null where company_id = $1 and status = 'out_of_service' and out_of_service_until is not null and out_of_service_until <= $2`, [companyId, today]);
+}
 
 recordRoutes.get('/resources', async (c) => {
   const cc = c.get('cc');
   need(cc, 'resources.view');
-  const { rows } = await cc.db.query(`select r.*, p.name as plan_name, (select count(*)::int from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.resource_id = r.id and j.status in ('open','in_progress')) as open_jobs
+  await returnToService(cc.db, cc.company.id, localDate(new Date(), cc.company.timezone));
+  const { rows } = await cc.db.query(`select r.*, p.name as plan_name, (select count(*)::int from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.resource_id = r.id and j.status in ('open','in_progress')) as open_jobs,
+      exists (select 1 from rigo.job_resources jr where jr.resource_id = r.id) or r.plan_id is not null as used
       from rigo.resources r left join rigo.recurring_plans p on p.id = r.plan_id where r.company_id = $1 order by r.kind, r.name`, [cc.company.id]);
   return c.json({ resources: rows });
 });
@@ -213,20 +231,62 @@ recordRoutes.post('/resources', async (c) => {
   need(cc, 'resources.edit');
   const input = await body(c, resourceInput);
   const cap = input.capacityQuantity !== undefined ? { quantity: input.capacityQuantity, unit: input.capacityUnit ?? '' } : parseCapacity(input.capacity ?? '');
-  const { rows } = await cc.db.query<{ id: string }>(`insert into rigo.resources (company_id, kind, name, identifier, capacity, status, notes, capacity_quantity, capacity_unit) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
-    [cc.company.id, input.kind, input.name, input.identifier ?? '', input.capacity ?? '', input.status ?? 'available', input.notes ?? '', cap.quantity, cap.unit]);
-  return c.json({ id: rows[0].id });
+  const out = await cc.db.tx(async (q) => {
+    await uniqueName(q, cc.company.id, input.name, null);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.resources (company_id, kind, name, identifier, capacity, status, notes, capacity_quantity, capacity_unit, out_of_service_until) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+      [cc.company.id, input.kind, input.name, input.identifier ?? '', input.capacity ?? '', input.status ?? 'available', input.notes ?? '', cap.quantity, cap.unit, input.status === 'out_of_service' ? input.outOfServiceUntil ?? null : null]);
+    return { id: rows[0].id };
+  });
+  return c.json(out);
 });
 
+/**
+ * Edit a truck or unit. Taking one out of service while open jobs use it needs a confirmation that
+ * names those jobs, and dispatch is told so they can swap the truck (R11-M1).
+ */
 recordRoutes.patch('/resources/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'resources.edit');
   const input = await body(c, resourceInput.partial());
   const cap = input.capacityQuantity !== undefined ? { quantity: input.capacityQuantity, unit: input.capacityUnit ?? '' } : input.capacity !== undefined ? parseCapacity(input.capacity) : null;
-  const { rows } = await cc.db.query(`update rigo.resources set kind = coalesce($3,kind), name = coalesce($4,name), identifier = coalesce($5,identifier), capacity = coalesce($6,capacity), status = coalesce($7,status), notes = coalesce($8,notes),
-      capacity_quantity = case when $9 then $10 else capacity_quantity end, capacity_unit = case when $9 then $11 else capacity_unit end where id = $1 and company_id = $2 returning id`,
-    [c.req.param('id'), cc.company.id, input.kind ?? null, input.name ?? null, input.identifier ?? null, input.capacity ?? null, input.status ?? null, input.notes ?? null, !!cap, cap?.quantity ?? null, cap?.unit ?? '']);
-  if (!rows.length) throw notFound('Resource');
+  const out = await cc.db.tx(async (q) => {
+    const r = (await q.query<any>(`select * from rigo.resources where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id])).rows[0];
+    if (!r) throw notFound('Resource');
+    if (input.name !== undefined) await uniqueName(q, cc.company.id, input.name, r.id);
+    const goingOut = (input.status === 'out_of_service' || input.status === 'retired') && r.status !== input.status;
+    const jobs = goingOut ? (await q.query<any>(`select j.id, j.number, j.scheduled_start from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.resource_id = $1 and j.status in ('open','in_progress') order by j.scheduled_start nulls last`, [r.id])).rows : [];
+    if (jobs.length && !input.confirmJobs) {
+      throw conflict(`${jobs.length} open job${jobs.length === 1 ? ' uses' : 's use'} ${r.name}.`, { needsConfirm: 'jobs', jobs: jobs.map((j) => ({ id: j.id, number: j.number, scheduledStart: j.scheduled_start })) });
+    }
+    const status = input.status ?? r.status;
+    const until = status === 'out_of_service' ? (input.outOfServiceUntil !== undefined ? input.outOfServiceUntil : r.out_of_service_until) : null;
+    await q.query(`update rigo.resources set kind = coalesce($3,kind), name = coalesce($4,name), identifier = coalesce($5,identifier), capacity = coalesce($6,capacity), status = $7, notes = coalesce($8,notes),
+        capacity_quantity = case when $9 then $10 else capacity_quantity end, capacity_unit = case when $9 then $11 else capacity_unit end, out_of_service_until = $12 where id = $1 and company_id = $2`,
+      [r.id, cc.company.id, input.kind ?? null, input.name ?? null, input.identifier ?? null, input.capacity ?? null, status, input.notes ?? null, !!cap, cap?.quantity ?? null, cap?.unit ?? '', until]);
+    if (goingOut) {
+      await audit(q, cc, 'resource.out_of_service', { id: r.id, name: r.name, status, until, openJobs: jobs.length });
+      if (jobs.length) {
+        await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'needs_action', title: `${r.name} is ${status === 'retired' ? 'retired' : 'out of service'}: ${jobs.length} open job${jobs.length === 1 ? '' : 's'} use it`,
+          body: 'Swap the truck on those jobs.', link: `jobs?resource=${r.id}`, refType: 'resource_out', refId: r.id, dedupeKey: `resource-out:${r.id}:${new Date().toISOString().slice(0, 10)}` });
+      }
+    }
+    return { ok: true, openJobs: jobs.length };
+  });
+  return c.json(out);
+});
+
+/** A truck or unit never used on a job or plan can be deleted; used ones are retired instead. */
+recordRoutes.delete('/resources/:id', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'resources.edit');
+  await cc.db.tx(async (q) => {
+    const r = (await q.query<any>(`select * from rigo.resources where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id])).rows[0];
+    if (!r) throw notFound('Resource');
+    const used = (await q.query(`select 1 from rigo.job_resources where resource_id = $1 limit 1`, [r.id])).rows.length > 0 || !!r.plan_id;
+    if (used) throw conflict(`${r.name} has been used on jobs, so it is kept for history. Mark it Retired instead.`);
+    await q.query(`delete from rigo.resources where id = $1`, [r.id]);
+    await audit(q, cc, 'resource.deleted', { id: r.id, name: r.name });
+  });
   return c.json({ ok: true });
 });
 

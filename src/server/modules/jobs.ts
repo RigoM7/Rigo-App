@@ -47,6 +47,63 @@ export async function event(q: Q, cc: CompanyCtx, jobId: string, type: string, d
     [cc.company.id, jobId, type, cc.user.id, cc.simulatedRole ? `${cc.user.name} (as ${cc.roleName}, simulated)` : '', JSON.stringify(data)]);
 }
 
+// ---------------------------------------------------------------- telling the driver (R11-M2, R6-M1)
+const whenText = (iso: string | null, tz: string) => iso ? new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date(iso)) : 'no set time';
+const timeText = (iso: string, tz: string) => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date(iso));
+
+/** Is this job today or tomorrow in the company's time zone (or has no date)? Those changes need action. */
+function soon(job: any, tz: string) {
+  if (!job.scheduled_start) return true;
+  const day = localDate(new Date(job.scheduled_start), tz), today = localDate(new Date(), tz);
+  const tomorrow = localDate(new Date(Date.now() + 86_400_000), tz);
+  return day <= tomorrow && day >= today;
+}
+
+/** What changed on a job, in the driver's words ("Moved from 6:00 AM to 9:00 AM", "New gate instructions"). */
+export function changeLines(before: any, after: any, tz: string, addresses: { before: string | null; after: string | null } = { before: null, after: null }) {
+  const lines: string[] = [];
+  if ((before.scheduled_start ?? null) !== (after.scheduled_start ?? null)) {
+    const sameDay = before.scheduled_start && after.scheduled_start && localDate(new Date(before.scheduled_start), tz) === localDate(new Date(after.scheduled_start), tz);
+    lines.push(sameDay ? `Moved from ${timeText(before.scheduled_start, tz)} to ${timeText(after.scheduled_start, tz)}` : `Moved from ${whenText(before.scheduled_start, tz)} to ${whenText(after.scheduled_start, tz)}`);
+  }
+  if (before.location_id !== after.location_id || (addresses.before && addresses.after && addresses.before !== addresses.after)) lines.push(`New address: ${addresses.after ?? 'see the job'}`);
+  if ((before.access_instructions ?? '') !== (after.access_instructions ?? '')) lines.push(after.access_instructions ? `New access instructions: ${after.access_instructions}` : 'Access instructions removed');
+  if ((before.contact_name ?? '') !== (after.contact_name ?? '') || (before.contact_phone ?? '') !== (after.contact_phone ?? '')) lines.push(`New site contact: ${[after.contact_name, after.contact_phone].filter(Boolean).join(', ') || 'none'}`);
+  if ((before.notes ?? '') !== (after.notes ?? '')) lines.push('The office changed the notes');
+  if (before.priority !== after.priority && after.priority === 'emergency') lines.push('Now an emergency');
+  else if (before.priority !== after.priority && after.priority === 'urgent') lines.push('Now urgent');
+  return lines;
+}
+
+/**
+ * Record changes the assigned driver hasn't seen (the phone shows "Changed" until they tap "Got it")
+ * and tell them: today's and tomorrow's changes need action, later ones are updates.
+ */
+export async function noteDriverChange(q: Q, cc: CompanyCtx, job: any, lines: string[], to: string | null = job.assigned_user_id) {
+  if (!to || !lines.length || !['open', 'in_progress'].includes(job.status)) return;
+  const prev = (job.driver_changes?.lines ?? []) as string[];
+  const all = [...prev.filter((l) => !lines.includes(l)), ...lines].slice(-8);
+  await q.query(`update rigo.jobs set driver_changes = $2 where id = $1`, [job.id, JSON.stringify({ at: new Date().toISOString(), lines: all })]);
+  const { notifyUsers } = await import('./inbox.js');
+  await notifyUsers(q, cc.company.id, [to], {
+    category: soon(job, cc.company.timezone) ? 'needs_action' : 'update',
+    title: `Job #${job.number} changed: ${lines[0]}${lines.length > 1 ? ` (+${lines.length - 1} more)` : ''}`.slice(0, 200),
+    body: lines.join('. '), link: `today/${job.id}`, refType: 'job_change', refId: job.id,
+  });
+}
+
+/** An emergency reaches its driver at once, and the owner and dispatch get a needs-action alert (D15: in the app only). */
+export async function alertEmergency(q: Q, cc: CompanyCtx, job: any) {
+  if (job.priority !== 'emergency' || !['draft', 'open', 'in_progress'].includes(job.status)) return;
+  const { notifyUsers } = await import('./inbox.js');
+  const where = (await q.query<any>(`select coalesce(j.location_snapshot->>'address', l.address) as address, c.name as customer from rigo.jobs j left join rigo.locations l on l.id = j.location_id left join rigo.customers c on c.id = j.customer_id where j.id = $1`, [job.id])).rows[0] ?? {};
+  const what = [where.customer, where.address].filter(Boolean).join(', ');
+  if (job.assigned_user_id && job.status !== 'draft') {
+    await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: 'needs_action', title: `Emergency: job #${job.number}${what ? `, ${what}` : ''}`.slice(0, 200), body: 'Go as soon as you can. Call the office if you can\'t.', link: `today/${job.id}`, refType: 'job_emergency', refId: job.id, dedupeKey: `emergency-driver:${job.id}:${job.assigned_user_id}` });
+  }
+  await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'needs_action', title: `Emergency job #${job.number}${what ? `: ${what}` : ''}`.slice(0, 200), body: job.assigned_user_id ? 'A driver is assigned and was alerted.' : 'No driver yet. Assign one now.', link: `jobs/${job.id}`, refType: 'job_emergency', refId: job.id, dedupeKey: `emergency:${job.id}:${job.assigned_user_id ?? 'none'}` });
+}
+
 function nextAction(job: any): string {
   switch (job.status as JobStatus) {
     case 'draft': return 'Complete the job details';
@@ -64,10 +121,13 @@ function nextAction(job: any): string {
 const listSelect = `select j.id, j.number, j.status, j.priority, j.billing_status, j.problem_open, j.scheduled_start, j.scheduled_end, j.assigned_user_id, j.version,
     j.updated_at, j.created_at, j.completed_at, c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label, s.name as service_name, s.category,
     coalesce(m.display_name, u.name) as assignee_name,
-    (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
+    (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind, 'status', r.status)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
   from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id
   left join rigo.services s on s.id = j.service_id left join rigo.users u on u.id = j.assigned_user_id
   left join rigo.memberships m on m.company_id = j.company_id and m.user_id = j.assigned_user_id`;
+
+/** Open jobs that still use a truck or unit that is out of service or retired. */
+export const OOS_SQL = `(j.status in ('open','in_progress') and exists (select 1 from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id and r.status in ('out_of_service','retired')))`;
 
 /** Open jobs whose time window has ended without being started (same rule as isLate in shared/jobs). */
 const LATE_SQL = `(j.status = 'open' and coalesce(j.scheduled_end, j.scheduled_start + interval '${DEFAULT_JOB_MINUTES} minutes') < now())`;
@@ -97,6 +157,10 @@ jobRoutes.get('/jobs', async (c) => {
   if (priority === 'high') where.push(`j.priority in ('urgent','emergency')`);
   else if (priority === 'urgent' || priority === 'emergency' || priority === 'normal') add('j.priority = ?', priority);
   if (c.req.query('late') === '1') where.push(LATE_SQL);
+  // Jobs using a given truck, or any truck that is out of service (R11-M1).
+  const resource = c.req.query('resource');
+  if (resource && /^[0-9a-f-]{36}$/i.test(resource)) add('exists (select 1 from rigo.job_resources jr where jr.job_id = j.id and jr.resource_id = ?)', resource);
+  if (c.req.query('oos') === '1') where.push(OOS_SQL);
   const from = c.req.query('from'), to = c.req.query('to');
   if (from) add('j.scheduled_start >= ?', from);
   if (to) add('j.scheduled_start < ?', to);
@@ -126,7 +190,7 @@ jobRoutes.get('/my/jobs', async (c) => {
   need(cc, 'jobs.work');
   const { rows } = await cc.db.query<any>(
     `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
-            j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at,
+            j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at, j.driver_changes,
             c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label,
             coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
@@ -278,6 +342,7 @@ jobRoutes.post('/jobs', async (c) => {
         JSON.stringify(await bookedRates(q, svc, draftLike.customer_id))]);
     await event(q, cc, rows[0].id, 'created', { status: input.intent });
     await emit(q, cc.company.id, 'job.created', { type: 'job', id: rows[0].id }, {}, { actorUserId: cc.user.id });
+    if (input.priority === 'emergency') await alertEmergency(q, cc, { id: rows[0].id, number: seq.rows[0].job_seq, priority: 'emergency', status: input.intent, assigned_user_id: null });
     return { id: rows[0].id, number: seq.rows[0].job_seq, duplicate: false, missing };
   });
   return c.json(result);
@@ -317,6 +382,11 @@ jobRoutes.patch('/jobs/:id', async (c) => {
         input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details), input.priority ?? null,
         rebook, rebook ? JSON.stringify(await bookedRates(q, svc, merged.customerId)) : null]);
     await event(q, cc, job.id, 'edited', { before });
+    // The assigned driver hears about what changed for them, in plain words (R11-M2).
+    const after = (await q.query<any>(`select j.*, coalesce(j.location_snapshot->>'address', l.address) as address from rigo.jobs j left join rigo.locations l on l.id = j.location_id where j.id = $1`, [job.id])).rows[0];
+    const oldAddress = job.location_snapshot?.address ?? (job.location_id ? (await q.query<any>(`select address from rigo.locations where id = $1`, [job.location_id])).rows[0]?.address : null) ?? null;
+    if (job.assigned_user_id) await noteDriverChange(q, cc, after, changeLines(job, after, cc.company.timezone, { before: oldAddress, after: after.address }));
+    if (after.priority === 'emergency' && job.priority !== 'emergency') await alertEmergency(q, cc, after);
     return { version: job.version + 1 };
   });
   return c.json(out);
@@ -340,7 +410,7 @@ jobRoutes.post('/jobs/:id/status', async (c) => {
     await event(q, cc, job.id, 'status', { from: job.status, to: input.to, reason: input.reason ?? '' });
     if (input.to === 'cancelled' && job.assigned_user_id) {
       const { notifyUsers } = await import('./inbox.js');
-      await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: 'update', title: `Job #${job.number} was cancelled`, body: input.reason ?? '', link: `today` });
+      await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: soon(job, cc.company.timezone) ? 'needs_action' : 'update', title: `Job #${job.number} was cancelled: don't go`, body: input.reason ?? '', link: `today`, refType: 'job_change', refId: job.id });
     }
     return { version: job.version + 1 };
   });
@@ -373,7 +443,10 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
     }
     const resources = input.resourceIds.length ? (await q.query<any>(`select id, name, status from rigo.resources where company_id = $1 and id = any($2)`, [cc.company.id, input.resourceIds])).rows : [];
     if (resources.length !== input.resourceIds.length) throw badRequest('Choose trucks or equipment from this company.', { fields: { resourceIds: 'Unknown resource' } });
-    const unavailable = resources.filter((r) => r.status === 'out_of_service' || r.status === 'retired');
+    // Only a truck being added must be in service: one already on the job can stay while dispatch
+    // reassigns the driver, or be removed (R11-M1).
+    const current = new Set((await q.query<{ resource_id: string }>(`select resource_id from rigo.job_resources where job_id = $1`, [job.id])).rows.map((r) => r.resource_id));
+    const unavailable = resources.filter((r) => (r.status === 'out_of_service' || r.status === 'retired') && !current.has(r.id));
     if (unavailable.length) throw conflict(`${unavailable.map((r) => r.name).join(', ')} is out of service.`, { fields: { resourceIds: 'Out of service' } });
     const start = input.scheduledStart !== undefined ? input.scheduledStart : job.scheduled_start;
     let end = keepDuration(job, input.scheduledStart, input.scheduledEnd) ?? (input.scheduledEnd !== undefined ? input.scheduledEnd : job.scheduled_end);
@@ -400,7 +473,20 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
       { from: job.assigned_user_id, to: input.userId, resources: resources.map((r) => r.name), start, end });
     if (changedDriver && job.assigned_user_id) {
       const { notifyUsers } = await import('./inbox.js');
-      await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: 'update', title: `Job #${job.number} was reassigned`, body: 'It is no longer on your list.', link: 'today' });
+      await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: soon(job, cc.company.timezone) ? 'needs_action' : 'update', title: `Job #${job.number} was given to someone else`, body: 'It is no longer on your list. Don\'t go.', link: 'today', refType: 'job_change', refId: job.id });
+    }
+    const updated = { ...job, assigned_user_id: input.userId, scheduled_start: start, scheduled_end: end, driver_changes: changedDriver ? null : job.driver_changes };
+    if (changedDriver && !input.userId) await q.query(`update rigo.jobs set driver_changes = null where id = $1`, [job.id]);
+    if (changedDriver && input.userId) {
+      // The new driver sees it marked "New" on their list until they open it.
+      await q.query(`update rigo.jobs set driver_changes = $2 where id = $1`, [job.id, JSON.stringify({ at: new Date().toISOString(), lines: ['New job for you'], isNew: true })]);
+      if (job.priority === 'emergency') await alertEmergency(q, cc, updated);
+    } else if (!changedDriver && input.userId) {
+      const moved = changeLines(job, updated, cc.company.timezone);
+      const trucks = resources.map((r) => r.name).sort().join(', ');
+      const hadTrucks = (await q.query<any>(`select string_agg(r.name, ', ' order by r.name) as names from rigo.resources r where r.id = any($1)`, [[...current]])).rows[0]?.names ?? '';
+      if (trucks !== hadTrucks) moved.push(`Truck: ${trucks || 'none'}`);
+      await noteDriverChange(q, cc, updated, moved);
     }
     if (changedDriver && input.userId) await emit(q, cc.company.id, 'job.assigned', { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
     return { version: job.version + 1 };
@@ -408,7 +494,56 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
   return c.json(out);
 });
 
+/**
+ * Swap one truck for another on several jobs at once (R11-M1): each job is checked on its own, so a
+ * clash on one doesn't stop the others; the summary says which moved and why the rest didn't.
+ */
+jobRoutes.post('/jobs/swap-resource', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'jobs.assign');
+  const input = await body(c, z.object({ fromId: z.string().uuid(), toId: z.string().uuid(), jobIds: z.array(z.string().uuid()).min(1).max(200) }));
+  if (input.fromId === input.toId) throw badRequest('Choose a different truck.', { fields: { toId: 'Same truck' } });
+  const out = await cc.db.tx(async (q) => {
+    const res = (await q.query<any>(`select id, name, status from rigo.resources where company_id = $1 and id = any($2)`, [cc.company.id, [input.fromId, input.toId]])).rows;
+    const from = res.find((r) => r.id === input.fromId), to = res.find((r) => r.id === input.toId);
+    if (!from || !to) throw badRequest('Choose trucks from this company.', { fields: { toId: 'Unknown truck' } });
+    if (to.status === 'out_of_service' || to.status === 'retired') throw conflict(`${to.name} is out of service.`, { fields: { toId: 'Out of service' } });
+    const moved: number[] = []; const failed: { number: number; reason: string }[] = [];
+    const jobs = (await q.query<any>(`select j.* from rigo.jobs j where j.company_id = $1 and j.id = any($2) and exists (select 1 from rigo.job_resources jr where jr.job_id = j.id and jr.resource_id = $3) order by j.number for update`, [cc.company.id, input.jobIds, from.id])).rows;
+    for (const job of jobs) {
+      if (!['draft', 'open', 'in_progress'].includes(job.status)) { failed.push({ number: job.number, reason: 'it is finished' }); continue; }
+      const start = job.scheduled_start, end = job.scheduled_end ?? (start ? new Date(new Date(start).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString() : null);
+      if (start && end) {
+        const clash = (await q.query<any>(`select j.number from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.company_id = $1 and j.id <> $2 and jr.resource_id = $3 and j.status in ('open','in_progress') and j.scheduled_start < $5 and coalesce(j.scheduled_end, j.scheduled_start + interval '1 hour') > $4 limit 1`, [cc.company.id, job.id, to.id, start, end])).rows[0];
+        if (clash) { failed.push({ number: job.number, reason: `${to.name} is on job #${clash.number} at that time` }); continue; }
+      }
+      await q.query(`delete from rigo.job_resources where job_id = $1 and resource_id = $2`, [job.id, from.id]);
+      await q.query(`insert into rigo.job_resources (job_id, resource_id, company_id) values ($1,$2,$3) on conflict do nothing`, [job.id, to.id, cc.company.id]);
+      await q.query(`update rigo.jobs set version = version + 1, updated_at = now() where id = $1`, [job.id]);
+      await event(q, cc, job.id, 'resources_changed', { from: from.name, to: to.name });
+      if (job.assigned_user_id && job.status !== 'draft') await noteDriverChange(q, cc, job, [`Truck changed: ${from.name} → ${to.name}`]);
+      moved.push(job.number);
+    }
+    await audit(q, cc, 'jobs.truck_swapped', { from: from.name, to: to.name, moved, failed });
+    return { moved, failed, from: from.name, to: to.name };
+  });
+  return c.json(out);
+});
+
 // ---------------------------------------------------------------- driver flow
+/** The driver read what changed ("Got it"): the "Changed" mark goes away. */
+jobRoutes.post('/jobs/:id/seen-changes', async (c) => {
+  const cc = c.get('cc');
+  await cc.db.tx(async (q) => {
+    const job = await loadJob(cc, q, c.req.param('id'), true);
+    if (!isAssignedWorker(cc, job)) throw forbidden();
+    await q.query(`update rigo.jobs set driver_changes = null where id = $1`, [job.id]);
+    const { resolveNotices } = await import('./inbox.js');
+    await resolveNotices(q, cc.company.id, 'job_change', job.id);
+  });
+  return c.json({ ok: true });
+});
+
 jobRoutes.post('/jobs/:id/start', async (c) => {
   const cc = c.get('cc');
   const input = await body(c, z.object({ version: z.number().int() }));
