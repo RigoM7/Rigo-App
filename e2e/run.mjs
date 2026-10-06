@@ -133,6 +133,71 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await bill.getByText(/Not charged on this job: Diesel, Dyed diesel, Heating oil/).waitFor();
     await v.c.close();
   });
+  await step('WP2: an issued invoice shows the due date and balance, prefills the payment, and prints only the document (R10-M2, R6-m2)', async () => {
+    const v = await demoVisitor('wp2-invoice');
+    const issued = (await v.api.get('/invoices?status=issued')).invoices.find((i) => i.paymentStatus !== 'paid');
+    if (!issued) throw new Error('no unpaid issued invoice in the demo');
+    await v.p.goto(`${v.C}/invoices/${issued.id}`);
+    await v.p.getByRole('article', { name: 'Invoice' }).getByText('Balance due').waitFor({ timeout: 8000 });
+    await v.p.getByRole('button', { name: 'Record payment' }).first().click();
+    const dlg = v.p.getByRole('dialog', { name: 'Record a payment received' });
+    const amount = await dlg.getByLabel(/Amount/).inputValue();
+    if (!/^\d+\.\d{2}$/.test(amount) || Number(amount) * 100 !== issued.balanceMinor) throw new Error(`amount not prefilled with the balance: ${amount} vs ${issued.balanceMinor}`);
+    await dlg.getByLabel('Date').waitFor();
+    await dlg.getByRole('button', { name: 'Cancel' }).click();
+    const a = await axe(v.p, 'wp2-invoice');
+    await v.p.emulateMedia({ media: 'print' });
+    const hidden = await v.p.evaluate(() => [...document.querySelectorAll('.no-print, .sidebar, .topbar')].every((e) => getComputedStyle(e).display === 'none'));
+    if (!hidden) throw new Error('app chrome is visible when printing');
+    await v.p.screenshot({ path: `${OUT}/wp2-invoice-print.png`, fullPage: true });
+    await v.c.close();
+    return a;
+  });
+  for (const [vw, vh] of [[1366, 900], [390, 844]]) {
+    await step(`WP2 ${vw}px: collections shows money owed by age and nothing overflows`, async () => {
+      const v = await demoVisitor(`wp2-collections-${vw}`, vw, vh);
+      await v.p.goto(`${v.C}/collections`);
+      await v.p.getByRole('group', { name: 'Amounts owed by age' }).waitFor({ timeout: 8000 });
+      await v.p.getByRole('heading', { name: 'Who owes what' }).waitFor();
+      await noOverflow(v.p, `wp2-collections-${vw}`);
+      const a = await axe(v.p, `wp2-collections-${vw}`);
+      await v.c.close();
+      return a;
+    });
+  }
+  await step('WP2: a hand-made invoice with a 10% discount, then the customer\'s view link (R8-M3, R15-m4)', async () => {
+    const v = await demoVisitor('wp2-manual');
+    const cust = (await v.api.get('/customers')).customers[0];
+    await v.p.goto(`${v.C}/invoices/new?customer=${cust.id}`);
+    await v.p.getByLabel('Description').first().fill('Tank inspection');
+    await v.p.locator('#f-lr-0').fill('200');
+    await v.p.getByRole('button', { name: 'Add line' }).click();
+    await v.p.getByLabel('Description').nth(1).fill('Loyal customer');
+    await v.p.locator('#f-lk-1').selectOption('discount_pct');
+    await v.p.locator('#f-lp-1').fill('10');
+    await v.p.getByText('Total: $180.00').waitFor();
+    await v.p.getByRole('button', { name: 'Create draft' }).click();
+    await v.p.waitForURL(/\/invoices\/[0-9a-f-]{36}$/, { timeout: 8000 });
+    const id = v.p.url().split('/').pop();
+    // Approve (with confirmation and the total) and issue as the demo owner.
+    await v.p.getByRole('button', { name: /^Approve · \$180\.00/ }).click();
+    await v.p.getByRole('dialog', { name: 'Approve this $180.00 invoice?' }).getByRole('button', { name: 'Approve' }).click();
+    await v.p.getByRole('button', { name: 'Issue', exact: true }).click();
+    await v.p.getByRole('dialog', { name: 'Issue this invoice?' }).getByRole('button', { name: 'Issue invoice' }).click();
+    await v.p.getByText(/Issued as /).waitFor({ timeout: 8000 });
+    const m = await v.api.post(`/invoices/${id}/email`);
+    const msg = (await v.api.get('/messages')).messages.find((x) => x.id === m.messageId);
+    const link = /(\/i\/[A-Za-z0-9_-]+)/.exec(msg.body)[1];
+    const anon = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const ap = await anon.newPage(); watch(ap, 'wp2-public');
+    await ap.goto(`${BASE}${link}`);
+    await ap.getByRole('article', { name: 'Invoice' }).getByText('Tank inspection').waitFor({ timeout: 8000 });
+    await ap.getByText('Balance due').waitFor();
+    await noOverflow(ap, 'wp2-public-390');
+    const a = await axe(ap, 'wp2-public');
+    await anon.close(); await v.c.close();
+    return a;
+  });
 }
 if (process.env.E2E_ONLY === 'phase1') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

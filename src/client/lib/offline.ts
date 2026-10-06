@@ -1,4 +1,5 @@
 import { ApiError, post, OFFLINE } from './api';
+import { parseMoney } from '../../shared/billing';
 
 // Bounded offline support for drivers: cached assignments and completion drafts in IndexedDB,
 // always keyed by user AND company so nothing leaks between people or workspaces. A draft saved
@@ -36,6 +37,8 @@ export interface Draft {
   photos: string[]; signature: string | null; signerName: string;
   /** Quantities the driver typed a second time to confirm an unusual amount (more than the truck holds). */
   confirmQuantities?: Record<string, string>;
+  /** Payment taken at the stop (D21): the driver sees only the amount they typed. */
+  collected?: { method: 'check' | 'cash' | 'card_terminal'; amount: string; reference: string; photo: string | null } | null;
   state: DraftState; message?: string; fields?: Record<string, string>; updatedAt: string;
 }
 
@@ -78,6 +81,7 @@ export async function syncDraft(d: Draft): Promise<Draft> {
     await post(`/c/${d.companyId}/jobs/${d.jobId}/complete`, {
       submissionId: d.submissionId, baseVersion: d.baseVersion, outcome: d.outcome, values: d.values, notes: d.notes, reason: d.reason,
       photos: d.photos, signature: d.signature, signerName: d.signerName, problem: d.problem, confirmQuantities: d.confirmQuantities ?? {},
+      collected: d.collected && d.collected.amount ? { method: d.collected.method, amountMinor: parseMoney(d.collected.amount), reference: d.collected.reference, photo: d.collected.photo } : null,
     });
     const done = { ...d, state: 'accepted' as const, message: 'Accepted by the server.', fields: undefined, updatedAt: new Date().toISOString() };
     await saveDraft(done);

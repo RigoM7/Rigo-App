@@ -10,6 +10,8 @@ import { parseCapacity } from '../../shared/billing.js';
 import { insertService } from './structure.js';
 import { invalidateApprovalsFor } from '../automation/engine.js';
 import { rebuildHeldInvoice } from './invoicing.js';
+import { notifyUsers } from './inbox.js';
+import { paymentState } from '../../shared/invoices.js';
 
 // Customers, service locations, resources (trucks/equipment) and service definitions.
 
@@ -23,7 +25,7 @@ function serializeCustomer(cc: CompanyCtx, r: any) {
   const contact = can(cc, 'customers.contact');
   return { id: r.id, name: r.name, email: contact ? r.email : undefined, phone: contact ? r.phone : undefined, billingAddress: contact ? r.billing_address : undefined,
     notes: r.notes, custom: r.custom, version: r.version, createdAt: r.created_at, locationCount: r.location_count, openJobs: r.open_jobs, contactHidden: !contact,
-    taxExempt: !!r.tax_exempt, taxExemptNote: r.tax_exempt_note ?? '',
+    taxExempt: !!r.tax_exempt, taxExemptNote: r.tax_exempt_note ?? '', paymentTermsDays: r.payment_terms_days ?? null, monthlyStatement: !!r.monthly_statement,
     // Customer-specific rates are prices: only for finance roles, removed here otherwise.
     priceOverrides: can(cc, 'finance.view') ? (r.price_overrides ?? {}) : undefined };
 }
@@ -49,17 +51,21 @@ recordRoutes.get('/customers/:id', async (c) => {
   need(cc, 'customers.view');
   const { rows } = await cc.db.query(`select * from rigo.customers where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id]);
   if (!rows[0]) throw notFound('Customer');
-  const locations = await cc.db.query(`select * from rigo.locations where customer_id = $1 and company_id = $2 order by created_at`, [c.req.param('id'), cc.company.id]);
+  // open_jobs: jobs not yet done at this location, offered for update when the address is edited.
+  const locations = await cc.db.query(`select l.*, (select count(*)::int from rigo.jobs j where j.location_id = l.id and j.status in ('draft','open','in_progress')) as open_jobs
+      from rigo.locations l where l.customer_id = $1 and l.company_id = $2 order by l.created_at`, [c.req.param('id'), cc.company.id]);
   const jobs = await cc.db.query(`select j.id, j.number, j.status, j.scheduled_start, s.name as service_name from rigo.jobs j left join rigo.services s on s.id = j.service_id where j.customer_id = $1 and j.company_id = $2 order by j.created_at desc limit 50`, [c.req.param('id'), cc.company.id]);
-  const invoices = can(cc, 'invoices.view') ? (await cc.db.query(`select id, number, status, ${can(cc, 'finance.view') ? 'total_minor' : 'null as total_minor'}, currency, created_at from rigo.invoices where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
+  const today = localDate(new Date(), cc.company.timezone);
+  const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor' : 'null as total_minor'}, currency, created_at from rigo.invoices where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows
+    .map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today) })) : null;
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
   return c.json({ customer: serializeCustomer(cc, rows[0]), locations: locations.rows, jobs: jobs.rows, invoices, messages, customFields: { customers: customDefs(cc, 'customers'), locations: customDefs(cc, 'locations') } });
 });
 
 /** Tax exemption and customer prices are billing decisions: they need invoice editing and finance access. */
-function billingFieldsAllowed(cc: CompanyCtx, input: { taxExempt?: boolean; taxExemptNote?: string; priceOverrides?: unknown }) {
+function billingFieldsAllowed(cc: CompanyCtx, input: { taxExempt?: boolean; taxExemptNote?: string; priceOverrides?: unknown; paymentTermsDays?: number | null; monthlyStatement?: boolean }) {
   if (input.priceOverrides !== undefined) need(cc, 'finance.view', 'invoices.edit');
-  if (input.taxExempt !== undefined || input.taxExemptNote !== undefined) need(cc, 'invoices.edit');
+  if (input.taxExempt !== undefined || input.taxExemptNote !== undefined || input.paymentTermsDays !== undefined || input.monthlyStatement !== undefined) need(cc, 'invoices.edit');
 }
 
 /** Keep only overrides for this company's services and their existing price lines; drop removed (null) ones. */
@@ -87,6 +93,10 @@ const customerInput = z.object({
   version: z.number().int().optional(),
   taxExempt: z.boolean().optional(),
   taxExemptNote: z.string().trim().max(200).optional(),
+  /** Payment terms in days for this customer (0 = due on receipt); null uses the company's terms (D18). */
+  paymentTermsDays: z.number().int().min(0).max(180).nullable().optional(),
+  /** Prepare a statement for this customer on the 1st of each month (D20). */
+  monthlyStatement: z.boolean().optional(),
   /** Customer prices: service id → price-line id → rate in ten-thousandths (null removes it). */
   priceOverrides: z.record(z.string().uuid(), z.record(z.string().max(40), z.number().int().min(0).max(1_000_000_000_000).nullable())).optional(),
   location: z.object({ label: z.string().max(80).optional(), address: z.string().trim().min(1, 'Enter the service address').max(300), accessInstructions: z.string().max(1000).optional(), siteContact: z.string().max(200).optional() }).optional(),
@@ -101,8 +111,8 @@ recordRoutes.post('/customers', async (c) => {
   if (Object.keys(custom.errors).length) throw badRequest('Some information needs attention.', { fields: Object.fromEntries(Object.entries(custom.errors).map(([k, v]) => [`custom.${k}`, v])) });
   const id = await cc.db.tx(async (q) => {
     const overrides = input.priceOverrides ? await cleanOverrides(q, cc, input.priceOverrides) : {};
-    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides)]);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides, payment_terms_days, monthly_statement) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
+      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides), input.paymentTermsDays ?? null, !!input.monthlyStatement]);
     if (input.location) {
       await q.query(`insert into rigo.locations (company_id, customer_id, label, address, access_instructions, site_contact) values ($1,$2,$3,$4,$5,$6)`,
         [cc.company.id, rows[0].id, input.location.label ?? '', input.location.address, input.location.accessInstructions ?? '', input.location.siteContact ?? '']);
@@ -127,10 +137,11 @@ recordRoutes.patch('/customers/:id', async (c) => {
         email = case when $9 then coalesce($4, email) else email end, phone = case when $9 then coalesce($5, phone) else phone end,
         billing_address = case when $9 then coalesce($6, billing_address) else billing_address end,
         notes = coalesce($7, notes), custom = coalesce($8::jsonb, custom), tax_exempt = coalesce($11, tax_exempt), tax_exempt_note = coalesce($12, tax_exempt_note),
-        price_overrides = coalesce($13::jsonb, price_overrides), version = version + 1, updated_at = now()
+        price_overrides = coalesce($13::jsonb, price_overrides), payment_terms_days = case when $14 then $15 else payment_terms_days end, monthly_statement = coalesce($16, monthly_statement),
+        version = version + 1, updated_at = now()
       where id = $1 and company_id = $2 and version = $10 returning id`,
     [c.req.param('id'), cc.company.id, input.name ?? null, input.email ?? null, input.phone ?? null, input.billingAddress ?? null, input.notes ?? null, custom ? JSON.stringify(custom.clean) : null, contact, input.version,
-      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null]);
+      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null, input.paymentTermsDays !== undefined, input.paymentTermsDays ?? null, input.monthlyStatement ?? null]);
   if (!rows.length) {
     const exists = await cc.db.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id]);
     if (!exists.rows.length) throw notFound('Customer');
@@ -160,11 +171,24 @@ recordRoutes.post('/customers/:id/locations', async (c) => {
 recordRoutes.patch('/locations/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'customers.edit');
-  const input = await body(c, locationInput.partial());
-  const { rows } = await cc.db.query(`update rigo.locations set label = coalesce($3,label), address = coalesce($4,address), access_instructions = coalesce($5,access_instructions), site_contact = coalesce($6,site_contact) where id = $1 and company_id = $2 returning id`,
-    [c.req.param('id'), cc.company.id, input.label ?? null, input.address ?? null, input.accessInstructions ?? null, input.siteContact ?? null]);
-  if (!rows.length) throw notFound('Location');
-  return c.json({ ok: true });
+  const input = await body(c, locationInput.partial().extend({ updateOpenJobs: z.boolean().default(false) }));
+  // Editing a location changes future jobs. Jobs already booked keep their address unless the person
+  // asks to update the open ones too; finished jobs and issued invoices never change (R10-M4, R5-M3).
+  const out = await cc.db.tx(async (q) => {
+    const { rows } = await q.query(`update rigo.locations set label = coalesce($3,label), address = coalesce($4,address), access_instructions = coalesce($5,access_instructions), site_contact = coalesce($6,site_contact) where id = $1 and company_id = $2 returning id`,
+      [c.req.param('id'), cc.company.id, input.label ?? null, input.address ?? null, input.accessInstructions ?? null, input.siteContact ?? null]);
+    if (!rows.length) throw notFound('Location');
+    if (!input.updateOpenJobs) return { updatedJobs: 0 };
+    const jobs = await q.query<{ id: string; number: number; assigned_user_id: string | null }>(
+      `update rigo.jobs set location_snapshot = null, version = version + 1, updated_at = now() where location_id = $1 and company_id = $2 and status in ('draft','open','in_progress') returning id, number, assigned_user_id`, [c.req.param('id'), cc.company.id]);
+    for (const j of jobs.rows) {
+      await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'edited',$3,$4)`, [cc.company.id, j.id, cc.user.id, JSON.stringify({ addressUpdated: true })]);
+      if (j.assigned_user_id) await notifyUsers(q, cc.company.id, [j.assigned_user_id], { category: 'update', title: `Job #${j.number}: the address changed`, body: input.address ?? 'Check the job details before you go.', link: `today/${j.id}`, refType: 'job', refId: j.id });
+    }
+    await audit(q, cc, 'location.updated', { id: c.req.param('id'), updatedJobs: jobs.rows.length });
+    return { updatedJobs: jobs.rows.length };
+  });
+  return c.json(out);
 });
 
 // ---------------------------------------------------------------- resources
@@ -210,7 +234,7 @@ export function serializeService(cc: CompanyCtx, s: any) {
   const fin = can(cc, 'finance.view');
   return {
     id: s.id, name: s.name, category: s.category, description: s.description, fields: s.fields, active: s.active, version: s.version,
-    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature,
+    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, invoiceShowsNotes: !!s.invoice_shows_notes,
     // Rates are financial fields: removed from the response, not merely hidden, without finance.view.
     pricing: fin ? readPricing(s.pricing) : readPricing(s.pricing).map(({ rateE4, overageRateE4, minimumMinor, ...p }) => ({ ...p, rateSet: rateE4 !== null })),
     taxRateBp: fin ? s.tax_rate_bp : undefined,
@@ -241,9 +265,9 @@ recordRoutes.put('/services/:id', async (c) => {
     const old = (await q.query<{ pricing: unknown }>(`select pricing from rigo.services where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id])).rows[0];
     // The server dates every rate change, so invoices can say "price on Oct 6" (WP1, D4).
     const pricing = datePriceChanges(readPricing(old?.pricing), s.pricing, localDate(new Date(), cc.company.timezone));
-    const { rows } = await q.query(`update rigo.services set name=$3, category=$4, description=$5, fields=$6, pricing=$7, tax_rate_bp=$8, requires_photo=$9, requires_signature=$10, active=$11, version = version + 1
+    const { rows } = await q.query(`update rigo.services set name=$3, category=$4, description=$5, fields=$6, pricing=$7, tax_rate_bp=$8, requires_photo=$9, requires_signature=$10, active=$11, invoice_shows_notes=$13, version = version + 1
         where id = $1 and company_id = $2 and version = $12 returning id`,
-      [c.req.param('id'), cc.company.id, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(storedPricing(pricing)), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active, input.version]);
+      [c.req.param('id'), cc.company.id, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(storedPricing(pricing)), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active, input.version, s.invoiceShowsNotes]);
     if (!rows.length) throw conflict('This service was changed by someone else. Reload and try again.');
     // Held invoices waiting on this service's pricing are rebuilt with the new rates. Issued invoices never change.
     const held = await q.query<{ id: string; job_id: string }>(`select i.id, i.job_id from rigo.invoices i join rigo.jobs j on j.id = i.job_id where j.service_id = $1 and i.company_id = $2 and i.status = 'held'`, [c.req.param('id'), cc.company.id]);

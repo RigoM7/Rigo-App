@@ -9,6 +9,7 @@ import { getDb } from './db/index.js';
 import { processAll, escalateApprovals } from './automation/engine.js';
 import { generateAll } from './modules/recurring.js';
 import { cleanupAuth } from './modules/accounts.js';
+import { runCollections } from './modules/collections.js';
 
 // Local server: API + built web app + an in-process worker. The worker only runs while this
 // process runs; due work is persisted and picked up again after a restart.
@@ -36,6 +37,7 @@ async function tick() {
 async function hourly() {
   try { await generateAll(); } catch (e) { console.error('[recurring]', e); }
   try { await cleanupAuth(); } catch (e) { console.error('[auth cleanup]', e); }
+  try { await runCollections(); } catch (e) { console.error('[collections]', e); }
 }
 // Restart recovery: catch up on anything that became due while the process was stopped.
 await hourly();

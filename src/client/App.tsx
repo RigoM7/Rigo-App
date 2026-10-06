@@ -29,6 +29,10 @@ const Services = lazy(() => import('./pages/services').then((m) => ({ default: m
 const ServiceEditor = lazy(() => import('./pages/services').then((m) => ({ default: m.ServiceEditor })));
 const Invoices = lazy(() => import('./pages/invoices').then((m) => ({ default: m.Invoices })));
 const InvoiceDetail = lazy(() => import('./pages/invoices').then((m) => ({ default: m.InvoiceDetail })));
+const NewInvoice = lazy(() => import('./pages/invoices').then((m) => ({ default: m.NewInvoice })));
+const Collections = lazy(() => import('./pages/collections').then((m) => ({ default: m.Collections })));
+const StatementView = lazy(() => import('./pages/collections').then((m) => ({ default: m.StatementView })));
+const PublicInvoice = lazy(() => import('./pages/invoice-view').then((m) => ({ default: m.PublicInvoice })));
 const InboxPage = lazy(() => import('./pages/inbox').then((m) => ({ default: m.InboxPage })));
 const Automation = lazy(() => import('./pages/automation').then((m) => ({ default: m.Automation })));
 const Workflows = lazy(() => import('./pages/workflows').then((m) => ({ default: m.Workflows })));
@@ -169,7 +173,10 @@ function CompanyRoutes() {
       <Route path="services" element={<Services />} />
       <Route path="services/:id" element={<ServiceEditor />} />
       <Route path="invoices" element={<Invoices />} />
+      <Route path="invoices/new" element={<NewInvoice />} />
       <Route path="invoices/:id" element={<InvoiceDetail />} />
+      <Route path="collections" element={<Collections />} />
+      <Route path="statements/:id" element={<StatementView />} />
       <Route path="inbox" element={<InboxPage />} />
       <Route path="automation" element={<Automation />} />
       <Route path="workflows" element={<Workflows />} />
@@ -202,6 +209,7 @@ function AppRoutes() {
         <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
         <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
         <Route path="/invite/:token" element={<InvitePage />} />
+        <Route path="/i/:token" element={<PublicInvoice />} />
         <Route path="/dev/mailbox" element={<DevMailbox />} />
         <Route path="/workspaces" element={<RequireUser><Workspaces /></RequireUser>} />
         <Route path="/workspaces/new" element={<RequireUser><NewCompany /></RequireUser>} />

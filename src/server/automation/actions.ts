@@ -1,5 +1,5 @@
 import type { Q } from '../db/index.js';
-import { prepareInvoiceForJob, issueInvoice, invoiceEmail } from '../modules/invoicing.js';
+import { prepareInvoiceForJob, issueInvoice, invoiceEmail, invoiceViewLink } from '../modules/invoicing.js';
 import { deliverMessage } from '../adapters/index.js';
 import { notifyRoles, notifyUsers } from '../modules/inbox.js';
 import { subjectLabel } from './engine.js';
@@ -44,7 +44,7 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
   },
 
   async 'message.prepare_invoice'(i) {
-    const mail = await invoiceEmail(i.q, i.subject.id);
+    const mail = await invoiceEmail(i.q, i.subject.id, await invoiceViewLink(i.q, i.companyId, i.subject.id));
     const id = await prepareMessage(i.q, i.companyId, i.actionId, { channel: 'email', recipient: mail.recipient, subject: mail.subject, body: mail.body, customerId: mail.customerId, jobId: mail.jobId, invoiceId: i.subject.id, userId: i.actorUserId });
     await i.q.query(`update rigo.invoices set delivery_status = 'prepared' where id = $1 and delivery_status = 'not_prepared'`, [i.subject.id]);
     return { status: 'completed', explanation: mail.recipient ? 'Invoice email prepared.' : 'Invoice email prepared, but the customer has no email address on file.', context: { messageId: id } };

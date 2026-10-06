@@ -131,6 +131,32 @@ async function createApproval(q: Q, run: any, action: any, step: Step, subject: 
   return rows[0].id;
 }
 
+/**
+ * A person sends a record for approval outside any workflow ("Send for approval" on a draft
+ * invoice). Everyone who may approve invoices is asked; the approver's decision runs the action
+ * as the approver, bound to the record version that was sent.
+ */
+export async function requestApproval(q: Q, companyId: string, type: keyof typeof ACTIONS & string, subject: { type: string; id: string }, requestedBy: { userId: string; name: string }) {
+  const meta = ACTIONS[type];
+  const version = await subjectVersion(q, subject.type, subject.id);
+  const facts = await factsFor(q, subject.type, subject.id);
+  const label = await subjectLabel(q, subject);
+  const act = await q.query<{ id: string }>(
+    `insert into rigo.actions (company_id, type, mode, subject_type, subject_id, input, idempotency_key, status, explanation, executed_by)
+     values ($1,$2,'approval',$3,$4,'{}'::jsonb,$5,'waiting_approval',$6,'person')
+     on conflict (company_id, idempotency_key) do nothing returning id`,
+    [companyId, type, subject.type, subject.id, `request:${type}:${subject.id}:${version}`, `Sent for approval by ${requestedBy.name}.`]);
+  if (!act.rows[0]) throw conflict('This version was already sent for approval.');
+  const roles = (await q.query<{ key: string }>(`select key from rigo.roles where company_id = $1 and (is_owner or 'invoices.approve' = any(permissions) or 'approvals.decide' = any(permissions))`, [companyId])).rows.map((r) => r.key);
+  const { rows } = await q.query<{ id: string }>(
+    `insert into rigo.approvals (company_id, action_id, title, consequence, subject_type, subject_id, subject_version, input_hash, approver_roles)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+    [companyId, act.rows[0].id, `${meta.label}: ${label}`, meta.consequence, subject.type, subject.id, version, stableHash({ action: type, subject, version, facts }), roles]);
+  const ids = (await approverIds(q, companyId, { approverRoles: roles, approverUserIds: [], backupUserIds: [] } as any)).filter((u) => u !== requestedBy.userId);
+  await notifyUsers(q, companyId, ids, { category: 'needs_action', title: `Approval needed: ${meta.label}`, body: `${label}. Sent by ${requestedBy.name}. ${meta.consequence}`, link: `inbox?approval=${rows[0].id}`, refType: 'approval', refId: rows[0].id, dedupeKey: `approval:${rows[0].id}` });
+  return rows[0].id;
+}
+
 export async function subjectLabel(q: Q, s: { type: string; id: string }) {
   if (s.type === 'job') {
     const { rows } = await q.query<any>(`select j.number, c.name from rigo.jobs j left join rigo.customers c on c.id = j.customer_id where j.id = $1`, [s.id]);
@@ -399,7 +425,8 @@ export async function decideApproval(actor: Actor, approvalId: string, decision:
       return { status: 'stale' as const, reason: staleReason, actionId: action.id };
     }
     await q.query(`update rigo.approvals set status = 'approved', decided_by = $2, decided_at = now(), decision_note = $3 where id = $1`, [ap.id, actor.userId, note]);
-    await q.query(`update rigo.actions set status = 'queued', explanation = 'Approved; queued to run.', updated_at = now() where id = $1`, [action.id]);
+    // A person-requested action (no workflow) runs as the approver who approved it.
+    await q.query(`update rigo.actions set status = 'queued', explanation = 'Approved; queued to run.', run_as_user_id = coalesce(run_as_user_id, case when run_id is null then $2::uuid end), updated_at = now() where id = $1`, [action.id, actor.userId]);
     if (ap.subject_type === 'invoice') {
       await q.query(`update rigo.invoices set approved_by = $2, approved_at = now(), status = case when status in ('draft','pending_approval') then 'approved' else status end where id = $1`, [ap.subject_id, actor.userId]);
     }
@@ -420,6 +447,11 @@ export async function renewApproval(db: Db, actionId: string) {
     if (!a) return;
     const pending = await q.query(`select 1 from rigo.approvals where action_id = $1 and status = 'pending'`, [a.id]);
     if (pending.rows.length) return;
+    if (!a.run_id) {
+      // Sent for approval by a person: an edited record goes back to its author to send again.
+      await q.query(`update rigo.actions set status = 'cancelled', explanation = 'The record was edited after it was sent for approval. Send it again.', updated_at = now() where id = $1`, [a.id]);
+      return;
+    }
     const run = a.run_id ? await loadRun(q, a.run_id) : null;
     const step = run ? (run.definition as Definition).steps[a.step_index] : null;
     if (!run || !step || run.active_version_id !== run.workflow_version_id) {

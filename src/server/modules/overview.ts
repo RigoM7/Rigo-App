@@ -33,6 +33,12 @@ overviewRoutes.get('/overview', async (c) => {
   if (can(cc, 'invoices.view')) {
     const h = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'held'`, [cid])).rows[0].n;
     if (h) attention.push({ key: 'held', label: 'Invoices on hold (missing rates or review)', count: h, link: 'invoices?status=held', tone: 'warning' });
+    const o = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid' and due_date < $2`, [cid, today])).rows[0].n;
+    if (o) attention.push({ key: 'overdue', label: 'Overdue invoices', count: o, link: 'invoices?status=overdue', tone: 'warning' });
+  }
+  if (can(cc, 'payments.record') && can(cc, 'finance.view')) {
+    const u = (await db.query<any>(`select count(*)::int n from rigo.payments where company_id = $1 and state = 'unconfirmed'`, [cid])).rows[0].n;
+    if (u) attention.push({ key: 'collected', label: 'Payments collected at stops to confirm', count: u, link: 'collections', tone: 'action' });
   }
   if (can(cc, 'jobs.view_all')) {
     const j = (await db.query<any>(`select count(*) filter (where problem_open)::int problems,
@@ -76,7 +82,7 @@ overviewRoutes.get('/overview', async (c) => {
         (select count(*)::int from rigo.jobs where company_id = $1 and status = 'completed' and completed_at > now() - interval '30 days') as completed_30,
         (select count(*)::int from rigo.jobs where company_id = $1 and status in ('partial','unsuccessful') and completed_at > now() - interval '30 days') as exceptions_30,
         (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and issued_at > now() - interval '30 days') as issued_30,
-        (select coalesce(sum(total_minor - paid_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid') as outstanding,
+        (select coalesce(sum(total_minor - paid_minor - credited_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid') as outstanding,
         (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status in ('draft','pending_approval','approved')) as waiting,
         (select count(*)::int from rigo.customers where company_id = $1) as customers`, [cid])).rows[0];
     business = { completed30: b.completed_30, exceptions30: b.exceptions_30, customers: b.customers, issued30Minor: fin ? Number(b.issued_30) : undefined, outstandingMinor: fin ? Number(b.outstanding) : undefined,

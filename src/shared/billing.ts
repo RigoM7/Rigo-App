@@ -72,6 +72,8 @@ export interface DraftLine {
   priceDate?: string | null;
   /** The rate when the job was booked, when it differs from the rate charged. */
   bookedRateE4?: number | null;
+  /** Discount lines only: a percentage of the charges (10% = 1000) instead of a fixed amount. */
+  percentBp?: number | null;
 }
 
 export interface DiscountInput { label: string; type: 'percent' | 'fixed'; percentBp?: number; amountMinor?: number }
@@ -229,6 +231,37 @@ export function checkQuantity(q: { label: string; unit: string; value: string; r
     ? `${fmtQty(q.value)}${unit} is more than ${q.capacity!.name} holds (${fmtQty(q.capacity!.quantity)}${unit}).`
     : overRequested ? `${fmtQty(q.value)}${unit} is more than 3 times the ${fmtQty(q.requested!)}${unit} requested.` : null;
   return { overCapacity, overRequested, message };
+}
+
+/**
+ * Work out discount lines: a percent line takes that share of the charges, a fixed line its rate.
+ * More discount than charges is refused (`excessMinor` > 0) unless `allowFree`, which trims the
+ * discounts so the printed lines always add up to the total ($0).
+ */
+export function resolveDiscounts(lines: DraftLine[], opts: { allowFree?: boolean } = {}): { lines: DraftLine[]; excessMinor: number } {
+  const charges = lines.filter((l) => l.kind === 'charge');
+  const subtotal = charges.some((l) => l.amountMinor === null) ? null : charges.reduce((s, l) => s + (l.amountMinor as number), 0);
+  let out = lines.map((l): DraftLine => {
+    if (l.kind !== 'discount') return l;
+    if (l.percentBp !== null && l.percentBp !== undefined) {
+      return { ...l, quantity: '1', unit: '', rateE4: null, amountMinor: subtotal === null ? null : -Number(new Big(subtotal).times(l.percentBp).div(10000).round(0).toString()) };
+    }
+    return { ...l, amountMinor: l.rateE4 === null ? null : -Math.abs(lineAmount(l.quantity, l.rateE4) as number) };
+  });
+  if (subtotal === null) return { lines: out, excessMinor: 0 };
+  const discount = out.filter((l) => l.kind === 'discount').reduce((s, l) => s + Math.abs(l.amountMinor ?? 0), 0);
+  const excess = discount - subtotal;
+  if (excess <= 0) return { lines: out, excessMinor: 0 };
+  if (!opts.allowFree) return { lines: out, excessMinor: excess };
+  // Free invoice: take the excess off the last discounts so the lines add up to exactly $0.
+  let left = excess;
+  out = [...out].reverse().map((l) => {
+    if (l.kind !== 'discount' || left === 0) return l;
+    const cut = Math.min(left, Math.abs(l.amountMinor ?? 0));
+    left -= cut;
+    return { ...l, amountMinor: -(Math.abs(l.amountMinor ?? 0) - cut), note: [l.note, 'Reduced so the invoice is free, not negative'].filter(Boolean).join(' · ') };
+  }).reverse();
+  return { lines: out, excessMinor: 0 };
 }
 
 /** A truck on the job, with the capacity parsed from its description ("3,000 gal"). */

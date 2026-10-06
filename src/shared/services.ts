@@ -88,6 +88,8 @@ export const serviceInputSchema = z.object({
   requiresPhoto: z.boolean().default(false),
   requiresSignature: z.boolean().default(false),
   active: z.boolean().default(true),
+  /** Print the driver's notes and other completion details on the invoice (quantities always print). */
+  invoiceShowsNotes: z.boolean().default(false),
 }).superRefine((s, ctx) => {
   const keys = new Set<string>();
   s.fields.forEach((f, i) => {
@@ -150,7 +152,7 @@ export function starterService(category: ServiceCategory): ServiceInput {
           priceLine({ id: 'delivery', label: 'Delivery fee', basis: 'flat' }),
           afterHoursLine(),
         ],
-        taxRateBp: null, requiresPhoto: false, requiresSignature: false, active: true,
+        taxRateBp: null, requiresPhoto: false, requiresSignature: false, active: true, invoiceShowsNotes: false,
       };
     case 'portable_toilet':
       return {
@@ -162,7 +164,7 @@ export function starterService(category: ServiceCategory): ServiceInput {
           { key: 'units_serviced', label: 'Units serviced', type: 'number', unit: 'units', options: [], stage: 'completion', required: false, help: '' },
         ],
         pricing: [priceLine({ id: 'visit', label: 'Visit', basis: 'per_quantity', quantityField: 'units', unit: 'units' })],
-        taxRateBp: null, requiresPhoto: true, requiresSignature: false, active: true,
+        taxRateBp: null, requiresPhoto: true, requiresSignature: false, active: true, invoiceShowsNotes: false,
       };
     case 'septic':
       return {
@@ -181,13 +183,13 @@ export function starterService(category: ServiceCategory): ServiceInput {
           priceLine({ id: 'repair_visit', label: 'Repair visit', basis: 'flat', when: { field: 'service_detail', equals: 'Repair visit' } }),
           afterHoursLine(),
         ],
-        taxRateBp: null, requiresPhoto: true, requiresSignature: false, active: true,
+        taxRateBp: null, requiresPhoto: true, requiresSignature: false, active: true, invoiceShowsNotes: false,
       };
     default:
       return {
         name: 'General service', category, description: '', fields: [], taxRateBp: null,
         pricing: [priceLine({ id: 'visit', label: 'Service', basis: 'flat' })],
-        requiresPhoto: false, requiresSignature: false, active: true,
+        requiresPhoto: false, requiresSignature: false, active: true, invoiceShowsNotes: false,
       };
   }
 }

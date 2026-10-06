@@ -99,7 +99,8 @@ companyRoutes.get('/', async (c) => {
   const { settings, ...company } = cc.company;
   return c.json({
     company: { ...company, customFields: customFieldsSchema.parse(settings?.customFields ?? {}), accent: accentVariants(cc.company.branding?.accent),
-      invoiceDueDays: settings?.invoiceDueDays ?? 30, paymentInstructions: settings?.paymentInstructions ?? '' },
+      invoiceDueDays: settings?.invoiceDueDays ?? 30, paymentInstructions: settings?.paymentInstructions ?? '',
+      invoicePrefix: settings?.invoicePrefix ?? 'INV-', remitTo: settings?.remitTo ?? '', taxId: settings?.taxId ?? '' },
     role: { key: cc.roleKey, name: cc.roleName, isOwner: cc.isOwner, simulated: cc.simulatedRole },
     permissions: [...cc.perms],
     capabilities: caps,
@@ -124,6 +125,11 @@ companyRoutes.patch('/settings', async (c) => {
     customFields: customFieldsSchema.optional(),
     invoiceDueDays: z.number().int().min(0).max(180).optional(),
     paymentInstructions: z.string().trim().max(500).optional(),
+    // Invoice settings (R3-m7, D17): numbering continues from the previous system.
+    invoicePrefix: z.string().trim().max(12).regex(/^[A-Za-z0-9\-_/ #.]*$/, 'Use letters, numbers, dashes or slashes').optional(),
+    nextInvoiceNumber: z.number().int().min(1).max(99_999_999).optional(),
+    remitTo: z.string().trim().max(300).optional(),
+    taxId: z.string().trim().max(40).optional(),
   }));
   await cc.db.tx(async (q) => {
     const sets: string[] = []; const vals: unknown[] = [cc.company.id];
@@ -139,6 +145,15 @@ companyRoutes.patch('/settings', async (c) => {
     if (input.customFields) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{customFields}', $2::jsonb), config_version = config_version + 1 where id = $1`, [cc.company.id, JSON.stringify(input.customFields)]);
     if (input.invoiceDueDays !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{invoiceDueDays}', $2::jsonb) where id = $1`, [cc.company.id, JSON.stringify(input.invoiceDueDays)]);
     if (input.paymentInstructions !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{paymentInstructions}', to_jsonb($2::text)) where id = $1`, [cc.company.id, input.paymentInstructions]);
+    for (const k of ['invoicePrefix', 'remitTo', 'taxId'] as const) {
+      if (input[k] !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, $3::text[], to_jsonb($2::text)) where id = $1`, [cc.company.id, input[k], [k]]);
+    }
+    if (input.nextInvoiceNumber !== undefined) {
+      // Numbers only move forward, so an issued number is never handed out twice.
+      const cur = (await q.query<{ invoice_seq: number }>(`select invoice_seq from rigo.companies where id = $1 for update`, [cc.company.id])).rows[0].invoice_seq;
+      if (input.nextInvoiceNumber <= cur) throw badRequest(`Invoice numbers only move forward. The next number must be ${cur + 1} or higher.`, { fields: { nextInvoiceNumber: `Use ${cur + 1} or higher` } });
+      await q.query(`update rigo.companies set invoice_seq = $2 where id = $1`, [cc.company.id, input.nextInvoiceNumber - 1]);
+    }
     await audit(q, cc, 'company.settings_updated', Object.keys(input));
   });
   return c.json({ ok: true });

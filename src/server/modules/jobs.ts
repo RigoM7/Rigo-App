@@ -6,7 +6,9 @@ import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { canTransition, completionProblems, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, type JobStatus } from '../../shared/jobs.js';
 import { customFieldsSchema, validateValues, readPricing, type FieldDef } from '../../shared/services.js';
-import { quantityChecks, type JobTruck } from '../../shared/billing.js';
+import { quantityChecks, formatMoney, type JobTruck } from '../../shared/billing.js';
+import { paymentState } from '../../shared/invoices.js';
+import { localDate } from '../../shared/schedule.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
 import { notifyPermission, notifyRoles } from './inbox.js';
@@ -56,8 +58,11 @@ function nextAction(job: any): string {
   }
 }
 
+// Jobs keep the address they were booked for (`location_snapshot`, set by a database trigger when
+// the job is created or moved to another location), so editing a location changes future jobs only.
+
 const listSelect = `select j.id, j.number, j.status, j.priority, j.billing_status, j.problem_open, j.scheduled_start, j.scheduled_end, j.assigned_user_id, j.version,
-    j.updated_at, j.created_at, j.completed_at, c.name as customer_name, l.address, l.label as location_label, s.name as service_name, s.category,
+    j.updated_at, j.created_at, j.completed_at, c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label, s.name as service_name, s.category,
     coalesce(m.display_name, u.name) as assignee_name,
     (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
   from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id
@@ -98,7 +103,7 @@ jobRoutes.get('/jobs', async (c) => {
   if (qtext) {
     vals.push(`%${qtext}%`);
     const n = vals.length;
-    where.push(`(lower(coalesce(c.name,'')) like $${n} or lower(coalesce(l.address,'')) like $${n} or lower(coalesce(s.name,'')) like $${n} or j.number::text = $${n + 1})`);
+    where.push(`(lower(coalesce(c.name,'')) like $${n} or lower(coalesce(j.location_snapshot->>'address', l.address, '')) like $${n} or lower(coalesce(s.name,'')) like $${n} or j.number::text = $${n + 1})`);
     vals.push(qtext.replace(/^#/, ''));
   }
   const sorts: Record<string, () => string> = {
@@ -121,7 +126,8 @@ jobRoutes.get('/my/jobs', async (c) => {
   const { rows } = await cc.db.query<any>(
     `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
             j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at,
-            c.name as customer_name, l.address, l.label as location_label, l.access_instructions as location_access, l.site_contact,
+            c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label,
+            coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
             (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind, 'capacityQuantity', r.capacity_quantity, 'capacityUnit', r.capacity_unit)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
        from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id
@@ -141,11 +147,20 @@ jobRoutes.get('/jobs/:id', async (c) => {
   const job = await loadJob(cc, cc.db, c.req.param('id'));
   const svc = await service(cc.db, cc.company.id, job.service_id);
   const customer = job.customer_id ? (await cc.db.query<any>(`select id, name, ${can(cc, 'customers.contact') ? 'email, phone' : 'null as email, null as phone'} from rigo.customers where id = $1`, [job.customer_id])).rows[0] : null;
-  const location = job.location_id ? (await cc.db.query<any>(`select * from rigo.locations where id = $1`, [job.location_id])).rows[0] : null;
+  const live = job.location_id ? (await cc.db.query<any>(`select * from rigo.locations where id = $1`, [job.location_id])).rows[0] : null;
+  // The job shows the address it was booked for; if the location was edited since, both are shown.
+  const snap = job.location_snapshot;
+  const location = live ? { ...live, ...(snap ? { label: snap.label ?? live.label, address: snap.address ?? live.address, access_instructions: snap.access ?? live.access_instructions, site_contact: snap.siteContact ?? live.site_contact } : {}),
+    current_address: snap && snap.address !== live.address ? live.address : null } : null;
   const resources = (await cc.db.query(`select r.id, r.name, r.kind, r.identifier from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = $1`, [job.id])).rows;
   const events = (await cc.db.query(`select e.id, e.type, e.data, e.created_at, e.actor_label, u.name as actor_name from rigo.job_events e left join rigo.users u on u.id = e.actor_user_id where e.job_id = $1 order by e.created_at`, [job.id])).rows;
   const files = (await cc.db.query(`select id, name, mime, size, created_at from rigo.files where company_id = $1 and subject_type = 'job' and subject_id = $2 order by created_at`, [cc.company.id, job.id])).rows;
-  const invoice = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, delivery_status, payment_status, ${can(cc, 'finance.view') ? 'total_minor' : 'null as total_minor'}, currency, hold_reasons from rigo.invoices where job_id = $1`, [job.id])).rows[0] ?? null : null;
+  // The invoice that bills this job is the newest one that isn't void; voided ones are listed for history.
+  const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, delivery_status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor, paid_minor, credited_minor' : 'null as total_minor'}, currency, hold_reasons, void_reason, replaces_invoice_id
+      from rigo.invoices where job_id = $1 and company_id = $2 order by created_at desc`, [job.id, cc.company.id])).rows.map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, localDate(new Date(), cc.company.timezone)) })) : [];
+  const invoice = invoices.find((i: any) => i.status !== 'void') ?? null;
+  const voidedInvoices = invoices.filter((i: any) => i.status === 'void');
+  const collected = can(cc, 'finance.view') ? (await cc.db.query<any>(`select id, amount_minor, method, reference, state, paid_on from rigo.payments where job_id = $1 and company_id = $2 order by recorded_at`, [job.id, cc.company.id])).rows : [];
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, created_at from rigo.messages where job_id = $1 order by created_at desc`, [job.id])).rows : null;
   const assignee = job.assigned_user_id ? (await cc.db.query<any>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = $1`, [job.assigned_user_id, cc.company.id])).rows[0]?.name : null;
   const customFields = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).jobs;
@@ -153,7 +168,7 @@ jobRoutes.get('/jobs/:id', async (c) => {
     job: { ...job, details: publicDetails(job.details), billing_status: can(cc, 'invoices.view') ? job.billing_status : undefined, assignee_name: assignee, nextAction: nextAction(job),
       missing: job.status === 'draft' ? missingForOpen(job, svc?.fields ?? null) : [] },
     service: svc ? { id: svc.id, name: svc.name, category: svc.category, fields: svc.fields, requiresPhoto: svc.requires_photo, requiresSignature: svc.requires_signature } : null,
-    customer, location, resources, events, files, invoice, messages, customFields,
+    customer, location, resources, events, files, invoice, voidedInvoices, collected, messages, customFields,
     can: {
       edit: can(cc, 'jobs.edit') && !isFinished(job.status), assign: can(cc, 'jobs.assign') && !isFinished(job.status),
       work: isAssignedWorker(cc, job) && ['open', 'in_progress'].includes(job.status), correct: can(cc, 'jobs.correct') && isFinished(job.status) && job.status !== 'cancelled',
@@ -275,7 +290,8 @@ jobRoutes.patch('/jobs/:id', async (c) => {
     const rebook = merged.serviceId !== job.service_id || merged.customerId !== job.customer_id || !job.booked_rates;
     await q.query(`update rigo.jobs set customer_id = $3, location_id = $4, service_id = $5, scheduled_start = coalesce($6, scheduled_start), scheduled_end = coalesce($7, scheduled_end),
         contact_name = coalesce($8, contact_name), contact_phone = coalesce($9, contact_phone), access_instructions = coalesce($10, access_instructions), notes = coalesce($11, notes),
-        details = $12, priority = coalesce($13, priority), booked_rates = case when $14 then $15::jsonb else booked_rates end, version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
+        details = $12, priority = coalesce($13, priority), booked_rates = case when $14 then $15::jsonb else booked_rates end,
+        version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
       [job.id, cc.company.id, merged.customerId, merged.locationId, merged.serviceId, input.scheduledStart ?? null, input.scheduledEnd ?? null,
         input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details), input.priority ?? null,
         rebook, rebook ? JSON.stringify(await bookedRates(q, svc, merged.customerId)) : null]);
@@ -393,7 +409,13 @@ jobRoutes.post('/jobs/:id/complete', async (c) => {
     problem: z.string().max(2000).default(''),
     /** The driver retyped these quantities to confirm them after a "more than the truck holds" warning. */
     confirmQuantities: z.record(z.string(), z.string()).default({}),
+    /** Payment taken at the stop (D21): check, cash or a card on a separate terminal. The office confirms it. */
+    collected: z.object({
+      method: z.enum(['check', 'cash', 'card_terminal']), amountMinor: z.number().int().positive('Enter the amount collected').max(100_000_000),
+      reference: z.string().trim().max(80).default(''), photo: dataUrl.nullable().default(null),
+    }).nullable().default(null),
   }));
+  if (input.collected?.method === 'check' && !input.collected.reference) throw badRequest('Enter the check number.', { fields: { 'collected.reference': 'Enter the check number' } });
   const out = await cc.db.tx(async (q) => {
     const job = await loadJob(cc, q, c.req.param('id'), true);
     // Idempotent: the same submission arriving twice (retry, reconnect) returns the accepted result.
@@ -427,7 +449,8 @@ jobRoutes.post('/jobs/:id/complete', async (c) => {
     };
     for (let i = 0; i < input.photos.length; i++) await save(input.photos[i], `photo-${i + 1}.${input.photos[i].includes('png') ? 'png' : 'jpg'}`);
     const signatureId = input.signature ? await save(input.signature, 'signature.png') : null;
-    const completion = { outcome: input.outcome, values: vals.clean, notes: input.notes, reason: input.reason, photoIds: fileIds.filter((f) => f !== signatureId), signatureId, signerName: input.signerName, submittedAt: new Date().toISOString(), submittedBy: cc.user.id,
+    const checkPhotoId = input.collected?.photo ? await save(input.collected.photo, 'check.jpg') : null;
+    const completion = { outcome: input.outcome, values: vals.clean, notes: input.notes, reason: input.reason, photoIds: fileIds.filter((f) => f !== signatureId && f !== checkPhotoId), signatureId, signerName: input.signerName, submittedAt: new Date().toISOString(), submittedBy: cc.user.id,
       ...(quantityReview ? { quantityReview } : {}) };
     const billing = billingAfterOutcome(input.outcome);
     await q.query(`update rigo.jobs set status = $2, completion = $3, completion_submission_id = $4, billing_status = $5, completed_at = now(), problem_open = problem_open or $6, version = version + 1, updated_at = now() where id = $1`,
@@ -436,6 +459,19 @@ jobRoutes.post('/jobs/:id/complete', async (c) => {
     if (input.problem.trim()) {
       await event(q, cc, job.id, 'problem', { text: input.problem });
       await emit(q, cc.company.id, 'job.problem_reported', { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
+    }
+    if (input.collected) {
+      // Recorded once per submission, waiting for the office to confirm it; it pays the job's invoice, never a second bill.
+      const c2 = input.collected;
+      const inv = (await q.query<any>(`select id from rigo.invoices where job_id = $1 and status <> 'void' order by created_at desc limit 1`, [job.id])).rows[0];
+      const pay = await q.query<{ id: string }>(`insert into rigo.payments (company_id, invoice_id, customer_id, job_id, amount_minor, method, reference, photo_file_id, paid_on, recorded_by, idempotency_key, kind, state, applied_minor)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'payment','unconfirmed',0) on conflict (company_id, idempotency_key) do nothing returning id`,
+        [cc.company.id, inv?.id ?? null, job.customer_id, job.id, c2.amountMinor, c2.method, c2.reference, checkPhotoId, localDate(new Date(), cc.company.timezone), cc.user.id, `stop:${input.submissionId}`]);
+      if (pay.rows[0]) {
+        await event(q, cc, job.id, 'payment_collected', { method: c2.method });
+        const what = c2.method === 'check' ? `check #${c2.reference}` : c2.method === 'cash' ? 'cash' : `card on the terminal${c2.reference ? ` (${c2.reference})` : ''}`;
+        await notifyPermission(q, cc.company.id, 'payments.record', { category: 'needs_action', title: `Payment collected at job #${job.number}: ${formatMoney(c2.amountMinor, cc.company.currency)}`, body: `Paid by ${what}. Confirm it so it counts toward the invoice.`, link: 'collections', refType: 'payment', refId: pay.rows[0].id });
+      }
     }
     // Downstream work (invoices, follow-ups) starts only now that the server has accepted the record.
     await emit(q, cc.company.id, `job.${input.outcome}`, { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
@@ -503,7 +539,7 @@ jobRoutes.post('/jobs/:id/correct', async (c) => {
     const completion = { ...job.completion, values: vals.clean, notes: input.notes ?? job.completion?.notes ?? '' };
     await q.query(`update rigo.jobs set completion = $2, version = version + 1, updated_at = now() where id = $1`, [job.id, JSON.stringify(completion)]);
     await event(q, cc, job.id, 'correction', { reason: input.reason, before: { values: before?.values, notes: before?.notes }, after: { values: completion.values, notes: completion.notes } });
-    const inv = (await q.query<any>(`select id, status from rigo.invoices where job_id = $1`, [job.id])).rows[0];
+    const inv = (await q.query<any>(`select id, status from rigo.invoices where job_id = $1 and status <> 'void' order by created_at desc limit 1`, [job.id])).rows[0];
     let invoiceNote = '';
     if (inv) {
       if (['held', 'draft', 'pending_approval', 'approved'].includes(inv.status)) {

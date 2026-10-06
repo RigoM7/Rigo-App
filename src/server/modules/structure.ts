@@ -27,9 +27,9 @@ const withoutRates = (p: PriceLine): PriceLine => ({ ...p, rateE4: null, overage
 
 export async function insertService(q: Q, companyId: string, s: ServiceInput) {
   const { rows } = await q.query<{ id: string }>(
-    `insert into rigo.services (company_id, name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, active)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-    [companyId, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(storedPricing(s.pricing)), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active]);
+    `insert into rigo.services (company_id, name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, active, invoice_shows_notes)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+    [companyId, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(storedPricing(s.pricing)), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active, !!s.invoiceShowsNotes]);
   return rows[0].id;
 }
 
@@ -53,7 +53,7 @@ export async function seedDefaultWorkflows(q: Q, companyId: string, userId: stri
 }
 
 export async function exportStructure(q: Q, companyId: string): Promise<Structure> {
-  const services = await q.query(`select name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature from rigo.services where company_id = $1 and active order by created_at`, [companyId]);
+  const services = await q.query(`select name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, invoice_shows_notes from rigo.services where company_id = $1 and active order by created_at`, [companyId]);
   const company = await q.query<{ settings: any }>(`select settings from rigo.companies where id = $1`, [companyId]);
   const roles = await q.query(`select key, name, description, permissions from rigo.roles where company_id = $1 and not is_owner order by key`, [companyId]);
   const wfs = await q.query(
@@ -67,7 +67,7 @@ export async function exportStructure(q: Q, companyId: string): Promise<Structur
       name: s.name, category: s.category, description: s.description, fields: s.fields,
       // Rates are company pricing decisions, not reusable structure; the receiving company sets its own.
       pricing: readPricing(s.pricing).map(withoutRates),
-      taxRateBp: null, requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, active: true,
+      taxRateBp: null, requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, active: true, invoiceShowsNotes: !!s.invoice_shows_notes,
     })),
     customFields: customFieldsSchema.parse(company.rows[0]?.settings?.customFields ?? {}),
     roles: roles.rows as any,

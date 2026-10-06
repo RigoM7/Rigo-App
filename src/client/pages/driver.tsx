@@ -214,6 +214,10 @@ export function DriverJob() {
     const probs: Record<string, string> = completionProblems({ ...d, photoCount: d.photos.length, hasSignature: !!d.signature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature });
     for (const f of compFields) { const e = numberError(f); if (e) probs[f.key] = e; }
     for (const q of unconfirmed) probs[q.field] ??= `${q.message} Type it again to confirm, or correct it.`;
+    if (d.collected) {
+      if (!/^\d+(\.\d{1,2})?$/.test(d.collected.amount.trim()) || Number(d.collected.amount) <= 0) probs.collectedAmount = 'Enter the amount collected, like 250.00';
+      if (d.collected.method === 'check' && !d.collected.reference.trim()) probs.collectedReference = 'Enter the check number';
+    }
     setLocalErrors(probs);
     if (Object.keys(probs).length) { setTimeout(() => summaryRef.current?.focus(), 0); return; }
     const isFinal = await ask({ title: d.outcome === 'completed' ? 'Submit as completed?' : `Submit as ${OUTCOMES[d.outcome].toLowerCase()}?`, body: d.outcome === 'completed' ? 'The office will see this job as completed and billing can start once the server accepts it.' : 'The office is told so they can follow up. This visit will not be billed automatically as a successful job.', confirm: 'Submit' });
@@ -319,6 +323,22 @@ export function DriverJob() {
                 <Field label="Name of person signing" id="f-details-signerName" error={localErrors.signerName}>{(p) => <Input {...p} maxLength={120} value={d.signerName} onChange={(e) => update({ signerName: e.target.value })} />}</Field>
               </div>
             )}
+            <fieldset className="stack-sm" id="f-details-collected">
+              <legend>Payment collected</legend>
+              <div className="big-choice">
+                {([['none', 'No payment'], ['check', 'Check'], ['cash', 'Cash'], ['card_terminal', 'Card on the terminal']] as const).map(([k, label]) => (
+                  <label key={k}><input type="radio" name="collected" checked={(d.collected?.method ?? 'none') === k} onChange={() => update({ collected: k === 'none' ? null : { method: k, amount: d.collected?.amount ?? '', reference: d.collected?.reference ?? '', photo: d.collected?.photo ?? null } })} />{label}</label>
+                ))}
+              </div>
+              {d.collected && <>
+                <Field label="Amount collected" id="f-details-collectedAmount" error={localErrors.collectedAmount ?? localErrors['collected.amountMinor']}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={d.collected!.amount} onChange={(e) => update({ collected: { ...d.collected!, amount: e.target.value.replace(',', '.') } })} />}</Field>
+                {d.collected.method !== 'cash' && <Field label={d.collected.method === 'check' ? 'Check number' : 'Terminal receipt number'} optionalText={d.collected.method !== 'check'} id="f-details-collectedReference" error={localErrors.collectedReference ?? localErrors['collected.reference']}>{(p) => <Input {...p} maxLength={80} value={d.collected!.reference} onChange={(e) => update({ collected: { ...d.collected!, reference: e.target.value } })} />}</Field>}
+                {d.collected.method === 'check' && (d.collected.photo
+                  ? <div className="photo-grid"><figure><img src={d.collected.photo} alt="Photo of the check" /><Button size="sm" variant="ghost" aria-label="Remove the check photo" onClick={() => update({ collected: { ...d.collected!, photo: null } })}><Trash2 aria-hidden /></Button></figure></div>
+                  : <label className="btn" style={{ alignSelf: 'flex-start' }}><Camera aria-hidden />Photo of the check<input type="file" accept="image/*" capture="environment" className="sr-only" onChange={async (e) => { const f = e.target.files?.[0]; if (f) update({ collected: { ...d.collected!, photo: await downscale(f) } }); }} /></label>)}
+                <p className="hint" style={{ margin: 0 }}>The office confirms it. Rigo doesn't charge cards.</p>
+              </>}
+            </fieldset>
             <Field label="Problem to report" optionalText id="f-details-problem" hint="Dispatch is alerted when you submit.">{(p) => <Textarea {...p} maxLength={2000} value={d.problem} onChange={(e) => update({ problem: e.target.value })} />}</Field>
           </section>
           <div className="sticky-actions stack-sm">

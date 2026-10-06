@@ -186,9 +186,9 @@ export async function generateForCompany(db: Db, companyId: string) {
         if (pausedWhole) { await q.query(`update rigo.recurring_plans set billed_through = $2 where id = $1`, [locked.id, p.start]); continue; }
         const amount = held ? null : br.rateMinor * locked.units;
         const ins = await q.query<{ id: string }>(
-          `insert into rigo.invoices (company_id, billable_key, customer_id, recurring_plan_id, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons)
-           values ($1,$2,$3,$4,$5,(select currency from rigo.companies where id = $1),$6,0,0,$6,$7) on conflict (company_id, billable_key) do nothing returning id`,
-          [companyId, key, locked.customer_id, locked.id, held ? 'held' : 'draft', amount, JSON.stringify(held ? ['No rental rate is set on this plan.'] : [])]);
+          `insert into rigo.invoices (company_id, billable_key, customer_id, recurring_plan_id, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, kind, period_start, period_end, location_id)
+           values ($1,$2,$3,$4,$5,(select currency from rigo.companies where id = $1),$6,0,0,$6,$7,'rental',$8,$9,$10) on conflict (company_id, billable_key) do nothing returning id`,
+          [companyId, key, locked.customer_id, locked.id, held ? 'held' : 'draft', amount, JSON.stringify(held ? ['No rental rate is set on this plan.'] : []), p.start, p.end, locked.location_id]);
         if (ins.rows[0]) {
           await q.query(`insert into rigo.invoice_lines (invoice_id, company_id, position, description, quantity, unit, rate_minor, amount_minor) values ($1,$2,0,$3,$4,'units',$5,$6)`,
             [ins.rows[0].id, companyId, `${br.description} ${p.start} to ${p.end}`, locked.units, br.rateMinor, amount]);

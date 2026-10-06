@@ -5,8 +5,10 @@ import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrenc
 import { useCompany } from '../lib/session';
 import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { PaymentPill } from './invoices';
+import { PAYMENT_METHODS } from '../../shared/invoices';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, PriorityPill, LatePill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
-import { fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
+import { fmtDate, fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
 import { tzLabel } from '../../shared/timezones';
@@ -16,7 +18,7 @@ import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared',
+  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', payment_collected: 'Payment collected at the stop',
 };
 
 function eventText(e: any, members: Record<string, string>) {
@@ -90,7 +92,7 @@ export function JobDetail() {
   const correct = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/correct`, { ...corr, version: q.data.job.version }); setCorrectOpen(false); toast(r.invoiceNote || 'Correction saved with history'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock rows={8} /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
-  const { job, service, customer, location, resources, events, files, invoice, messages, can } = q.data;
+  const { job, service, customer, location, resources, events, files, invoice, voidedInvoices = [], collected = [], messages, can } = q.data;
   const members = Object.fromEntries(c.members.map((m) => [m.id, m.name]));
   const reqFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'completion');
   const compFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'request');
@@ -131,7 +133,7 @@ export function JobDetail() {
             <dl className="kv">
               <dt>Customer</dt><dd>{customer ? (c.can('customers.view') ? <Link to={c.to(`customers/${customer.id}`)}>{customer.name}</Link> : customer.name) : '—'}</dd>
               {customer?.phone ? <><dt>Customer phone</dt><dd><a href={`tel:${customer.phone}`}>{customer.phone}</a></dd></> : null}
-              <dt>Address</dt><dd>{location?.address ?? '—'}</dd>
+              <dt>Address</dt><dd>{location?.address ?? '—'}{location?.current_address ? <div className="small muted">The location's address is now {location.current_address}. This job keeps the address it was booked for.</div> : null}</dd>
               <dt>Access</dt><dd className="pre">{job.access_instructions || location?.access_instructions || '—'}</dd>
               <dt>On-site contact</dt><dd>{job.contact_name || location?.site_contact || '—'}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</dd>
               <dt>Scheduled</dt><dd className="num">{fmtDateTime(job.scheduled_start, c.company.timezone)}</dd>
@@ -177,18 +179,20 @@ export function JobDetail() {
         </div>
         <div className="stack" style={{ minWidth: 0 }}>
           {can.assign && <AssignCard key={job.version} data={q.data} onDone={refresh} />}
-          {(invoice || can.prepareInvoice) && (
+          {(invoice || can.prepareInvoice || voidedInvoices.length > 0) && (
             <Card id="inv" title={<h2 className="row"><Receipt aria-hidden />Invoice</h2>}>
               {invoice ? (
                 <div className="stack-sm">
-                  <div className="row-between"><InvoiceStatus status={invoice.status} />{invoice.total_minor !== null ? <span className="num" style={{ fontSize: 'var(--fs-18)', fontWeight: 500 }}>{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
-                  {invoice.number ? <span className="num small muted">{invoice.number}</span> : null}
+                  <div className="row-between"><span className="row" style={{ gap: 6 }}><InvoiceStatus status={invoice.status} />{invoice.status === 'issued' ? <PaymentPill payment={invoice.payment} /> : null}</span>{invoice.total_minor !== null && invoice.total_minor !== undefined ? <span className="num" style={{ fontSize: 'var(--fs-18)', fontWeight: 500 }}>{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
+                  {invoice.number ? <span className="num small muted">{invoice.number}{invoice.due_date ? ` · due ${fmtDate(invoice.due_date)}` : ''}</span> : null}
                   {invoice.hold_reasons?.length ? <Banner tone="warning" title="On hold">{invoice.hold_reasons.join(' ')}</Banner> : null}
                   <div className="row"><LinkButton size="sm" to={c.to(`invoices/${invoice.id}`)}>Open invoice</LinkButton>{invoice.hold_reasons?.length && c.can('assistant.use') ? <AskRigo to={c.to('assistant')} prompt={`Why is the invoice for job #${job.number} on hold?`} /> : null}</div>
                 </div>
-              ) : job.status === 'unsuccessful' ? <p className="muted">Unsuccessful visits are not billed automatically.</p> : (
-                <div className="stack-sm"><p className="muted">No invoice yet.</p><div><Button variant="primary" busy={prep.busy} onClick={() => prep.run()}>Prepare invoice</Button></div></div>
-              )}
+              ) : job.status === 'unsuccessful' ? <p className="muted">Unsuccessful visits are not billed automatically.</p> : can.prepareInvoice ? (
+                <div className="stack-sm"><p className="muted">{voidedInvoices.length ? 'The invoice was voided, so this job can be billed again.' : 'No invoice yet.'}</p><div><Button variant="primary" busy={prep.busy} onClick={() => prep.run()}>{voidedInvoices.length ? 'Prepare new invoice' : 'Prepare invoice'}</Button></div></div>
+              ) : <p className="muted">No active invoice.</p>}
+              {collected.length > 0 && <ul className="list" style={{ marginTop: 8 }}>{collected.map((p: any) => <li key={p.id} className="row-between small" style={{ padding: '6px 0' }}><span>Collected at the stop · {(PAYMENT_METHODS as any)[p.method] ?? p.method}{p.reference ? ` #${p.reference}` : ''}</span><span className="row" style={{ gap: 6 }}><span className="num">{formatMoney(p.amount_minor, c.company.currency)}</span>{p.state === 'unconfirmed' ? <Pill tone="warning">To confirm</Pill> : p.state === 'rejected' ? <Pill tone="danger">Rejected</Pill> : null}</span></li>)}</ul>}
+              {voidedInvoices.length > 0 && <p className="small muted" style={{ marginBottom: 0 }}>Voided: {voidedInvoices.map((v: any, n: number) => <Fragment key={v.id}>{n ? ', ' : ''}<Link to={c.to(`invoices/${v.id}`)}>{v.number ?? 'draft'}</Link></Fragment>)}</p>}
             </Card>
           )}
           {messages && messages.length > 0 && (

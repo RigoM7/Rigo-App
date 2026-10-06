@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import {
-  Home, Inbox, ClipboardList, Users, Receipt, Truck, Repeat, Workflow, Bot, MessageSquare, Wrench, Upload, LayoutTemplate, Settings, Bell as BellIcon, ChevronDown,
+  Home, Inbox, ClipboardList, Users, Receipt, Wallet, Truck, Repeat, Workflow, Bot, MessageSquare, Wrench, Upload, LayoutTemplate, Settings, Bell as BellIcon, ChevronDown,
   Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, CalendarCheck, WifiOff, FlaskConical, RotateCcw, Check, Zap, Search, PanelLeftClose, PanelLeftOpen,
   UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
@@ -33,6 +33,7 @@ export function useNavItems(): NavItem[] {
     { key: 'team', label: 'Team', to: 'team', icon: <UsersRound aria-hidden />, perm: 'members.view', section: 'People & places' },
     { key: 'resources', label: 'Trucks & equipment', to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
     { key: 'invoices', label: 'Invoices', to: 'invoices', icon: <Receipt aria-hidden />, perm: 'invoices.view', section: 'Money' },
+    { key: 'collections', label: 'Collections', to: 'collections', icon: <Wallet aria-hidden />, perm: 'finance.view', section: 'Money' },
     { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Communication' },
     { key: 'assistant', label: 'Assistant', to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Rigo' },
     { key: 'automation', label: 'Automation', to: 'automation', icon: <Zap aria-hidden />, perm: ['workflows.view', 'automation.control'], section: 'Rigo' },

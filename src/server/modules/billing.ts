@@ -3,10 +3,12 @@ import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
-import { badRequest, conflict, notFound } from '../http/errors.js';
-import { computeTotals, lineAmount, type DraftLine } from '../../shared/billing.js';
-import { emit, invalidateApprovalsFor } from '../automation/engine.js';
-import { issueInvoice, invoiceEmail, persistLines, lineFromRow } from './invoicing.js';
+import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
+import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
+import { balanceDue, paymentState, termsLabel, PAYMENT_METHODS } from '../../shared/invoices.js';
+import { localDate } from '../../shared/schedule.js';
+import { emit, invalidateApprovalsFor, requestApproval } from '../automation/engine.js';
+import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, applyCredit, refreshPayment, creditBalance, termsFor, prepareInvoiceForJob, invoiceViewLink } from './invoicing.js';
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
 
@@ -15,13 +17,21 @@ import { resolveNotices } from './inbox.js';
 export const billingRoutes = new Hono<AppEnv>();
 
 const money = (cc: CompanyCtx, v: number | null) => (can(cc, 'finance.view') ? v : undefined);
+const today = (cc: CompanyCtx) => localDate(new Date(), cc.company.timezone);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date');
 
 function serializeInvoice(cc: CompanyCtx, i: any) {
+  const total = i.total_minor === null ? null : Number(i.total_minor);
+  const state = paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today(cc));
   return {
-    id: i.id, number: i.number, status: i.status, deliveryStatus: i.delivery_status, paymentStatus: i.payment_status, currency: i.currency,
+    id: i.id, number: i.number, status: i.status, kind: i.kind ?? 'job', deliveryStatus: i.delivery_status, paymentStatus: i.payment_status, currency: i.currency,
     subtotalMinor: money(cc, i.subtotal_minor), discountMinor: money(cc, i.discount_minor), taxMinor: money(cc, i.tax_minor), totalMinor: money(cc, i.total_minor), paidMinor: money(cc, i.paid_minor),
+    creditedMinor: money(cc, i.credited_minor ?? 0), balanceMinor: money(cc, balanceDue({ totalMinor: total, paidMinor: Number(i.paid_minor), creditedMinor: Number(i.credited_minor ?? 0) })),
+    payment: state, dueDate: i.due_date ?? null, termsLabel: i.status === 'issued' ? termsLabel(i.due_days) : null,
+    periodStart: i.period_start ?? null, periodEnd: i.period_end ?? null, replacesInvoiceId: i.replaces_invoice_id ?? null,
     holdReasons: i.hold_reasons, notes: i.notes, dueDays: i.due_days, issuedAt: i.issued_at, approvedAt: i.approved_at, version: i.version, createdAt: i.created_at,
-    customerId: i.customer_id, customerName: i.customer_name, jobId: i.job_id, jobNumber: i.job_number, recurringPlanId: i.recurring_plan_id,
+    voidedAt: i.voided_at ?? null, voidReason: i.void_reason ?? null, freeConfirmed: !!i.free_confirmed, taxRateBp: money(cc, i.tax_rate_bp ?? null),
+    customerId: i.customer_id, customerName: i.bill_to?.customerName ?? i.customer_name, jobId: i.job_id, jobNumber: i.job_number, recurringPlanId: i.recurring_plan_id,
   };
 }
 
@@ -33,7 +43,10 @@ billingRoutes.get('/invoices', async (c) => {
   let where = 'i.company_id = $1';
   if (status === 'attention') where += ` and i.status in ('held','draft','pending_approval','approved')`;
   else if (status === 'unpaid') where += ` and i.status = 'issued' and i.payment_status <> 'paid'`;
+  else if (status === 'overdue') { vals.push(today(cc)); where += ` and i.status = 'issued' and i.payment_status <> 'paid' and i.due_date < $2`; }
   else if (status && status !== 'all') { vals.push(status); where += ` and i.status = $2`; }
+  const customer = c.req.query('customer');
+  if (customer && /^[0-9a-f-]{36}$/i.test(customer)) { vals.push(customer); where += ` and i.customer_id = $${vals.length}`; }
   const { rows } = await cc.db.query(`select i.*, c.name as customer_name, j.number as job_number from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id where ${where} order by i.created_at desc limit 300`, vals);
   return c.json({ invoices: rows.map((i) => serializeInvoice(cc, i)) });
 });
@@ -45,72 +58,155 @@ async function loadInvoice(cc: CompanyCtx, q: Q, id: string, lock = false) {
   return rows[0];
 }
 
+/** What the driver recorded on site that the invoice prints: quantities, and notes when the service opts in (R6-m3). */
+function serviceRecord(job: any) {
+  if (!job?.completion) return [];
+  const fields = (job.fields ?? []) as { key: string; label: string; type: string; unit?: string; stage: string }[];
+  const values = job.completion.values ?? {};
+  const out: { label: string; value: string }[] = [];
+  for (const f of fields.filter((x) => x.stage !== 'request')) {
+    const v = values[f.key];
+    if (v === undefined || v === null || v === '') continue;
+    if (f.type === 'number') out.push({ label: f.label, value: `${v}${f.unit ? ` ${f.unit}` : ''}` });
+    else if (job.invoice_shows_notes && ['text', 'longtext', 'select'].includes(f.type)) out.push({ label: f.label, value: String(v) });
+    else if (job.invoice_shows_notes && f.type === 'boolean') out.push({ label: f.label, value: v === true || v === 'true' ? 'Yes' : 'No' });
+  }
+  if (job.invoice_shows_notes && job.completion.notes) out.push({ label: 'Notes', value: String(job.completion.notes) });
+  return out;
+}
+
 billingRoutes.get('/invoices/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.view');
   const inv = await loadInvoice(cc, cc.db, c.req.param('id'));
-  const extra = (await cc.db.query<any>(`select c.name as customer_name, c.email as customer_email, c.billing_address, j.number as job_number, j.completed_at, l.address as location_address, s.name as service_name
-      from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id where i.id = $1`, [inv.id])).rows[0];
+  const extra = (await cc.db.query<any>(`select c.name as customer_name, c.email as customer_email, c.billing_address, j.number as job_number, j.completed_at, j.completion, s.fields, s.invoice_shows_notes,
+        coalesce(j.location_snapshot->>'address', l.address) as location_address, coalesce(j.location_snapshot->>'label', l.label) as location_label, s.name as service_name, s.tax_rate_bp as service_tax_rate_bp
+      from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id left join rigo.locations l on l.id = coalesce(j.location_id, i.location_id)
+      left join rigo.services s on s.id = j.service_id where i.id = $1`, [inv.id])).rows[0];
   const fin = can(cc, 'finance.view');
+  const contact = can(cc, 'customers.contact');
   const lines = (await cc.db.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [inv.id])).rows.map((row) => {
     const l = lineFromRow(row);
     // Rates, amounts and price-change notes are financial: removed here without finance.view.
     return {
-      id: row.id, description: l.description, quantity: l.quantity, unit: l.unit, kind: l.kind, taxable: l.taxable, rateMissing: l.rateE4 === null,
-      rateE4: fin ? l.rateE4 : undefined, amountMinor: fin ? l.amountMinor : undefined, priceDate: fin ? l.priceDate : undefined,
+      id: row.id, description: l.description, quantity: l.quantity, unit: l.unit, kind: l.kind, taxable: l.taxable, rateMissing: l.rateE4 === null && !l.percentBp,
+      rateE4: fin ? l.rateE4 : undefined, amountMinor: fin ? l.amountMinor : undefined, priceDate: fin ? l.priceDate : undefined, percentBp: fin ? l.percentBp : undefined,
       bookedRateE4: fin ? l.bookedRateE4 : undefined, note: fin ? l.note : (l.note?.startsWith('Price changed') || l.note?.startsWith('Minimum') ? '' : l.note),
     };
   });
-  const payments = fin ? (await cc.db.query(`select p.*, u.name as recorded_by_name from rigo.payments p left join rigo.users u on u.id = p.recorded_by where p.invoice_id = $1 order by p.recorded_at`, [inv.id])).rows : [];
+  const payments = fin ? (await cc.db.query<any>(`select p.*, u.name as recorded_by_name, cu.name as confirmed_by_name, ru.name as rejected_by_name from rigo.payments p
+      left join rigo.users u on u.id = p.recorded_by left join rigo.users cu on cu.id = p.confirmed_by left join rigo.users ru on ru.id = p.rejected_by
+      where p.company_id = $1 and (p.invoice_id = $2 or ($3::uuid is not null and p.job_id = $3 and p.invoice_id is null)) order by p.recorded_at`, [cc.company.id, inv.id, inv.job_id])).rows.map(serializePayment) : [];
+  const credits = fin ? (await cc.db.query<any>(`select ic.*, u.name as created_by_name from rigo.invoice_credits ic left join rigo.users u on u.id = ic.created_by where ic.invoice_id = $1 order by ic.created_at`, [inv.id])).rows
+    .map((r) => ({ id: r.id, amountMinor: Number(r.amount_minor), source: r.source, note: r.note, createdAt: r.created_at, createdByName: r.created_by_name })) : [];
   const approvals = (await cc.db.query(`select a.id, a.status, a.title, a.created_at, a.decided_at, a.decision_note, a.subject_version, x.type as action_type, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id left join rigo.users u on u.id = a.decided_by where a.subject_type = 'invoice' and a.subject_id = $1 order by a.created_at`, [inv.id])).rows;
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, status_detail, recipient, created_at from rigo.messages where invoice_id = $1 order by created_at desc`, [inv.id])).rows : [];
+  const replaces = inv.replaces_invoice_id ? (await cc.db.query<any>(`select id, number, status from rigo.invoices where id = $1 and company_id = $2`, [inv.replaces_invoice_id, cc.company.id])).rows[0] ?? null : null;
+  const replacedBy = (await cc.db.query<any>(`select id, number, status from rigo.invoices where replaces_invoice_id = $1 and company_id = $2 order by created_at desc limit 1`, [inv.id, cc.company.id])).rows[0] ?? null;
+  const credit = fin && inv.customer_id ? await creditBalance(cc.db, cc.company.id, inv.customer_id) : 0;
   const co = cc.company;
+  const s = co.settings ?? {};
+  const out = serializeInvoice(cc, { ...inv, customer_name: extra?.customer_name, job_number: extra?.job_number });
+  // Issued invoices show the names and addresses as they were when issued (R10-M4).
+  const bt = inv.bill_to ?? {};
+  const issued = inv.status === 'issued' || inv.status === 'void';
+  const balance = Number(inv.total_minor ?? 0) - Number(inv.paid_minor) - Number(inv.credited_minor ?? 0);
+  const voidBlocked = inv.status !== 'issued' ? null : Number(inv.paid_minor) > 0 ? 'Payments are recorded on this invoice. Refund them first, then void it.' : null;
   return c.json({
-    invoice: { ...serializeInvoice(cc, inv), customerName: extra?.customer_name, customerEmail: can(cc, 'customers.contact') ? extra?.customer_email : undefined, billingAddress: can(cc, 'customers.contact') ? extra?.billing_address : undefined,
-      jobNumber: extra?.job_number, completedAt: extra?.completed_at, locationAddress: extra?.location_address, serviceName: extra?.service_name },
-    lines, payments, approvals, messages,
+    invoice: { ...out,
+      customerName: issued && bt.customerName ? bt.customerName : extra?.customer_name,
+      customerEmail: contact ? extra?.customer_email : undefined,
+      billingAddress: contact ? (issued && inv.bill_to ? bt.billingAddress : extra?.billing_address) : undefined,
+      jobNumber: extra?.job_number, completedAt: extra?.completed_at,
+      locationAddress: issued && inv.bill_to ? bt.locationAddress : extra?.location_address, locationLabel: issued && inv.bill_to ? bt.locationLabel : extra?.location_label,
+      serviceName: issued && bt.serviceName ? bt.serviceName : extra?.service_name },
+    lines, payments, credits, approvals, messages, replaces, replacedBy,
+    serviceRecord: serviceRecord(extra),
+    customerCreditMinor: fin ? credit : undefined,
     // The service's tax rate, so new lines start taxable when tax applies.
-    taxRateBp: fin ? (inv.job_id ? (await cc.db.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1 and j.company_id = $2`, [inv.job_id, cc.company.id])).rows[0]?.tax_rate_bp ?? null : null) : undefined,
-    company: { name: co.name, phone: co.phone, email: co.email, address: co.address, logo: !!co.branding?.logoFileId, accent: co.branding?.accent ?? null },
-    approvalRequired: co.settings?.invoiceApprovalRequired !== false,
-    can: { edit: can(cc, 'invoices.edit') && fin && ['held', 'draft', 'pending_approval', 'approved'].includes(inv.status), approve: can(cc, 'invoices.approve') && ['draft', 'pending_approval'].includes(inv.status),
-      issue: can(cc, 'invoices.issue') && ['draft', 'approved'].includes(inv.status), void: can(cc, 'invoices.issue') && inv.status === 'issued' && inv.paid_minor === 0,
-      pay: can(cc, 'payments.record') && inv.status === 'issued' && inv.payment_status !== 'paid', message: can(cc, 'messages.send') && inv.status === 'issued' },
+    taxRateBp: fin ? (inv.tax_rate_bp ?? extra?.service_tax_rate_bp ?? null) : undefined,
+    company: { name: co.name, phone: co.phone, email: co.email, address: co.address, logo: !!co.branding?.logoFileId, accent: co.branding?.accent ?? null,
+      paymentInstructions: s.paymentInstructions ?? '', remitTo: s.remitTo ?? '', taxId: s.taxId ?? '' },
+    approvalRequired: s.invoiceApprovalRequired !== false,
+    can: {
+      edit: can(cc, 'invoices.edit') && fin && ['held', 'draft', 'pending_approval', 'approved'].includes(inv.status),
+      approve: can(cc, 'invoices.approve') && ['draft', 'pending_approval'].includes(inv.status),
+      submit: can(cc, 'invoices.edit') && inv.status === 'draft' && s.invoiceApprovalRequired !== false && !approvals.some((a: any) => a.status === 'pending'),
+      issue: can(cc, 'invoices.issue') && ['draft', 'approved'].includes(inv.status),
+      void: can(cc, 'invoices.issue') && inv.status === 'issued' && !voidBlocked, voidBlocked: can(cc, 'invoices.issue') ? voidBlocked : null,
+      pay: can(cc, 'payments.record') && fin && inv.status === 'issued' && balance > 0,
+      refund: can(cc, 'payments.record') && fin && inv.status === 'issued' && Number(inv.paid_minor) > 0,
+      creditNote: can(cc, 'invoices.issue') && fin && inv.status === 'issued' && balance > 0,
+      applyCredit: can(cc, 'payments.record') && fin && inv.status === 'issued' && balance > 0 && credit > 0,
+      confirmPayments: can(cc, 'payments.record') && fin, rejectPayments: cc.isOwner && fin,
+      message: can(cc, 'messages.send') && inv.status === 'issued',
+      prepareReplacement: can(cc, 'invoices.edit') && inv.status === 'void' && !!inv.job_id && !replacedBy && !(await activeJobInvoice(cc.db, inv.job_id)),
+    },
   });
 });
+
+function serializePayment(p: any) {
+  return {
+    id: p.id, kind: p.kind ?? 'payment', amountMinor: Number(p.amount_minor), appliedMinor: p.applied_minor === null ? null : Number(p.applied_minor),
+    method: p.method, methodLabel: (PAYMENT_METHODS as Record<string, string>)[p.method] ?? p.method, reference: p.reference ?? '', note: p.note, paidOn: p.paid_on, state: p.state ?? 'confirmed',
+    collectedAtStop: !!p.job_id, hasPhoto: !!p.photo_file_id, invoiceId: p.invoice_id,
+    recordedAt: p.recorded_at, recordedByName: p.recorded_by_name, confirmedAt: p.confirmed_at ?? null, confirmedByName: p.confirmed_by_name ?? null,
+    rejectedReason: p.rejected_reason ?? null, rejectedAt: p.rejected_at ?? null, rejectedByName: p.rejected_by_name ?? null,
+  };
+}
+
+/** The job's invoice that counts: the newest one that isn't void. */
+async function activeJobInvoice(q: Q, jobId: string) {
+  return (await q.query<any>(`select id from rigo.invoices where job_id = $1 and status <> 'void' order by created_at desc limit 1`, [jobId])).rows[0]?.id ?? null;
+}
 
 const lineSchema = z.object({
   description: z.string().trim().min(1, 'Enter a description').max(200), quantity: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Enter a quantity like 12 or 12.5'),
   unit: z.string().max(20).default(''), rateE4: z.number().int().min(0).max(1_000_000_000_000).nullable(), taxable: z.boolean().default(false), kind: z.enum(['charge', 'discount']).default('charge'),
   note: z.string().max(300).default(''),
+  /** Discounts only: a percentage of the charges (10% = 1000) instead of a fixed amount. */
+  percentBp: z.number().int().min(1).max(10000).nullable().optional(),
   /** The stored line this edits: unchanged lines keep their amount (a minimum charge) and price history. */
   id: z.string().uuid().optional(),
 });
 
+/** Lines from the editor: untouched lines keep what pricing worked out; discounts are resolved and capped (R10-M1). */
+async function editedLines(q: Q, invoiceId: string | null, input: z.infer<typeof lineSchema>[], allowFree: boolean, currency: string) {
+  const before = invoiceId ? new Map((await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1`, [invoiceId])).rows.map((r) => [r.id as string, lineFromRow(r)])) : new Map<string, DraftLine>();
+  const lines: DraftLine[] = input.map(({ id, ...l }) => {
+    const percentBp = l.kind === 'discount' ? l.percentBp ?? null : null;
+    const o = id ? before.get(id) : undefined;
+    // A line whose quantity and rate weren't touched keeps what pricing worked out (a minimum
+    // charge, the price date, a price change since booking); anything edited is recomputed.
+    if (o && o.kind === 'charge' && l.kind === 'charge' && o.quantity === l.quantity && o.rateE4 === l.rateE4) return { ...l, percentBp, amountMinor: o.amountMinor, note: o.note ?? '', priceDate: o.priceDate ?? null, bookedRateE4: o.bookedRateE4 ?? null };
+    return { ...l, percentBp, note: '', amountMinor: l.kind === 'charge' ? lineAmount(l.quantity, l.rateE4) : null };
+  });
+  const r = resolveDiscounts(lines, { allowFree });
+  if (r.excessMinor > 0) {
+    throw badRequest(`The discounts are ${formatMoney(r.excessMinor, currency)} more than the charges. Lower them, or choose "Make this invoice free".`, { freeConfirm: true, excessMinor: r.excessMinor });
+  }
+  return r.lines;
+}
+
 billingRoutes.put('/invoices/:id/lines', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.edit', 'finance.view');
-  const input = await body(c, z.object({ lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).optional(), version: z.number().int(), taxRateBp: z.number().int().min(0).max(5000).nullable().optional() }));
+  const input = await body(c, z.object({ lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).optional(), version: z.number().int(), taxRateBp: z.number().int().min(0).max(5000).nullable().optional(), allowFree: z.boolean().default(false) }));
   const out = await cc.db.tx(async (q) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
     if (inv.version !== input.version) throw conflict('This invoice changed since you opened it. Reload to see the latest version.');
     if (!['held', 'draft', 'pending_approval', 'approved'].includes(inv.status)) throw conflict('Issued or voided invoices cannot be edited.');
-    const before = new Map((await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1`, [inv.id])).rows.map((r) => [r.id as string, lineFromRow(r)]));
-    const lines: DraftLine[] = input.lines.map(({ id, ...l }) => {
-      // A line whose quantity and rate weren't touched keeps what pricing worked out (a minimum
-      // charge, the price date, a price change since booking); anything edited is recomputed.
-      const o = id ? before.get(id) : undefined;
-      if (o && o.kind === l.kind && o.quantity === l.quantity && o.rateE4 === l.rateE4) return { ...l, amountMinor: o.amountMinor, note: o.note ?? '', priceDate: o.priceDate ?? null, bookedRateE4: o.bookedRateE4 ?? null };
-      return { ...l, note: '', amountMinor: l.kind === 'discount' ? (l.rateE4 === null ? null : -Math.abs(lineAmount(l.quantity, l.rateE4) as number)) : lineAmount(l.quantity, l.rateE4) };
-    });
-    const svcTax = (await q.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1`, [inv.job_id])).rows[0]?.tax_rate_bp ?? null;
+    const lines = await editedLines(q, inv.id, input.lines, input.allowFree, inv.currency);
+    const svcTax = inv.job_id ? (await q.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1`, [inv.job_id])).rows[0]?.tax_rate_bp ?? null : null;
+    const taxRate = input.taxRateBp !== undefined ? input.taxRateBp : inv.tax_rate_bp ?? svcTax;
     const taxExempt = !!(await q.query<any>(`select tax_exempt from rigo.customers where id = $1`, [inv.customer_id])).rows[0]?.tax_exempt;
-    const totals = computeTotals(lines, input.taxRateBp !== undefined ? input.taxRateBp : svcTax, [], { taxExempt });
+    const totals = computeTotals(lines, taxRate, [], { taxExempt });
     await persistLines(q, cc.company.id, inv.id, lines);
     const held = totals.totalMinor === null;
     // Editing invalidates any approval given for the previous version.
-    await q.query(`update rigo.invoices set subtotal_minor = $2, discount_minor = $3, tax_minor = $4, total_minor = $5, hold_reasons = $6, status = $7, notes = coalesce($8, notes), approved_by = null, approved_at = null, version = version + 1, updated_at = now() where id = $1`,
-      [inv.id, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor, JSON.stringify(totals.holdReasons), held ? 'held' : 'draft', input.notes ?? null]);
+    await q.query(`update rigo.invoices set subtotal_minor = $2, discount_minor = $3, tax_minor = $4, total_minor = $5, hold_reasons = $6, status = $7, notes = coalesce($8, notes), approved_by = null, approved_at = null,
+        free_confirmed = $9, tax_rate_bp = case when $10 then $11 else tax_rate_bp end, version = version + 1, updated_at = now() where id = $1`,
+      [inv.id, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor, JSON.stringify(totals.holdReasons), held ? 'held' : 'draft', input.notes ?? null, input.allowFree, input.taxRateBp !== undefined, input.taxRateBp ?? null]);
     const stale = await invalidateApprovalsFor(q, cc.company.id, 'invoice', inv.id);
     if (inv.job_id) await q.query(`update rigo.jobs set billing_status = $2 where id = $1`, [inv.job_id, held ? 'held' : 'drafted']);
     await audit(q, cc, 'invoice.edited', { id: inv.id, staleApprovals: stale.length });
@@ -120,6 +216,40 @@ billingRoutes.put('/invoices/:id/lines', async (c) => {
     const { renewApproval } = await import('../automation/engine.js');
     for (const a of out.staleApprovals) await renewApproval(cc.db, a);
   }
+  return c.json(out);
+});
+
+/** An invoice without a job (R8-M3): custom lines for a customer and, optionally, one of their sites. */
+billingRoutes.post('/invoices', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'invoices.edit', 'finance.view');
+  const input = await body(c, z.object({
+    customerId: z.string().uuid(), locationId: z.string().uuid().nullable().optional(), lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).default(''),
+    taxRateBp: z.number().int().min(0).max(5000).nullable().default(null), allowFree: z.boolean().default(false), clientRequestId: z.string().min(8).max(80),
+  }));
+  const out = await cc.db.tx(async (q) => {
+    const cust = (await q.query<any>(`select id, tax_exempt from rigo.customers where id = $1 and company_id = $2`, [input.customerId, cc.company.id])).rows[0];
+    if (!cust) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
+    if (input.locationId) {
+      const l = await q.query(`select 1 from rigo.locations where id = $1 and company_id = $2 and customer_id = $3`, [input.locationId, cc.company.id, cust.id]);
+      if (!l.rows.length) throw badRequest('Choose one of this customer\'s locations.', { fields: { locationId: 'Belongs to another customer' } });
+    }
+    const key = `manual:${input.clientRequestId}`;
+    const dup = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and billable_key = $2`, [cc.company.id, key])).rows[0];
+    if (dup) return { id: dup.id as string, duplicate: true };
+    const lines = await editedLines(q, null, input.lines, input.allowFree, cc.company.currency);
+    const totals = computeTotals(lines, input.taxRateBp, [], { taxExempt: !!cust.tax_exempt });
+    const held = totals.totalMinor === null;
+    const { rows } = await q.query<{ id: string }>(
+      `insert into rigo.invoices (company_id, billable_key, customer_id, location_id, kind, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, notes, due_days, tax_rate_bp, free_confirmed)
+       values ($1,$2,$3,$4,'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
+      [cc.company.id, key, cust.id, input.locationId ?? null, held ? 'held' : 'draft', cc.company.currency, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor,
+        JSON.stringify(totals.holdReasons), input.notes, await termsFor(q, cc.company.id, cust.id), input.taxRateBp, input.allowFree]);
+    await persistLines(q, cc.company.id, rows[0].id, lines);
+    await audit(q, cc, 'invoice.created_manually', { id: rows[0].id });
+    await emit(q, cc.company.id, 'invoice.prepared', { type: 'invoice', id: rows[0].id }, { held, manual: true }, { actorUserId: cc.user.id });
+    return { id: rows[0].id, duplicate: false };
+  });
   return c.json(out);
 });
 
@@ -147,6 +277,24 @@ billingRoutes.post('/invoices/:id/approve', async (c) => {
   return c.json({ ok: true });
 });
 
+/** A draft someone prepared by hand goes to the people who may approve invoices (R6-M3). */
+billingRoutes.post('/invoices/:id/submit', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'invoices.edit');
+  const input = await body(c, z.object({ version: z.number().int() }));
+  const out = await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    if (inv.version !== input.version) throw conflict('This invoice changed since you opened it. Reload, check it, then send it again.');
+    if (inv.status === 'held') throw conflict('Fix the hold reasons before sending this invoice for approval.');
+    if (inv.status !== 'draft') throw conflict(`This invoice is ${inv.status.replace('_', ' ')} and can't be sent for approval.`);
+    const approvalId = await requestApproval(q, cc.company.id, 'invoice.issue', { type: 'invoice', id: inv.id }, { userId: cc.user.id, name: cc.user.name });
+    await q.query(`update rigo.invoices set status = 'pending_approval', submitted_by = $2, updated_at = now() where id = $1`, [inv.id, cc.user.id]);
+    await audit(q, cc, 'invoice.sent_for_approval', { id: inv.id, approvalId });
+    return { approvalId };
+  });
+  return c.json(out);
+});
+
 billingRoutes.post('/invoices/:id/issue', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.issue');
@@ -164,6 +312,10 @@ billingRoutes.post('/invoices/:id/issue', async (c) => {
   return c.json(out);
 });
 
+/**
+ * Void an issued invoice (R10-C1). It stops billing the job, so a new invoice can be prepared
+ * ("Replaces INV-00003"). Customer credit used on it goes back to the customer.
+ */
 billingRoutes.post('/invoices/:id/void', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.issue');
@@ -171,31 +323,164 @@ billingRoutes.post('/invoices/:id/void', async (c) => {
   await cc.db.tx(async (q) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
     if (inv.status !== 'issued') throw conflict('Only issued invoices can be voided. Edit drafts instead.');
-    if (inv.paid_minor > 0) throw conflict('This invoice has payments recorded and cannot be voided.');
-    await q.query(`update rigo.invoices set status = 'void', notes = notes || $2, version = version + 1, updated_at = now() where id = $1`, [inv.id, `\nVoided: ${input.reason}`]);
+    if (Number(inv.paid_minor) > 0) throw conflict('Payments are recorded on this invoice. Refund them first, then void it.');
+    // Credit applied from the customer's balance is returned to it.
+    const used = (await q.query<any>(`select coalesce(sum(amount_minor),0)::bigint n from rigo.invoice_credits where invoice_id = $1 and source = 'customer_credit'`, [inv.id])).rows[0].n;
+    if (Number(used) > 0 && inv.customer_id) {
+      await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, invoice_id, note, created_by) values ($1,$2,$3,'reversal',$4,$5,$6)`,
+        [cc.company.id, inv.customer_id, Number(used), inv.id, `Invoice ${inv.number} voided; credit returned`, cc.user.id]);
+    }
+    // Money collected at the stop moves to the replacement invoice.
+    await q.query(`update rigo.payments set invoice_id = null, applied_minor = 0, applied_at = null where invoice_id = $1 and kind = 'payment' and state = 'unconfirmed'`, [inv.id]);
+    await q.query(`update rigo.invoices set status = 'void', billable_key = billable_key || ':void:' || id::text, voided_at = now(), void_reason = $2, notes = notes || $3, version = version + 1, updated_at = now() where id = $1`,
+      [inv.id, input.reason, `\nVoided: ${input.reason}`]);
+    await q.query(`update rigo.invoice_links set revoked_at = now() where invoice_id = $1 and revoked_at is null`, [inv.id]);
     if (inv.job_id) await q.query(`update rigo.jobs set billing_status = 'ready' where id = $1`, [inv.job_id]);
     await audit(q, cc, 'invoice.voided', { id: inv.id, reason: input.reason });
+    await emit(q, cc.company.id, 'invoice.voided', { type: 'invoice', id: inv.id }, {}, { actorUserId: cc.user.id });
   });
   return c.json({ ok: true });
 });
 
+/** Prepare the invoice that replaces a voided one, from the job's record and today's prices. */
+billingRoutes.post('/invoices/:id/replacement', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'invoices.edit');
+  const out = await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    if (inv.status !== 'void' || !inv.job_id) throw conflict('Only a voided job invoice can be replaced.');
+    return prepareInvoiceForJob(q, cc.company.id, inv.job_id, { userId: cc.user.id });
+  });
+  return c.json(out);
+});
+
+const paymentInput = z.object({
+  amountMinor: z.number().int().positive('Enter an amount'), method: z.enum(['cash', 'check', 'card', 'card_terminal', 'bank_transfer', 'other']),
+  paidOn: isoDate.optional(), reference: z.string().trim().max(80).default(''), note: z.string().max(500).default(''), idempotencyKey: z.string().min(8).max(80),
+});
+const checkDate = (cc: CompanyCtx, d: string | undefined) => {
+  const t = today(cc);
+  if (d && (d > t || d < '2000-01-01')) throw badRequest('The payment date can\'t be in the future.', { fields: { paidOn: 'Choose today or an earlier date' } });
+  return d ?? t;
+};
+
+/** Record a payment (R6-m2): dated (backdating allowed); anything over the balance becomes customer credit (D6). */
 billingRoutes.post('/invoices/:id/payments', async (c) => {
   const cc = c.get('cc');
   need(cc, 'payments.record', 'finance.view');
-  const input = await body(c, z.object({ amountMinor: z.number().int().positive('Enter an amount'), method: z.enum(['cash', 'check', 'card', 'bank_transfer', 'other']), note: z.string().max(500).default(''), idempotencyKey: z.string().min(8).max(80) }));
+  const input = await body(c, paymentInput);
   const out = await cc.db.tx(async (q) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
-    if (inv.status !== 'issued') throw conflict('Payments are recorded on issued invoices.');
+    if (inv.status !== 'issued') throw conflict('Payments are recorded on issued invoices. Record a deposit on the customer instead.');
     const dup = await q.query(`select 1 from rigo.payments where company_id = $1 and idempotency_key = $2`, [cc.company.id, input.idempotencyKey]);
-    if (dup.rows.length) return { duplicate: true };
-    if (inv.paid_minor + input.amountMinor > inv.total_minor) throw badRequest('That amount is more than the balance due.', { fields: { amountMinor: 'More than the balance' } });
-    await q.query(`insert into rigo.payments (company_id, invoice_id, amount_minor, method, note, recorded_by, idempotency_key) values ($1,$2,$3,$4,$5,$6,$7)`, [cc.company.id, inv.id, input.amountMinor, input.method, input.note, cc.user.id, input.idempotencyKey]);
-    const paid = inv.paid_minor + input.amountMinor;
-    await q.query(`update rigo.invoices set paid_minor = $2, payment_status = $3, updated_at = now() where id = $1`, [inv.id, paid, paid >= inv.total_minor ? 'paid' : 'partially_paid']);
-    await audit(q, cc, 'payment.recorded', { invoiceId: inv.id, amountMinor: input.amountMinor });
-    return { duplicate: false };
+    if (dup.rows.length) return { duplicate: true, appliedMinor: 0, creditMinor: 0 };
+    const paidOn = checkDate(cc, input.paidOn);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.payments (company_id, invoice_id, customer_id, amount_minor, method, note, reference, paid_on, recorded_by, idempotency_key, applied_minor, kind, state)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,'payment','confirmed') returning id`,
+      [cc.company.id, inv.id, inv.customer_id, input.amountMinor, input.method, input.note, input.reference, paidOn, cc.user.id, input.idempotencyKey]);
+    const applied = await applyPayment(q, cc.company.id, rows[0].id, cc.user.id);
+    await audit(q, cc, 'payment.recorded', { invoiceId: inv.id, amountMinor: input.amountMinor, creditMinor: input.amountMinor - applied });
+    return { duplicate: false, appliedMinor: applied, creditMinor: input.amountMinor - applied };
   });
   return c.json(out);
+});
+
+async function loadPayment(cc: CompanyCtx, q: Q, id: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound('Payment');
+  const p = (await q.query<any>(`select * from rigo.payments where id = $1 and company_id = $2 for update`, [id, cc.company.id])).rows[0];
+  if (!p) throw notFound('Payment');
+  return p;
+}
+
+/** The office confirms money a driver collected at the stop; it pays the job's invoice once issued. */
+billingRoutes.post('/payments/:pid/confirm', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'payments.record', 'finance.view');
+  const out = await cc.db.tx(async (q) => {
+    const p = await loadPayment(cc, q, c.req.param('pid'));
+    if (p.state !== 'unconfirmed') throw conflict(`This payment is already ${p.state}.`);
+    await q.query(`update rigo.payments set state = 'confirmed', confirmed_by = $2, confirmed_at = now() where id = $1`, [p.id, cc.user.id]);
+    const applied = await applyPayment(q, cc.company.id, p.id, cc.user.id);
+    await resolveNotices(q, cc.company.id, 'payment', p.id);
+    await audit(q, cc, 'payment.confirmed', { id: p.id, amountMinor: Number(p.amount_minor) });
+    return { appliedMinor: applied, waitingForInvoice: !p.invoice_id };
+  });
+  return c.json(out);
+});
+
+/**
+ * An owner rejects a payment entry (D6): it no longer counts, any credit it created is reversed,
+ * and it stays in the history with the reason and who rejected it.
+ */
+billingRoutes.post('/payments/:pid/reject', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'finance.view');
+  if (!cc.isOwner) throw forbidden('Only an owner can reject a payment.');
+  const input = await body(c, z.object({ reason: z.string().trim().min(3, 'Give a reason').max(500) }));
+  await cc.db.tx(async (q) => {
+    const p = await loadPayment(cc, q, c.req.param('pid'));
+    if (p.state === 'rejected') throw conflict('This payment was already rejected.');
+    const credit = Number((await q.query<any>(`select coalesce(sum(amount_minor),0)::bigint n from rigo.credit_entries where payment_id = $1`, [p.id])).rows[0].n);
+    if (credit !== 0 && p.customer_id) {
+      await q.query(`insert into rigo.credit_entries (company_id, customer_id, amount_minor, kind, payment_id, invoice_id, note, created_by) values ($1,$2,$3,'reversal',$4,$5,$6,$7)`,
+        [cc.company.id, p.customer_id, -credit, p.id, p.invoice_id, `Payment rejected: ${input.reason}`, cc.user.id]);
+    }
+    await q.query(`update rigo.payments set state = 'rejected', rejected_reason = $2, rejected_by = $3, rejected_at = now() where id = $1`, [p.id, input.reason, cc.user.id]);
+    if (p.invoice_id) await refreshPayment(q, p.invoice_id);
+    await resolveNotices(q, cc.company.id, 'payment', p.id);
+    await audit(q, cc, 'payment.rejected', { id: p.id, amountMinor: Number(p.amount_minor), reason: input.reason });
+  });
+  return c.json({ ok: true });
+});
+
+/** Money given back to the customer for this invoice (it reopens the balance). */
+billingRoutes.post('/invoices/:id/refunds', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'payments.record', 'finance.view');
+  const input = await body(c, paymentInput.extend({ note: z.string().trim().min(3, 'Say why it was refunded').max(500) }));
+  await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    if (inv.status !== 'issued') throw conflict('Refunds are recorded on issued invoices.');
+    const dup = await q.query(`select 1 from rigo.payments where company_id = $1 and idempotency_key = $2`, [cc.company.id, input.idempotencyKey]);
+    if (dup.rows.length) return;
+    if (input.amountMinor > Number(inv.paid_minor)) throw badRequest(`That is more than was paid (${formatMoney(Number(inv.paid_minor), inv.currency)}).`, { fields: { amountMinor: 'More than was paid' } });
+    await q.query(`insert into rigo.payments (company_id, invoice_id, customer_id, amount_minor, method, note, reference, paid_on, recorded_by, idempotency_key, kind, state, applied_minor, applied_at)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'refund','confirmed',$4,now())`,
+      [cc.company.id, inv.id, inv.customer_id, input.amountMinor, input.method, input.note, input.reference, checkDate(cc, input.paidOn), cc.user.id, input.idempotencyKey]);
+    await refreshPayment(q, inv.id);
+    await audit(q, cc, 'payment.refunded', { invoiceId: inv.id, amountMinor: input.amountMinor });
+  });
+  return c.json({ ok: true });
+});
+
+/** A credit note takes an amount off an issued invoice's balance, with the reason on record. */
+billingRoutes.post('/invoices/:id/credit-notes', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'invoices.issue', 'finance.view');
+  const input = await body(c, z.object({ amountMinor: z.number().int().positive('Enter an amount'), note: z.string().trim().min(3, 'Say why the customer is credited').max(500) }));
+  await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    if (inv.status !== 'issued') throw conflict('Credit notes are for issued invoices. Edit a draft instead.');
+    const balance = balanceDue({ totalMinor: Number(inv.total_minor), paidMinor: Number(inv.paid_minor), creditedMinor: Number(inv.credited_minor) }) ?? 0;
+    if (input.amountMinor > balance) throw badRequest(`That is more than the balance due (${formatMoney(balance, inv.currency)}). Refund a payment instead.`, { fields: { amountMinor: 'More than the balance' } });
+    await q.query(`insert into rigo.invoice_credits (company_id, invoice_id, amount_minor, source, note, created_by) values ($1,$2,$3,'credit_note',$4,$5)`, [cc.company.id, inv.id, input.amountMinor, input.note, cc.user.id]);
+    await refreshPayment(q, inv.id);
+    await audit(q, cc, 'invoice.credited', { id: inv.id, amountMinor: input.amountMinor });
+  });
+  return c.json({ ok: true });
+});
+
+billingRoutes.post('/invoices/:id/apply-credit', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'payments.record', 'finance.view');
+  const applied = await cc.db.tx(async (q) => {
+    const inv = await loadInvoice(cc, q, c.req.param('id'), true);
+    const n = await applyCredit(q, cc.company.id, inv.id, cc.user.id);
+    if (!n) throw conflict('There is no customer credit to apply, or nothing is owed.');
+    await audit(q, cc, 'invoice.credit_applied', { id: inv.id, amountMinor: n });
+    return n;
+  });
+  return c.json({ appliedMinor: applied });
 });
 
 billingRoutes.post('/invoices/:id/email', async (c) => {
@@ -204,9 +489,9 @@ billingRoutes.post('/invoices/:id/email', async (c) => {
   const out = await cc.db.tx(async (q) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
     if (inv.status !== 'issued') throw conflict('Issue the invoice before preparing the customer email.');
-    const existing = await q.query<any>(`select id from rigo.messages where invoice_id = $1 and status = 'prepared'`, [inv.id]);
+    const existing = await q.query<any>(`select id from rigo.messages where invoice_id = $1 and status = 'prepared' and coalesce(source_key, '') not like 'reminder:%'`, [inv.id]);
     if (existing.rows[0]) return { messageId: existing.rows[0].id };
-    const mail = await invoiceEmail(q, inv.id);
+    const mail = await invoiceEmail(q, inv.id, await invoiceViewLink(q, cc.company.id, inv.id));
     const { rows } = await q.query<{ id: string }>(`insert into rigo.messages (company_id, customer_id, job_id, invoice_id, channel, recipient, subject, body, created_by) values ($1,$2,$3,$4,'email',$5,$6,$7,$8) returning id`,
       [cc.company.id, mail.customerId, mail.jobId, inv.id, mail.recipient, mail.subject, mail.body, cc.user.id]);
     await q.query(`update rigo.invoices set delivery_status = 'prepared' where id = $1 and delivery_status = 'not_prepared'`, [inv.id]);

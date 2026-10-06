@@ -86,7 +86,7 @@ export function ServiceEditor() {
   const [sample, setSample] = useState<Record<string, string>>({});
   useEffect(() => {
     if (svc && !v) {
-      setV({ name: svc.name, category: svc.category, description: svc.description, fields: svc.fields, pricing: svc.pricing, requiresPhoto: svc.requiresPhoto, requiresSignature: svc.requiresSignature, active: svc.active });
+      setV({ name: svc.name, category: svc.category, description: svc.description, fields: svc.fields, pricing: svc.pricing, requiresPhoto: svc.requiresPhoto, requiresSignature: svc.requiresSignature, active: svc.active, invoiceShowsNotes: !!svc.invoiceShowsNotes });
       setRates(Object.fromEntries(svc.pricing.flatMap((p: any) => [[p.id, rateToInput(p.rateE4)], [`${p.id}:over`, rateToInput(p.overageRateE4)], [`${p.id}:min`, minorToInput(p.minimumMinor)]])));
       setTax(svc.taxRateBp === null || svc.taxRateBp === undefined ? '' : String(svc.taxRateBp / 100));
     }
@@ -134,6 +134,7 @@ export function ServiceEditor() {
               <Field label="Description" optionalText id="f-description">{(p) => <Textarea {...p} maxLength={500} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />}</Field>
               <Checkbox label="Require at least one photo to complete" checked={v.requiresPhoto} onChange={(e) => setV({ ...v, requiresPhoto: e.target.checked })} />
               <Checkbox label="Require a customer signature to complete" checked={v.requiresSignature} onChange={(e) => setV({ ...v, requiresSignature: e.target.checked })} />
+              <Checkbox label="Print the driver's notes on the invoice" hint="Quantities always print. This adds notes and other details the driver records, like condition notes." checked={!!v.invoiceShowsNotes} onChange={(e) => setV({ ...v, invoiceShowsNotes: e.target.checked })} />
               <Checkbox label="Active (available for new jobs)" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} />
             </div>
           </Card>
