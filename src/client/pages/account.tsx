@@ -121,22 +121,26 @@ export function Account() {
       if (!me.data?.user) return;
       const { listDrafts } = await import('../lib/offline');
       const all: Draft[] = [];
-      for (const c of me.data.companies) all.push(...(await listDrafts(me.data.user.id, c.id)).filter((d) => d.state !== 'accepted'));
+      const { isUnsent } = await import('../lib/offline');
+      for (const c of me.data.companies) all.push(...(await listDrafts(me.data.user.id, c.id)).filter(isUnsent));
       setUnsynced(all);
     })();
   }, [me.data]);
   const saveName = useSubmit(async () => { await patch('/auth/me', { name }); await refreshMe(qc); toast('Name saved'); });
   const savePw = useSubmit(async () => { await post('/auth/me/password', pw); setPw({ current: '', password: '' }); toast('Password changed. Other devices were signed out.'); });
   const setTheme = async (t: ThemePref) => { setPref(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); };
-  const forgetDevice = async () => {
+  const forgetDevice = async (keepDrafts = false) => {
     const uid = me.data?.user?.id;
     const { clearUserData } = await import('../lib/offline');
-    if (uid) await clearUserData(uid);
+    if (uid) await clearUserData(uid, { keepDrafts });
   };
-  const signOut = async (discard: boolean) => {
-    if (unsynced?.length && !discard) return;
-    if (discard && unsynced?.length && !(await ask({ title: 'Discard unsynced drafts?', body: `${unsynced.length} job draft(s) on this device have not been accepted by the server. Signing out deletes them from this device. The jobs stay as they are on the server.`, confirm: 'Discard and sign out', danger: true }))) return;
-    await forgetDevice();
+  /**
+   * On a shared phone, "Switch driver" signs out and keeps this person's unsent records on the phone,
+   * under their name only, for when they sign in again (R4-M4). Discarding them is a separate choice.
+   */
+  const signOut = async (mode: 'keep' | 'discard' | 'plain') => {
+    if (mode === 'discard' && !(await ask({ title: 'Discard unsent records?', body: `${unsynced?.length ?? 0} job record(s) on this phone have not reached the office. Signing out this way deletes them. The jobs stay as they are on the server.`, confirm: 'Discard and sign out', danger: true }))) return;
+    await forgetDevice(mode === 'keep');
     await signOutAndForget(qc);
     nav('/signin');
   };
@@ -153,9 +157,9 @@ export function Account() {
       <main className="plain-main" id="main"><div className="page page-narrow">
         <div><Link className="back-link" to="/workspaces"><ChevronLeft aria-hidden />Workspaces</Link><h1 style={{ marginTop: 8 }}>Account</h1><p className="muted wrap-anywhere">{me.data.user.email}</p></div>
         {(sp.get('signout') || (unsynced && unsynced.length > 0)) && unsynced && unsynced.length > 0 && (
-          <Banner tone="warning" title={`${unsynced.length} job draft(s) are not synced yet`}>
-            They are saved only on this device. Open them and sync before signing out, or discard them.
-            <ul>{unsynced.map((d) => <li key={d.jobId}><Link to={`/c/${d.companyId}/today/${d.jobId}`}>Job #{d.jobNumber}</Link>: {d.state === 'conflict' ? 'conflict needs review' : d.state === 'failed' ? 'waiting to sync' : 'saved on this device'}</li>)}</ul>
+          <Banner tone="warning" title={`${unsynced.length} job record${unsynced.length === 1 ? ' hasn\'t' : 's haven\'t'} reached the office`}>
+            They are saved only on this phone. Open them to send them, or use Switch driver below to keep them here for when you sign in again.
+            <ul>{unsynced.map((d) => <li key={d.jobId}><Link to={`/c/${d.companyId}/today/${d.jobId}`}>Job #{d.jobNumber}</Link>: {d.state === 'conflict' ? 'needs your review' : d.state === 'queued' || d.state === 'failed' || d.state === 'pending' ? 'waiting to send' : 'not submitted yet'}</li>)}</ul>
           </Banner>
         )}
         <Card title="Theme" id="theme">
@@ -183,8 +187,11 @@ export function Account() {
         </Card>
         <Card title="Sign out" id="so">
           {unsynced && unsynced.length > 0 ? (
-            <div className="row"><Button variant="danger" icon={<AlertTriangle aria-hidden />} onClick={() => signOut(true)}>Discard drafts and sign out</Button></div>
-          ) : <Button onClick={() => signOut(false)}>Sign out</Button>}
+            <div className="stack-sm">
+              <div className="row"><Button variant="primary" onClick={() => signOut('keep')}>Switch driver</Button><Button variant="danger" icon={<AlertTriangle aria-hidden />} onClick={() => signOut('discard')}>Discard records and sign out</Button></div>
+              <p className="hint" style={{ margin: 0 }}>Switch driver signs you out and keeps your unsent records on this phone. Only you see them when you sign in again; they send then.</p>
+            </div>
+          ) : <div className="row"><Button onClick={() => signOut('plain')}>Sign out</Button></div>}
         </Card>
         <DeleteAccountCard onDeleted={onDeleted} />
         {node}

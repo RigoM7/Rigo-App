@@ -4,7 +4,7 @@ import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, needAny, can, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
-import { canTransition, completionProblems, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, type JobStatus } from '../../shared/jobs.js';
+import { canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, type JobStatus } from '../../shared/jobs.js';
 import { customFieldsSchema, validateValues, readPricing, type FieldDef } from '../../shared/services.js';
 import { quantityChecks, formatMoney, type JobTruck } from '../../shared/billing.js';
 import { paymentState } from '../../shared/invoices.js';
@@ -42,7 +42,7 @@ async function service(q: Q, companyId: string, id: string | null) {
   return rows[0] ?? null;
 }
 
-async function event(q: Q, cc: CompanyCtx, jobId: string, type: string, data: unknown = {}) {
+export async function event(q: Q, cc: CompanyCtx, jobId: string, type: string, data: unknown = {}) {
   await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, actor_label, data) values ($1,$2,$3,$4,$5,$6)`,
     [cc.company.id, jobId, type, cc.user.id, cc.simulatedRole ? `${cc.user.name} (as ${cc.roleName}, simulated)` : '', JSON.stringify(data)]);
 }
@@ -351,11 +351,18 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
   const input = await body(c, z.object({
     userId: z.string().uuid().nullable(), resourceIds: z.array(z.string().uuid()).max(10).default([]),
     scheduledStart: z.string().datetime({ offset: true }).nullable().optional(), scheduledEnd: z.string().datetime({ offset: true }).nullable().optional(), version: z.number().int(),
+    /** The person confirmed taking a started job away from its driver. */
+    confirmStarted: z.boolean().default(false),
   }));
   const out = await cc.db.tx(async (q) => {
     const job = await loadJob(cc, q, c.req.param('id'), true);
     if (job.version !== input.version) throw conflict('This job changed since you loaded it (it may already have been assigned). Reload and try again.');
     if (isFinished(job.status)) throw conflict('Finished jobs cannot be reassigned.');
+    if (job.status === 'in_progress' && job.assigned_user_id && input.userId !== job.assigned_user_id && !input.confirmStarted) {
+      // Taking a started job away needs a deliberate yes: the driver may be on site with work recorded (R9-M2).
+      const name = (await q.query<any>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = $1`, [job.assigned_user_id, cc.company.id])).rows[0]?.name ?? 'The driver';
+      throw conflict(`${name} has already started job #${job.number}.`, { needsConfirm: 'started', driverName: name });
+    }
     // Reassigning work already underway is allowed; it is recorded and the previous driver is told.
     if (input.userId) {
       const m = await q.query(`select 1 from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
@@ -416,88 +423,177 @@ jobRoutes.post('/jobs/:id/start', async (c) => {
   return c.json(out);
 });
 
+// Hand-over on a shared phone or a shift change (R4-M4): the assigned driver gives the job to another
+// driver; status and anything already done stay, and history records who handed it to whom.
+async function workers(q: Q, companyId: string, exceptUserId: string) {
+  return (await q.query<{ id: string; name: string }>(`select m.user_id as id, coalesce(m.display_name, u.name) as name from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+      where m.company_id = $1 and m.status = 'active' and m.user_id <> $2 and (r.is_owner or 'jobs.work' = any(r.permissions)) order by name`, [companyId, exceptUserId])).rows;
+}
+
+jobRoutes.get('/jobs/:id/handover', async (c) => {
+  const cc = c.get('cc');
+  const job = await loadJob(cc, cc.db, c.req.param('id'));
+  if (!isAssignedWorker(cc, job)) throw forbidden('Only the assigned driver can hand this job over.');
+  return c.json({ drivers: await workers(cc.db, cc.company.id, cc.actingUserId) });
+});
+
+jobRoutes.post('/jobs/:id/handover', async (c) => {
+  const cc = c.get('cc');
+  const input = await body(c, z.object({ toUserId: z.string().uuid(), version: z.number().int(), note: z.string().trim().max(500).default('') }));
+  const out = await cc.db.tx(async (q) => {
+    const job = await loadJob(cc, q, c.req.param('id'), true);
+    if (!isAssignedWorker(cc, job)) throw forbidden('Only the assigned driver can hand this job over.');
+    if (isFinished(job.status) || job.status === 'cancelled') throw conflict('This job is finished and cannot be handed over.');
+    if (job.version !== input.version) throw conflict('This job changed. Refresh your list.');
+    const to = (await workers(q, cc.company.id, cc.actingUserId)).find((w) => w.id === input.toUserId);
+    if (!to) throw badRequest('Choose a driver from this company.', { fields: { toUserId: 'Not an eligible driver' } });
+    await q.query(`update rigo.jobs set assigned_user_id = $2, version = version + 1, updated_at = now() where id = $1`, [job.id, to.id]);
+    await event(q, cc, job.id, 'handed_over', { from: cc.actingUserId, to: to.id, toName: to.name, note: input.note });
+    const { notifyUsers } = await import('./inbox.js');
+    await notifyUsers(q, cc.company.id, [to.id], { category: 'update', title: `${cc.user.name} handed you job #${job.number}`, body: input.note || (job.status === 'in_progress' ? 'It is already started.' : 'It is now on your list.'), link: `today/${job.id}` });
+    await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'update', title: `Job #${job.number} handed over to ${to.name}`, body: `By ${cc.user.name}.`, link: `jobs/${job.id}` });
+    return { version: job.version + 1, to: to.name };
+  });
+  return c.json(out);
+});
+
 const dataUrl = z.string().max(4_000_000).regex(/^data:image\/(png|jpeg|webp);base64,/, 'Images must be PNG, JPEG or WebP');
+
+export const completionInput = z.object({
+  submissionId: z.string().min(8).max(80), baseVersion: z.number().int(),
+  outcome: z.enum(['completed', 'partial', 'unsuccessful']), values: z.record(z.string(), z.unknown()).default({}),
+  notes: z.string().max(4000).default(''), reason: z.string().max(2000).default(''),
+  /** Could-not-complete quick reason (R6-m5). */
+  reasonCode: z.enum(REASON_CODE_KEYS).nullable().default(null),
+  photos: z.array(dataUrl).max(MAX_PHOTOS).default([]), signature: dataUrl.nullable().default(null), signerName: z.string().max(120).default(''),
+  /** The customer's name typed instead of drawn, with their agreement (R9-m4); recorded as typed. */
+  signatureTyped: z.boolean().default(false),
+  problem: z.string().max(2000).default(''),
+  /** The driver retyped these quantities to confirm them after a "more than the truck holds" warning. */
+  confirmQuantities: z.record(z.string(), z.string()).default({}),
+  /** Payment taken at the stop (D21): check, cash or a card on a separate terminal. The office confirms it. */
+  collected: z.object({
+    method: z.enum(['check', 'cash', 'card_terminal']), amountMinor: z.number().int().positive('Enter the amount collected').max(100_000_000),
+    reference: z.string().trim().max(80).default(''), photo: dataUrl.nullable().default(null),
+  }).nullable().default(null),
+});
+export type CompletionInput = z.infer<typeof completionInput>;
+
+/** Check a completion against the service (values, required fields, photos, signature, quantities). Throws 400 with field errors. */
+export async function validateCompletion(q: Q, companyId: string, job: any, input: CompletionInput) {
+  if (input.collected?.method === 'check' && !input.collected.reference) throw badRequest('Enter the check number.', { fields: { 'collected.reference': 'Enter the check number' } });
+  const svc = await service(q, companyId, job.service_id);
+  const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request');
+  const vals = validateValues(fields, input.values, { enforceRequired: false });
+  const hasSignature = !!input.signature || (input.signatureTyped && !!input.signerName.trim());
+  // A value that isn't valid ("abc", -50) keeps its own message; it must not read as "is required" (R7-m3).
+  const problems = { ...completionProblems({ ...input, values: vals.clean, photoCount: input.photos.length, hasSignature }, { fields: svc?.fields ?? [], requires_photo: !!svc?.requires_photo, requires_signature: !!svc?.requires_signature }), ...vals.errors };
+  if (Object.keys(problems).length) throw badRequest(Object.keys(vals.errors).length ? 'Some values need attention.' : 'Some required information is missing.', { fields: problems });
+  const quantityReview = await reviewQuantities(q, job, (svc?.fields ?? []) as FieldDef[], vals.clean, input.confirmQuantities);
+  return { values: vals.clean, quantityReview };
+}
+
+/** Store an image from the driver's phone (checked to be a real image, at most 2 MB). */
+export async function saveImage(q: Q, a: { companyId: string; isDemo: boolean; userId: string; subjectType: string; subjectId: string }, url: string, name: string) {
+  const buf = Buffer.from(url.split(',')[1], 'base64');
+  if (buf.length > MAX_IMAGE_BYTES) throw badRequest('Each photo must be 2 MB or smaller.');
+  const mime = sniffImage(buf);
+  if (!mime) throw badRequest('A photo is not a valid image. Take it again or choose another.', { fields: { photos: 'That photo couldn\'t be read' } });
+  const id = crypto.randomUUID();
+  const st = a.isDemo ? { storage: 'database' as const, storage_key: null, data: buf } : storeFile(id, buf);
+  await q.query(`insert into rigo.files (id, company_id, subject_type, subject_id, name, mime, size, storage, storage_key, data, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [id, a.companyId, a.subjectType, a.subjectId, name, mime, buf.length, st.storage, st.storage_key, st.data, a.userId]);
+  return id;
+}
+
+/** Payment taken at the stop: recorded once per submission, waiting for the office to confirm it. It pays the job's invoice, never a second bill. */
+export async function recordCollected(q: Q, cc: CompanyCtx, job: any, input: CompletionInput, checkPhotoId: string | null, recordedBy: string) {
+  if (!input.collected) return;
+  const c2 = input.collected;
+  const inv = (await q.query<any>(`select id from rigo.invoices where job_id = $1 and status <> 'void' order by created_at desc limit 1`, [job.id])).rows[0];
+  const pay = await q.query<{ id: string }>(`insert into rigo.payments (company_id, invoice_id, customer_id, job_id, amount_minor, method, reference, photo_file_id, paid_on, recorded_by, idempotency_key, kind, state, applied_minor)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'payment','unconfirmed',0) on conflict (company_id, idempotency_key) do nothing returning id`,
+    [cc.company.id, inv?.id ?? null, job.customer_id, job.id, c2.amountMinor, c2.method, c2.reference, checkPhotoId, localDate(new Date(), cc.company.timezone), recordedBy, `stop:${input.submissionId}`]);
+  if (!pay.rows[0]) return;
+  await event(q, cc, job.id, 'payment_collected', { method: c2.method });
+  const what = c2.method === 'check' ? `check #${c2.reference}` : c2.method === 'cash' ? 'cash' : `card on the terminal${c2.reference ? ` (${c2.reference})` : ''}`;
+  await notifyPermission(q, cc.company.id, 'payments.record', { category: 'needs_action', title: `Payment collected at job #${job.number}: ${formatMoney(c2.amountMinor, cc.company.currency)}`, body: `Paid by ${what}. Confirm it so it counts toward the invoice.`, link: 'collections', refType: 'payment', refId: pay.rows[0].id });
+}
+
+/**
+ * Record an outcome on a job and start what follows (billing, follow-ups). Used for the driver's own
+ * submission and for a held record the office accepts later (`files` already stored, `submittedBy`
+ * the driver). `implicitStart` is set when the job was never started: history says so.
+ */
+export async function finishJob(q: Q, cc: CompanyCtx, job: any, input: CompletionInput, checked: { values: Record<string, unknown>; quantityReview: string | null },
+  opts: { files?: { photoIds: string[]; signatureId: string | null; checkPhotoId: string | null }; submittedBy?: string; acceptedFrom?: string } = {}) {
+  const ctx = { companyId: cc.company.id, isDemo: cc.isDemo, userId: cc.user.id, subjectType: 'job', subjectId: job.id };
+  let files = opts.files;
+  if (!files) {
+    const photoIds: string[] = [];
+    for (let i = 0; i < input.photos.length; i++) photoIds.push(await saveImage(q, ctx, input.photos[i], `photo-${i + 1}.${input.photos[i].includes('png') ? 'png' : 'jpg'}`));
+    files = { photoIds, signatureId: input.signature ? await saveImage(q, ctx, input.signature, 'signature.png') : null, checkPhotoId: input.collected?.photo ? await saveImage(q, ctx, input.collected.photo, 'check.jpg') : null };
+  }
+  if (job.status === 'open') await event(q, cc, job.id, 'started', { implicit: true, note: 'Recorded with the outcome; the job was not started first.' });
+  const completion = { outcome: input.outcome, values: checked.values, notes: input.notes, reason: input.reason, reasonCode: input.reasonCode, photoIds: files.photoIds, signatureId: files.signatureId,
+    signerName: input.signerName, signatureTyped: input.signatureTyped && !input.signature, submittedAt: new Date().toISOString(), submittedBy: opts.submittedBy ?? cc.user.id,
+    ...(opts.acceptedFrom ? { acceptedBy: cc.user.id, acceptedFrom: opts.acceptedFrom } : {}), ...(checked.quantityReview ? { quantityReview: checked.quantityReview } : {}) };
+  const billing = billingAfterOutcome(input.outcome);
+  await q.query(`update rigo.jobs set status = $2, completion = $3, completion_submission_id = $4, billing_status = $5, completed_at = now(), problem_open = problem_open or $6, version = version + 1, updated_at = now() where id = $1`,
+    [job.id, input.outcome, JSON.stringify(completion), input.submissionId, billing, !!input.problem.trim()]);
+  await event(q, cc, job.id, 'completion', { outcome: input.outcome, values: checked.values, notes: input.notes, reason: input.reason, photos: files.photoIds.length, signed: !!files.signatureId || completion.signatureTyped, typedSignature: completion.signatureTyped, ...(opts.acceptedFrom ? { acceptedFrom: opts.acceptedFrom } : {}) });
+  if (input.problem.trim()) {
+    await event(q, cc, job.id, 'problem', { text: input.problem });
+    await emit(q, cc.company.id, 'job.problem_reported', { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
+  }
+  await recordCollected(q, cc, job, input, files.checkPhotoId, opts.submittedBy ?? cc.user.id);
+  // Downstream work (invoices, follow-ups) starts only now that the server has accepted the record.
+  await emit(q, cc.company.id, `job.${input.outcome}`, { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
+  if (input.outcome !== 'completed') {
+    await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'warning', title: `Job #${job.number}: ${input.outcome === 'partial' ? 'partly completed' : 'could not be completed'}`, body: input.reason, link: `jobs/${job.id}`, refType: 'job', refId: job.id, dedupeKey: `outcome:${job.id}` });
+  }
+  return { accepted: true, duplicate: false, version: job.version + 1, status: input.outcome };
+}
+
+/** Was this person ever assigned this job? (The assignment history says so.) */
+export async function wasAssigned(q: Q, job: any, userId: string) {
+  if (job.assigned_user_id === userId) return true;
+  const r = await q.query(`select 1 from rigo.job_events where job_id = $1 and type in ('assigned','reassigned','unassigned','handed_over') and (data->>'to' = $2 or data->>'from' = $2) limit 1`, [job.id, userId]);
+  return r.rows.length > 0;
+}
 
 jobRoutes.post('/jobs/:id/complete', async (c) => {
   const cc = c.get('cc');
-  const input = await body(c, z.object({
-    submissionId: z.string().min(8).max(80), baseVersion: z.number().int(),
-    outcome: z.enum(['completed', 'partial', 'unsuccessful']), values: z.record(z.string(), z.unknown()).default({}),
-    notes: z.string().max(4000).default(''), reason: z.string().max(2000).default(''),
-    photos: z.array(dataUrl).max(MAX_PHOTOS).default([]), signature: dataUrl.nullable().default(null), signerName: z.string().max(120).default(''),
-    problem: z.string().max(2000).default(''),
-    /** The driver retyped these quantities to confirm them after a "more than the truck holds" warning. */
-    confirmQuantities: z.record(z.string(), z.string()).default({}),
-    /** Payment taken at the stop (D21): check, cash or a card on a separate terminal. The office confirms it. */
-    collected: z.object({
-      method: z.enum(['check', 'cash', 'card_terminal']), amountMinor: z.number().int().positive('Enter the amount collected').max(100_000_000),
-      reference: z.string().trim().max(80).default(''), photo: dataUrl.nullable().default(null),
-    }).nullable().default(null),
-  }));
-  if (input.collected?.method === 'check' && !input.collected.reference) throw badRequest('Enter the check number.', { fields: { 'collected.reference': 'Enter the check number' } });
+  const input = await body(c, completionInput);
+  input.reason = outcomeReason(input.reasonCode, input.reason);
   const out = await cc.db.tx(async (q) => {
-    const job = await loadJob(cc, q, c.req.param('id'), true);
+    const id = c.req.param('id');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound('Job');
+    const job = (await q.query<any>(`select * from rigo.jobs where id = $1 and company_id = $2 for update`, [id, cc.company.id])).rows[0];
+    if (!job) throw notFound('Job');
     // Idempotent: the same submission arriving twice (retry, reconnect) returns the accepted result.
     if (job.completion_submission_id === input.submissionId) return { accepted: true, duplicate: true, version: job.version, status: job.status };
-    if (job.assigned_user_id !== cc.actingUserId || !can(cc, 'jobs.work')) {
-      throw conflict('This job is no longer assigned to you. Your saved draft was kept so the office can review it.', { reason: 'reassigned' });
+    const held = (await q.query<any>(`select id from rigo.pending_submissions where company_id = $1 and submission_id = $2`, [cc.company.id, input.submissionId])).rows[0];
+    if (held) return { accepted: false, pendingReview: true, duplicate: true, message: 'Already sent to the office for review.' };
+    const mine = job.assigned_user_id === cc.actingUserId && can(cc, 'jobs.work');
+    if (!mine) {
+      // Someone who was assigned this job and recorded work on it isn't turned away: the record goes
+      // to the office for review instead of being lost (R9-M2). Anyone else learns nothing.
+      if (!can(cc, 'jobs.work') || !(await wasAssigned(q, job, cc.actingUserId))) throw notFound('Job');
+      const { holdForReview } = await import('./late-records.js');
+      return holdForReview(q, { companyId: cc.company.id, isDemo: cc.isDemo, userId: cc.actingUserId, userName: cc.user.name }, job, input, 'reassigned');
     }
-    if (isFinished(job.status)) throw conflict(`This job was already recorded as ${job.status.replace('_', ' ')}.`, { reason: 'finished', serverStatus: job.status });
+    if (isFinished(job.status)) {
+      const { holdForReview } = await import('./late-records.js');
+      return holdForReview(q, { companyId: cc.company.id, isDemo: cc.isDemo, userId: cc.actingUserId, userName: cc.user.name }, job, input, 'finished');
+    }
     if (job.version !== input.baseVersion) {
-      throw conflict('The office changed this job after you opened it. Review the latest details, then submit again.', { reason: 'changed', serverVersion: job.version });
+      // The office is told, so they know the driver has a record waiting on their edit (R13-m2).
+      await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'needs_action', title: `${cc.user.name} has a record for job #${job.number} that conflicts with an edit`, body: 'They were asked to review the latest details and submit again.', link: `jobs/${job.id}`, refType: 'job_conflict', refId: job.id, dedupeKey: `conflict:${job.id}:${input.submissionId}` });
+      throw conflict('The office changed this job after you opened it. Review what changed, then submit again.', { reason: 'changed', serverVersion: job.version });
     }
-    const svc = await service(q, cc.company.id, job.service_id);
-    const fields = ((svc?.fields ?? []) as FieldDef[]).filter((f) => f.stage !== 'request');
-    const vals = validateValues(fields, input.values, { enforceRequired: false });
-    // A value that isn't valid ("abc", -50) keeps its own message; it must not read as "is required" (R7-m3).
-    const problems = { ...completionProblems({ ...input, values: vals.clean, photoCount: input.photos.length, hasSignature: !!input.signature }, { fields: svc?.fields ?? [], requires_photo: !!svc?.requires_photo, requires_signature: !!svc?.requires_signature }), ...vals.errors };
-    if (Object.keys(problems).length) throw badRequest(Object.keys(vals.errors).length ? 'Some values need attention.' : 'Some required information is missing.', { fields: problems });
-    const quantityReview = await reviewQuantities(q, job, (svc?.fields ?? []) as FieldDef[], vals.clean, input.confirmQuantities);
-    const fileIds: string[] = [];
-    const save = async (url: string, name: string) => {
-      const buf = Buffer.from(url.split(',')[1], 'base64');
-      if (buf.length > MAX_IMAGE_BYTES) throw badRequest('Each photo must be 2 MB or smaller.');
-      const mime = sniffImage(buf);
-      if (!mime) throw badRequest('A photo is not a valid image.');
-      const id = crypto.randomUUID();
-      const st = cc.isDemo ? { storage: 'database' as const, storage_key: null, data: buf } : storeFile(id, buf);
-      await q.query(`insert into rigo.files (id, company_id, subject_type, subject_id, name, mime, size, storage, storage_key, data, created_by) values ($1,$2,'job',$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [id, cc.company.id, job.id, name, mime, buf.length, st.storage, st.storage_key, st.data, cc.user.id]);
-      fileIds.push(id);
-      return id;
-    };
-    for (let i = 0; i < input.photos.length; i++) await save(input.photos[i], `photo-${i + 1}.${input.photos[i].includes('png') ? 'png' : 'jpg'}`);
-    const signatureId = input.signature ? await save(input.signature, 'signature.png') : null;
-    const checkPhotoId = input.collected?.photo ? await save(input.collected.photo, 'check.jpg') : null;
-    const completion = { outcome: input.outcome, values: vals.clean, notes: input.notes, reason: input.reason, photoIds: fileIds.filter((f) => f !== signatureId && f !== checkPhotoId), signatureId, signerName: input.signerName, submittedAt: new Date().toISOString(), submittedBy: cc.user.id,
-      ...(quantityReview ? { quantityReview } : {}) };
-    const billing = billingAfterOutcome(input.outcome);
-    await q.query(`update rigo.jobs set status = $2, completion = $3, completion_submission_id = $4, billing_status = $5, completed_at = now(), problem_open = problem_open or $6, version = version + 1, updated_at = now() where id = $1`,
-      [job.id, input.outcome, JSON.stringify(completion), input.submissionId, billing, !!input.problem.trim()]);
-    await event(q, cc, job.id, 'completion', { outcome: input.outcome, values: vals.clean, notes: input.notes, reason: input.reason, photos: completion.photoIds.length, signed: !!signatureId });
-    if (input.problem.trim()) {
-      await event(q, cc, job.id, 'problem', { text: input.problem });
-      await emit(q, cc.company.id, 'job.problem_reported', { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
-    }
-    if (input.collected) {
-      // Recorded once per submission, waiting for the office to confirm it; it pays the job's invoice, never a second bill.
-      const c2 = input.collected;
-      const inv = (await q.query<any>(`select id from rigo.invoices where job_id = $1 and status <> 'void' order by created_at desc limit 1`, [job.id])).rows[0];
-      const pay = await q.query<{ id: string }>(`insert into rigo.payments (company_id, invoice_id, customer_id, job_id, amount_minor, method, reference, photo_file_id, paid_on, recorded_by, idempotency_key, kind, state, applied_minor)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'payment','unconfirmed',0) on conflict (company_id, idempotency_key) do nothing returning id`,
-        [cc.company.id, inv?.id ?? null, job.customer_id, job.id, c2.amountMinor, c2.method, c2.reference, checkPhotoId, localDate(new Date(), cc.company.timezone), cc.user.id, `stop:${input.submissionId}`]);
-      if (pay.rows[0]) {
-        await event(q, cc, job.id, 'payment_collected', { method: c2.method });
-        const what = c2.method === 'check' ? `check #${c2.reference}` : c2.method === 'cash' ? 'cash' : `card on the terminal${c2.reference ? ` (${c2.reference})` : ''}`;
-        await notifyPermission(q, cc.company.id, 'payments.record', { category: 'needs_action', title: `Payment collected at job #${job.number}: ${formatMoney(c2.amountMinor, cc.company.currency)}`, body: `Paid by ${what}. Confirm it so it counts toward the invoice.`, link: 'collections', refType: 'payment', refId: pay.rows[0].id });
-      }
-    }
-    // Downstream work (invoices, follow-ups) starts only now that the server has accepted the record.
-    await emit(q, cc.company.id, `job.${input.outcome}`, { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
-    if (input.outcome !== 'completed') {
-      await notifyPermission(q, cc.company.id, 'jobs.assign', { category: 'warning', title: `Job #${job.number}: ${input.outcome === 'partial' ? 'partly completed' : 'could not be completed'}`, body: input.reason, link: `jobs/${job.id}`, refType: 'job', refId: job.id, dedupeKey: `outcome:${job.id}` });
-    }
-    return { accepted: true, duplicate: false, version: job.version + 1, status: input.outcome };
+    const checked = await validateCompletion(q, cc.company.id, job, input);
+    return finishJob(q, cc, job, input, checked);
   });
   return c.json(out);
 });

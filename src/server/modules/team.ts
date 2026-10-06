@@ -30,10 +30,10 @@ async function activeOwnerCount(q: Q, companyId: string) {
 
 /** Ends a membership. Open work assigned to the person returns to the unassigned queue, with history. */
 export async function removeMember(q: Q, companyId: string, m: { id: string; user_id: string }, actorId: string, reason = 'Assignee was removed from the company') {
-  await q.query(`update rigo.memberships set status = 'removed', updated_at = now() where id = $1`, [m.id]);
+  await q.query(`update rigo.memberships set status = 'removed', removed_at = now(), updated_at = now() where id = $1`, [m.id]);
   const jobs = await q.query<{ id: string }>(`update rigo.jobs set assigned_user_id = null, version = version + 1, updated_at = now() where company_id = $1 and assigned_user_id = $2 and status in ('draft','open','in_progress') returning id`, [companyId, m.user_id]);
   for (const j of jobs.rows) {
-    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason })]);
+    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason, from: m.user_id })]);
   }
   if (jobs.rows.length) await notifyRoles(q, companyId, ['dispatcher', 'owner'], { category: 'warning', title: `${jobs.rows.length} job(s) need a new driver`, body: 'A member was removed and their open jobs were unassigned.', link: 'jobs?assignee=none' });
   return jobs.rows.length;
@@ -45,7 +45,8 @@ teamRoutes.get('/members', async (c) => {
   const members = await cc.db.query(
     `select m.id, m.user_id, coalesce(m.display_name, u.name) as name, ${can(cc, 'customers.contact') || can(cc, 'members.manage') ? 'u.email' : 'null as email'},
             m.role_key, r.name as role_name, r.is_owner, m.is_fictional, m.created_at,
-            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status in ('open','in_progress')) as open_jobs
+            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status in ('open','in_progress')) as open_jobs,
+            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status = 'in_progress') as started_jobs
        from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
       where m.company_id = $1 and m.status = 'active' order by r.is_owner desc, name`, [cc.company.id]);
   const invitations = can(cc, 'members.invite')
@@ -346,7 +347,7 @@ export async function acceptInvitation(q: Q, user: { id: string; email: string; 
   if (!upd.rows.length) throw conflict('This invitation has already been used.');
   const existing = await q.query<any>(`select id, status from rigo.memberships where company_id = $1 and user_id = $2`, [inv.company_id, user.id]);
   if (existing.rows[0]?.status === 'active') return { companyId: inv.company_id, already: true };
-  if (existing.rows[0]) await q.query(`update rigo.memberships set status = 'active', role_key = $2, updated_at = now() where id = $1`, [existing.rows[0].id, inv.role_key]);
+  if (existing.rows[0]) await q.query(`update rigo.memberships set status = 'active', removed_at = null, role_key = $2, updated_at = now() where id = $1`, [existing.rows[0].id, inv.role_key]);
   else await q.query(`insert into rigo.memberships (company_id, user_id, role_key) values ($1,$2,$3)`, [inv.company_id, user.id, inv.role_key]);
   await audit(q, { company: { id: inv.company_id }, user }, 'invitation.accepted', { invitationId: inv.id, role: inv.role_key });
   const roleName = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [inv.company_id, inv.role_key])).rows[0]?.name ?? inv.role_key;

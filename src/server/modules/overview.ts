@@ -59,6 +59,11 @@ overviewRoutes.get('/overview', async (c) => {
     if (j.exceptions) attention.push({ key: 'exceptions', label: 'Partial or unsuccessful visits (last 3 days)', count: j.exceptions, link: 'jobs?status=finished', tone: 'warning' });
     if (j.drafts) attention.push({ key: 'drafts', label: 'Draft jobs missing information', count: j.drafts, link: 'jobs?status=draft', tone: 'action' });
   }
+  if (can(cc, 'jobs.assign')) {
+    // Records drivers sent after their job moved on (reassigned, finished, or they were removed).
+    const r = (await db.query<{ n: number }>(`select count(*)::int n from rigo.pending_submissions where company_id = $1 and status = 'pending'`, [cid])).rows[0].n;
+    if (r) attention.unshift({ key: 'driver_records', label: 'Driver records to review', count: r, link: 'jobs/records', tone: 'action' });
+  }
 
   let today_ops = null;
   if (can(cc, 'jobs.view_all')) {

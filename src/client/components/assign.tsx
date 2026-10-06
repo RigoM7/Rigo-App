@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCompany } from '../lib/session';
 import { post, ApiError } from '../lib/api';
-import { GuideTarget, useToast } from './ui';
+import { GuideTarget, useToast, useConfirm } from './ui';
 
 // Keys that move through a closed native select. In some browsers each press changes the value (and
 // fires "change"), so keyboard changes wait until the person settles, leaves the menu or presses Enter.
@@ -16,6 +16,7 @@ const KEYBOARD_SETTLE_MS = 1200;
 export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
   const c = useCompany();
   const toast = useToast();
+  const confirm = useConfirm();
   const drivers = c.members.filter((m) => m.role_key === 'driver' || m.role_key === 'owner' || m.role_key === 'dispatcher');
   const saved = job.assigned_user_id ?? '';
   const [val, setVal] = useState<string>(saved);
@@ -37,7 +38,16 @@ export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     setBusy(true); setError('');
     try {
-      const r = await post(`/c/${c.cid}/jobs/${job.id}/assign`, { userId: to || null, resourceIds: (job.resources ?? []).map((x: any) => x.id), version: version.current });
+      const send = (confirmStarted: boolean) => post(`/c/${c.cid}/jobs/${job.id}/assign`, { userId: to || null, resourceIds: (job.resources ?? []).map((x: any) => x.id), version: version.current, confirmStarted });
+      let r;
+      try { r = await send(false); }
+      catch (e) {
+        // A driver who already started the job is only replaced after a deliberate yes (R9-M2).
+        if (!(e instanceof ApiError) || e.details?.needsConfirm !== 'started') throw e;
+        const yes = await confirm.ask({ title: e.message, body: <p>{e.details.driverName} is no longer assigned once you continue. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' });
+        if (!yes) { setVal(current.current); return; }
+        r = await send(true);
+      }
       version.current = r.version;
       current.current = to;
       setVal(to);
@@ -81,6 +91,7 @@ export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
         {busy ? <span className="qa-state" role="status"><span className="spinner" aria-hidden />Saving…</span> : pending ? <span className="qa-state">Not saved yet: saves when you leave the menu or press Enter</span> : null}
         {error ? <span id={errId} className="qa-error" role="alert">Not changed: {error}</span> : null}
       </span>
+      {confirm.node}
     </GuideTarget>
   );
 }

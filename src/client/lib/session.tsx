@@ -1,7 +1,7 @@
 import type { GuideProgress } from '../../shared/demo';
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { get, post } from './api';
+import { get, post, ApiError, OFFLINE } from './api';
 import type { Permission } from '../../shared/permissions';
 import { applyTheme, type ThemePref } from './theme';
 
@@ -12,12 +12,36 @@ export interface Me {
   devMailbox: boolean;
   /** How account email reaches people here: a real service, the local simulated mailbox, or none. */
   emailChannel: 'email' | 'mailbox' | 'none';
+  /** Set when there was no signal and this is the copy saved on this device (when it was saved). */
+  offlineSince?: string;
 }
 
-const fetchMe = () => get<Me>('/auth/me');
+const isOffline = (e: unknown) => e instanceof ApiError && (e.code === OFFLINE || e.status === 0);
 
+/** Who is signed in. With no signal, the last answer saved on this device, so the driver screens still open (R13-C1). */
+async function fetchMe(): Promise<Me> {
+  try {
+    const me = await get<Me>('/auth/me');
+    const off = await import('./offline');
+    if (me.user) void off.cacheMe(me);
+    else {
+      // Signed out on the server (expired, or signed out elsewhere): the device copy goes; unsent drafts stay with their owner.
+      const last = await off.cachedMe<Me>();
+      if (last) void off.clearUserData(last.uid, { keepDrafts: true });
+    }
+    return me;
+  } catch (e) {
+    if (!isOffline(e)) throw e;
+    const { cachedMe } = await import('./offline');
+    const c = await cachedMe<Me>();
+    if (!c) throw e;
+    return { ...c.me, offlineSince: c.cachedAt };
+  }
+}
+
+// networkMode "always": with no signal the query still runs and answers from the device copy, instead of pausing.
 export function useMe() {
-  return useQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 30_000 });
+  return useQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 30_000, networkMode: 'always' });
 }
 
 /**
@@ -50,6 +74,8 @@ export interface Boot {
   members: { id: string; name: string; role_key: string }[];
   roles: { key: string; name: string; canApprove?: boolean }[];
   me: { id: string; actingUserId: string };
+  /** Set when there was no signal and these are the settings saved on this device. */
+  offlineSince?: string;
 }
 
 interface CompanyCtxValue extends Boot {
@@ -60,8 +86,23 @@ interface CompanyCtxValue extends Boot {
 }
 const Ctx = createContext<CompanyCtxValue | null>(null);
 
-export function useCompanyBoot(cid: string) {
-  return useQuery({ queryKey: [cid, 'boot'], queryFn: () => get<Boot>(`/c/${cid}`), staleTime: 15_000, refetchInterval: 60_000 });
+/** Company settings. Drivers' copies are kept on the device so My jobs opens with no signal. */
+export function useCompanyBoot(cid: string, uid: string | undefined) {
+  return useQuery({
+    queryKey: [cid, 'boot'], staleTime: 15_000, refetchInterval: 60_000, networkMode: 'always',
+    queryFn: async () => {
+      try {
+        const b = await get<Boot>(`/c/${cid}`);
+        if (uid && b.permissions.includes('jobs.work')) void import('./offline').then((o) => o.cacheBoot(uid, cid, b));
+        return b;
+      } catch (e) {
+        if (!isOffline(e) || !uid) throw e;
+        const c = await (await import('./offline')).cachedBoot<Boot>(uid, cid);
+        if (!c) throw e;
+        return { ...c.boot, offlineSince: c.cachedAt };
+      }
+    },
+  });
 }
 
 export function CompanyProvider({ cid, boot, children }: { cid: string; boot: Boot; children: ReactNode }) {

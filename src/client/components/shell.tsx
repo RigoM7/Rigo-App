@@ -7,6 +7,7 @@ import {
   UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
 import { refreshMe, signOutAndForget, useCompany, useMe } from '../lib/session';
+import { useAutoSync } from '../lib/autosync';
 import { get, patch, post } from '../lib/api';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
 import { relTime } from '../lib/format';
@@ -397,6 +398,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
 
 export function AppShell({ children }: { children: ReactNode }) {
   const c = useCompany();
+  useAutoSync(c.me.actingUserId, c.cid, c.can('jobs.work'));
   const items = useNavItems();
   const online = useOnline();
   const loc = useLocation();
@@ -433,7 +435,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <NotificationBell />
         <AccountMenu />
       </header>
-      {!online && <div className="banner banner-warning banner-flat" role="status"><WifiOff aria-hidden /><span><strong>You are offline.</strong> Saved job drafts stay on this device until you reconnect. Other pages may show out-of-date information.</span></div>}
+      {!online || c.offlineSince ? <div className="banner banner-warning banner-flat" role="status"><WifiOff aria-hidden /><span><strong>No signal.</strong> {c.can('jobs.work') ? 'Your jobs and records are saved on this phone; records you submit send automatically when you have signal.' : 'Changes need a connection. Pages may show out-of-date information.'}</span></div> : null}
       {c.company.paused && c.can('workflows.view') && <div className="banner banner-warning banner-flat" role="status"><PauseCircle aria-hidden /><span><strong>Automation is paused.</strong> Queued steps are held; nothing new runs until it is resumed. <Link to={c.to('automation')}>Automation controls</Link></span></div>}
       <div className="layout">
         <nav className="sidebar" aria-label="Main">

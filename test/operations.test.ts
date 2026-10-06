@@ -85,8 +85,10 @@ describe('jobs', () => {
     const [a, b] = [await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, sub), await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, sub)];
     expect(a.status).toBe(200);
     expect(b.body.duplicate).toBe(true);
+    // A different record for the finished job never replaces the outcome: it goes to the office for review (WP5).
     const other = await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, { ...sub, submissionId: 'sub-different1' });
-    expect(other.status).toBe(409);
+    expect(other.status).toBe(200);
+    expect(other.body).toMatchObject({ accepted: false, pendingReview: true });
   });
 
   it('requires completion fields and treats unsuccessful visits differently', async () => {
@@ -110,13 +112,15 @@ describe('jobs', () => {
     expect(auto.body.waiting.some((a: any) => a.type === 'job.create_followup' && a.status === 'proposed')).toBe(true);
   });
 
-  it('a reassigned driver cannot submit, and their draft is reported as a conflict', async () => {
+  it('a reassigned driver cannot complete the job; their record goes to the office for review (R9-M2)', async () => {
     const s = await setup();
     const j = await openFuelJob(s);
     const job = (await s.owner.get(`/c/${s.cid}/jobs/${j.id}`)).body.job;
     await s.owner.post(`/c/${s.cid}/jobs/${j.id}/assign`, { userId: null, resourceIds: [], version: job.version });
     const r = await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, { submissionId: 'sub-reassign1', baseVersion: j.version, outcome: 'completed', values: { delivered_qty: '1' } });
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ accepted: false, pendingReview: true });
+    expect((await s.owner.get(`/c/${s.cid}/jobs/${j.id}`)).body.job.status).toBe('open');
   });
 });
 
