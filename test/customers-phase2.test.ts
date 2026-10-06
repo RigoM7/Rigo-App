@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { triCounty, type TriCounty } from './fixtures/tricounty.js';
 import { rid } from './helpers.js';
-import { duplicateReasons, fold, digits, jobNumberQuery, nameKey, streetLabel, townOf } from '../src/shared/customers.js';
+import { duplicateReasons, looselyMatches, fold, digits, jobNumberQuery, nameKey, streetLabel, townOf } from '../src/shared/customers.js';
 import { fieldApplies, INSPECTION_FIELDS } from '../src/shared/services.js';
 import { reportLines } from '../src/shared/report.js';
 
@@ -27,6 +27,9 @@ describe('customer rules (R5-M1, R5-m1, R5-m5)', () => {
     expect(duplicateReasons({ name: 'Someone', addresses: ['812 Willow Ln, Fairview'] }, { name: 'Grace', addresses: ['812 willow ln, fairview'] })).toEqual(['Same address']);
     expect(duplicateReasons({ name: 'Hollis Family Farm' }, { name: 'Harbor & Vine Events' })).toEqual([]);
     expect(duplicateReasons({ name: 'Bob' }, { name: 'Rob' })).toEqual([]);
+    expect(looselyMatches('Grace Okafor', 'okafr')).toBe(true);
+    expect(looselyMatches('José Núñez', 'nunes')).toBe(true);
+    expect(looselyMatches('Harbor & Vine Events', 'okafor')).toBe(false);
   });
 });
 
@@ -113,6 +116,11 @@ describe('search and the customer page (R5-m1, R17-M3, R5-m2, R5-m3)', () => {
     expect(byName[0]).toMatchObject({ firstAddress: '9 Sycamore Ct, Fairview', town: 'Fairview' });
     expect((await t.marcus.get(`/c/${t.cid}/customers?q=5552010003`)).body.customers.map((c: any) => c.name)).toEqual(['Grace Okafor']);
     expect((await t.marcus.get(`/c/${t.cid}/customers?q=willow`)).body.customers.map((c: any) => c.name)).toEqual(['Grace Okafor']);
+    // A typo still finds them, marked as an approximate match (R5-m1).
+    const typo = (await t.marcus.get(`/c/${t.cid}/customers?q=okafr`)).body;
+    expect([typo.customers.map((c: any) => c.name), typo.approximate]).toEqual([['Grace Okafor'], true]);
+    expect((await t.marcus.get(`/c/${t.cid}/customers?q=ridgline%20construction`)).body.customers.map((c: any) => c.name)).toEqual(['Ridgeline Construction']);
+    expect((await t.marcus.get(`/c/${t.cid}/customers?q=zzzqqq`)).body.customers).toEqual([]);
     // People who aren't shown phone numbers can't search by them either.
     await driversSeeCustomers(t);
     expect((await t.luis.get(`/c/${t.cid}/customers?q=5552010003`)).body.customers).toEqual([]);

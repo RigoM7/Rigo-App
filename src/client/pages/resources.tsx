@@ -60,7 +60,7 @@ export function Resources() {
               <td data-label="Capacity">{r.capacity || '—'}</td>
               <td data-label="Status"><Pill tone={STATUS[r.status][0]}>{STATUS[r.status][1]}</Pill>{r.status === 'out_of_service' && r.out_of_service_until ? <div className="xsmall muted">Back {fmtDate(`${r.out_of_service_until}T12:00:00Z`, 'UTC')}</div> : null}</td>
               <td data-label="Open jobs" className="right num">{r.open_jobs ? <Link to={c.to(`jobs?resource=${r.id}`)}>{r.open_jobs}</Link> : 0}</td>
-              {c.can('resources.edit') && <td data-label=""><div className="row" style={{ gap: 4, flexWrap: 'nowrap' }}><Button size="sm" variant="ghost" icon={<Pencil aria-hidden />} onClick={() => setEdit({ ...r, out_of_service_until: r.out_of_service_until ?? '' })}>Edit</Button>{!r.used ? <Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} aria-label={`Delete ${r.name}`} onClick={() => remove(r)}>Delete</Button> : null}</div></td>}
+              {c.can('resources.edit') && <td data-label=""><div className="row" style={{ gap: 4, flexWrap: 'nowrap' }}><Button size="sm" variant="ghost" icon={<Pencil aria-hidden />} onClick={() => setEdit({ ...r, out_of_service_until: r.out_of_service_until ?? '' })}>Edit</Button>{!r.used ? <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} aria-label={`Delete ${r.name}`} onClick={() => remove(r)}>Delete</Button> : null}</div></td>}
             </tr>
           ))}</tbody>
         </table></div></div>

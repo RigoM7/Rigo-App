@@ -8,7 +8,7 @@ import { applyTheme, type ThemePref } from './theme';
 export interface Me {
   user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean } | null;
   companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null }[];
-  invitations: { id: string; role_name: string; company_name: string; expires_at: string }[];
+  invitations: { id: string; role_name: string; company_name: string; expires_at: string; needsLink?: boolean }[];
   devMailbox: boolean;
   /** How account email reaches people here: a real service, the local simulated mailbox, or none. */
   emailChannel: 'email' | 'mailbox' | 'none';

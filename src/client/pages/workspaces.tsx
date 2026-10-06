@@ -61,7 +61,8 @@ export function Workspaces() {
                 {me.data.invitations.map((i) => (
                   <li key={i.id} className="row-between" style={{ padding: '12px 0' }}>
                     <span className="row"><MailOpen aria-hidden /><span><strong>{i.company_name}</strong><br /><span className="muted small">Join as {i.role_name}</span></span></span>
-                    <Button variant="primary" busy={accept.busy} onClick={() => accept.run(i.id)}>Accept and open</Button>
+                    {i.needsLink ? <span className="small muted" style={{ maxWidth: 260, textAlign: 'right' }}>Open the invitation link you were sent to join. It shows this email address is yours.</span>
+                      : <Button variant="primary" busy={accept.busy} onClick={() => accept.run(i.id)}>Accept and open</Button>}
                   </li>
                 ))}
               </ul>

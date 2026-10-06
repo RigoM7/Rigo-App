@@ -3,7 +3,7 @@ import { type AppEnv, can } from '../http/context.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
 import { DEFAULT_JOB_MINUTES } from '../../shared/jobs.js';
 import { visibleApprovals, approvalSummary } from './approvals.js';
-import { OOS_SQL } from './jobs.js';
+import { OOS_SQL, returnToService } from './jobs.js';
 
 // Owner/dispatcher dashboard: attention first, then today's operations, then a brief business
 // overview. Every number comes from real records; empty companies get setup actions instead.
@@ -61,6 +61,7 @@ overviewRoutes.get('/overview', async (c) => {
     if (j.unassigned_soon) attention.push({ key: 'unassigned', label: 'Jobs today or overdue without a driver', count: j.unassigned_soon, link: 'jobs?assignee=none', tone: 'action' });
     if (j.exceptions) attention.push({ key: 'exceptions', label: 'Partial or unsuccessful visits (last 3 days)', count: j.exceptions, link: 'jobs?status=finished', tone: 'warning' });
     if (j.drafts) attention.push({ key: 'drafts', label: 'Draft jobs missing information', count: j.drafts, link: 'jobs?status=draft', tone: 'action' });
+    await returnToService(db, cid, today);
     const oos = (await db.query<{ n: number }>(`select count(*)::int n from rigo.jobs j where j.company_id = $1 and ${OOS_SQL}`, [cid])).rows[0].n;
     if (oos) attention.push({ key: 'out_of_service', label: 'Jobs on an out-of-service truck', count: oos, link: 'jobs?oos=1', tone: 'action' });
   }

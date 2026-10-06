@@ -11,9 +11,10 @@ import { insertService } from './structure.js';
 import { invalidateApprovalsFor } from '../automation/engine.js';
 import { rebuildHeldInvoice } from './invoicing.js';
 import { notifyUsers, notifyPermission } from './inbox.js';
-import { paymentState } from '../../shared/invoices.js';
+import { paymentState, balanceDue } from '../../shared/invoices.js';
 import { tankSchema } from '../../shared/deliveries.js';
-import { fold, digits, nameKey, duplicateReasons, streetLabel, townOf } from '../../shared/customers.js';
+import { returnToService } from './jobs.js';
+import { fold, digits, nameKey, duplicateReasons, streetLabel, townOf, looselyMatches } from '../../shared/customers.js';
 
 // Customers, service locations, resources (trucks/equipment) and service definitions.
 
@@ -56,6 +57,19 @@ recordRoutes.get('/customers', async (c) => {
       (select count(*)::int from rigo.jobs j where j.customer_id = c.id and j.status in ('draft','open','in_progress')) as open_jobs,
       (select l.address from rigo.locations l where l.customer_id = c.id order by l.created_at limit 1) as first_address
       from rigo.customers c where ${where} order by lower(c.name) limit ${limit}`, vals);
+  // Nothing found: try names with a typo or two (R5-m1), still within this company and its active customers.
+  if (search && !rows.length && /[a-z]{3}/i.test(search)) {
+    const archived = c.req.query('archived') === '1';
+    const names = (await cc.db.query<{ id: string; name: string }>(`select id, name from rigo.customers where company_id = $1 and (archived_at is ${archived ? 'not ' : ''}null) limit 5000`, [cc.company.id])).rows;
+    const ids = names.filter((n) => looselyMatches(n.name, search)).slice(0, limit).map((n) => n.id);
+    if (ids.length) {
+      const near = await cc.db.query(`select c.*, (select count(*)::int from rigo.locations l where l.customer_id = c.id) as location_count,
+          (select count(*)::int from rigo.jobs j where j.customer_id = c.id and j.status in ('draft','open','in_progress')) as open_jobs,
+          (select l.address from rigo.locations l where l.customer_id = c.id order by l.created_at limit 1) as first_address
+          from rigo.customers c where c.company_id = $1 and c.id = any($2) order by lower(c.name)`, [cc.company.id, ids]);
+      return c.json({ customers: near.rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers'), approximate: true });
+    }
+  }
   return c.json({ customers: rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers') });
 });
 
@@ -79,9 +93,13 @@ recordRoutes.get('/customers/:id', async (c) => {
     .map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today) })) : null;
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
   // What they owe: open issued invoices (finance only, R5-m2).
-  const owes = can(cc, 'finance.view') && invoices ? (() => {
-    const open = invoices.filter((i: any) => i.status === 'issued' && i.payment.key !== 'paid');
-    return { balanceMinor: open.reduce((t: number, i: any) => t + Number(i.balance_minor ?? 0), 0), unpaid: open.length, overdue: open.filter((i: any) => i.payment.key === 'overdue').length };
+  // Every issued invoice still owed counts, however old (the list above shows only the newest 50).
+  const owes = can(cc, 'finance.view') && can(cc, 'invoices.view') ? await (async () => {
+    const open = (await cc.db.query<any>(`select total_minor, paid_minor, credited_minor, payment_status, due_date, status from rigo.invoices
+        where customer_id = $1 and company_id = $2 and status = 'issued' and payment_status <> 'paid'`, [c.req.param('id'), cc.company.id])).rows
+      .map((i) => ({ balance: balanceDue({ totalMinor: Number(i.total_minor), paidMinor: Number(i.paid_minor), creditedMinor: Number(i.credited_minor ?? 0) }) ?? 0, state: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today) }))
+      .filter((i) => i.balance > 0);
+    return { balanceMinor: open.reduce((t, i) => t + i.balance, 0), unpaid: open.length, overdue: open.filter((i) => i.state.key === 'overdue').length };
   })() : null;
   const mergedFrom = (await cc.db.query<any>(`select m.id, m.created_at, c2.name, m.undone_at, m.created_at > now() - interval '30 days' as can_undo from rigo.customer_merges m join rigo.customers c2 on c2.id = m.merged_id where m.survivor_id = $1 and m.company_id = $2 order by m.created_at desc limit 10`, [c.req.param('id'), cc.company.id])).rows;
   // A site contact's phone number is contact information: removed for roles without it.
@@ -137,6 +155,8 @@ const customerInput = z.object({
 
 /** Existing customers that look like this one, with the reasons (R5-M1). */
 async function findDuplicates(q: Q, cc: CompanyCtx, cand: { name?: string; email?: string | null; phone?: string | null; address?: string | null }, exceptId: string | null = null) {
+  // Someone who can't see email addresses and phone numbers can't test them against customers either.
+  if (!can(cc, 'customers.contact')) cand = { ...cand, email: '', phone: '' };
   const key = nameKey(cand.name ?? '');
   const d = digits(cand.phone).slice(-10);
   const first = key.split(' ')[0] ?? '';
@@ -145,6 +165,9 @@ async function findDuplicates(q: Q, cc: CompanyCtx, cand: { name?: string; email
        from rigo.customers c where c.company_id = $1 and c.archived_at is null and ($2::uuid is null or c.id <> $2)
         and (rigo.fold(c.name) like $3 or ($4 <> '' and lower(c.email) = $4) or ($5 <> '' and right(rigo.digits(c.phone), 10) = $5)
              or ($6 <> '' and exists (select 1 from rigo.locations l where l.customer_id = c.id and rigo.fold(l.address) = $6)))
+      -- Exact email, phone and address matches first, so a common first name can't push them out.
+      order by ((($4 <> '' and lower(c.email) = $4) or ($5 <> '' and right(rigo.digits(c.phone), 10) = $5)
+             or ($6 <> '' and exists (select 1 from rigo.locations l where l.customer_id = c.id and rigo.fold(l.address) = $6)))) desc, lower(c.name)
       limit 50`,
     [cc.company.id, exceptId, first.length >= 3 ? `%${first.slice(0, 4)}%` : '%', (cand.email ?? '').trim().toLowerCase(), d.length >= 7 ? d : '', cand.address ? fold(cand.address).trim() : '']);
   const contact = can(cc, 'customers.contact');
@@ -285,9 +308,6 @@ async function uniqueName(q: Q, companyId: string, name: string, exceptId: strin
 }
 
 /** Trucks whose "out of service until" day has passed are available again. */
-export async function returnToService(q: Q, companyId: string, today: string) {
-  await q.query(`update rigo.resources set status = 'available', out_of_service_until = null where company_id = $1 and status = 'out_of_service' and out_of_service_until is not null and out_of_service_until <= $2`, [companyId, today]);
-}
 
 recordRoutes.get('/resources', async (c) => {
   const cc = c.get('cc');

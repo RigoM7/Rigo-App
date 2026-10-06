@@ -39,6 +39,17 @@ export function similarNames(a: string, b: string) {
   return x.length >= 6 && distance(x, y, 2) <= 2;
 }
 
+/**
+ * A search that tolerates a typo (R5-m1): every word typed is close to a word of the name ("Okafr"
+ * finds Grace Okafor, "nunes" finds José Núñez). Used when the plain search finds nothing.
+ */
+export function looselyMatches(name: string, query: string) {
+  const words = nameKey(name).split(' ').filter(Boolean);
+  const typed = nameKey(query).split(' ').filter((w) => w.length >= 3);
+  if (!typed.length || !words.length) return false;
+  return typed.every((t) => words.some((w) => w.startsWith(t) || distance(t, w.slice(0, Math.max(t.length, Math.min(w.length, t.length + 1))), 2) <= (t.length >= 6 ? 2 : 1)));
+}
+
 /** The street part of an address ("812 Willow Ln, Fairview" → "812 Willow Ln"), used to label a first location. */
 export function streetLabel(address: string) {
   return address.split(',')[0].trim().slice(0, 80);

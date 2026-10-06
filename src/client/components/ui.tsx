@@ -16,9 +16,9 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button({ 
   );
 });
 
-export function LinkButton({ to, variant = 'default', size, icon, children, block }: { to: string; variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; icon?: ReactNode; children: ReactNode; block?: boolean }) {
+export function LinkButton({ to, variant = 'default', size, icon, children, block, onClick }: { to: string; variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; icon?: ReactNode; children: ReactNode; block?: boolean; onClick?: () => void }) {
   const cls = ['btn', variant !== 'default' && `btn-${variant}`, size && `btn-${size}`, block && 'btn-block'].filter(Boolean).join(' ');
-  return <Link to={to} className={cls}>{icon}{children}</Link>;
+  return <Link to={to} className={cls} onClick={onClick}>{icon}{children}</Link>;
 }
 
 export function IconButton({ label, children, badge, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; badge?: number }) {

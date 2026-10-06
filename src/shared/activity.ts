@@ -1,6 +1,8 @@
 // Plain words for recorded actions in the activity log (R12-m2). Unknown actions fall back to their key.
 
-const money = (m: unknown) => (typeof m === 'number' ? `$${(m / 100).toFixed(2)}` : '');
+import { formatMoney } from './billing.js';
+
+const money = (m: unknown, currency = 'USD') => (typeof m === 'number' ? formatMoney(m, currency) : '');
 
 const TEXT: Record<string, (d: any) => string> = {
   'member.role_changed': (d) => `changed a member's role from ${d.from} to ${d.to}`,
@@ -16,13 +18,13 @@ const TEXT: Record<string, (d: any) => string> = {
   'invoice.issued': (d) => `issued invoice ${d.number ?? ''}`,
   'invoice.approved': () => 'approved an invoice',
   'invoice.edited': () => 'edited a draft invoice',
-  'invoice.credited': (d) => `added a credit note ${money(d.amountMinor)}`,
+  'invoice.credited': (d) => `added a credit note ${money(d.amountMinor, d.currency)}`,
   'invoice.created_manually': () => 'created an invoice by hand',
   'invoice.sent_for_approval': () => 'sent an invoice for approval',
-  'payment.recorded': (d) => `recorded a payment ${money(d.amountMinor)}`,
-  'payment.confirmed': (d) => `confirmed a payment ${money(d.amountMinor)}`,
-  'payment.rejected': (d) => `rejected a payment ${money(d.amountMinor)}${d.reason ? `: ${d.reason}` : ''}`,
-  'payment.refunded': (d) => `recorded a refund ${money(d.amountMinor)}`,
+  'payment.recorded': (d) => `recorded a payment ${money(d.amountMinor, d.currency)}`,
+  'payment.confirmed': (d) => `confirmed a payment ${money(d.amountMinor, d.currency)}`,
+  'payment.rejected': (d) => `rejected a payment ${money(d.amountMinor, d.currency)}${d.reason ? `: ${d.reason}` : ''}`,
+  'payment.refunded': (d) => `recorded a refund ${money(d.amountMinor, d.currency)}`,
   'company.settings_updated': () => 'changed company settings',
   'company.invoice_approval_changed': (d) => `turned the invoice approval rule ${d.required === false || d.to === false ? 'off' : 'on'}`,
   'branding.updated': () => 'changed the branding',
@@ -55,7 +57,7 @@ const TEXT: Record<string, (d: any) => string> = {
   'import.committed': () => 'imported records',
 };
 
-export function activityText(action: string, detail: unknown) {
+export function activityText(action: string, detail: unknown, currency = 'USD') {
   const f = TEXT[action];
-  try { return f ? f(detail ?? {}) : action.replace(/[._]/g, ' '); } catch { return action.replace(/[._]/g, ' '); }
+  try { return f ? f({ ...(detail ?? {}) as object, currency }) : action.replace(/[._]/g, ' '); } catch { return action.replace(/[._]/g, ' '); }
 }

@@ -31,7 +31,8 @@ export function JobReport() {
   const { job, service, customer, location, files, billTo } = q.data;
   const done = !!job.completion;
   const lines = reportLines(service?.fields ?? [], job.details, job.completion?.values);
-  const photos = (files ?? []).filter((f: any) => !f.name.startsWith('signature'));
+  // Site photos only: never the signature (shown on its own) or a photo of the customer's check.
+  const photos = (files ?? []).filter((f: any) => !f.name.startsWith('signature') && !f.payment_photo);
   const signature = (files ?? []).find((f: any) => f.name.startsWith('signature'));
   const inspection = job.details?.service_detail === 'Inspection';
   const title = inspection ? 'Inspection report' : 'Job report';

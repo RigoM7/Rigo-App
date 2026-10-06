@@ -192,7 +192,7 @@ function ActivityLog() {
             {entries.map((e) => (
               <li key={e.id}>
                 <span className="small muted num">{fmtDateTime(e.created_at, c.company.timezone)}</span>
-                <span><strong>{e.actor}</strong> {activityText(e.action, e.detail)}</span>
+                <span><strong>{e.actor}</strong> {activityText(e.action, e.detail, c.company.currency)}</span>
               </li>
             ))}
           </ol>

@@ -35,7 +35,8 @@ customerMergeRoutes.post('/customers/:id/archive', async (c) => {
   need(cc, 'customers.edit');
   await cc.db.tx(async (q) => {
     const cu = await loadCustomer(q, cc, c.req.param('id'), true);
-    const open = (await q.query<{ n: number }>(`select count(*)::int n from rigo.jobs where customer_id = $1 and status in ('draft','open','in_progress')`, [cu.id])).rows[0].n;
+    // Open work at their address, or open work they pay for (a bill-to customer).
+    const open = (await q.query<{ n: number }>(`select count(*)::int n from rigo.jobs where company_id = $2 and (customer_id = $1 or bill_to_customer_id = $1) and status in ('draft','open','in_progress')`, [cu.id, cc.company.id])).rows[0].n;
     if (open) throw conflict(`${cu.name} has ${open} open job${open === 1 ? '' : 's'}. Finish or cancel ${open === 1 ? 'it' : 'them'} before archiving.`);
     await q.query(`update rigo.customers set archived_at = now(), updated_at = now() where id = $1`, [cu.id]);
     await audit(q, cc, 'customer.archived', { id: cu.id, name: cu.name });
@@ -122,6 +123,9 @@ customerMergeRoutes.post('/customer-merges/:id/undo', async (c) => {
     if (!m) throw notFound('Merge');
     if (m.undone_at) throw conflict('This merge was already undone.');
     if (!m.recent) throw conflict('Merges can be undone for 30 days. This one is older.');
+    // The records moved on with a later merge: undo that one first, or nothing would come back.
+    const kept = (await q.query<any>(`select name, merged_into from rigo.customers where id = $1`, [m.survivor_id])).rows[0];
+    if (kept?.merged_into) throw conflict(`${kept.name} was merged into another customer since. Undo that merge first.`);
     for (const [key, ids] of Object.entries(m.moved as Record<string, string[]>)) {
       const [table, column] = key.split('.');
       if (!/^[a-z_]+$/.test(table) || !/^[a-z_]+$/.test(column)) continue;

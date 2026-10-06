@@ -130,6 +130,15 @@ const listSelect = `select j.id, j.number, j.status, j.priority, j.billing_statu
   left join rigo.memberships m on m.company_id = j.company_id and m.user_id = j.assigned_user_id`;
 
 /** Open jobs that still use a truck or unit that is out of service or retired. */
+/**
+ * Trucks whose "out of service until" date has come are available again (R11-M1). Run before
+ * anything that reads truck status: the trucks page, Home, the jobs list, assigning and swapping.
+ */
+export async function returnToService(q: Q, companyId: string, today: string) {
+  await q.query(`update rigo.resources set status = 'available', out_of_service_until = null where company_id = $1 and status = 'out_of_service' and out_of_service_until is not null and out_of_service_until <= $2`, [companyId, today]);
+}
+const backInService = (cc: CompanyCtx, q: Q = cc.db) => returnToService(q, cc.company.id, localDate(new Date(), cc.company.timezone));
+
 export const OOS_SQL = `(j.status in ('open','in_progress') and exists (select 1 from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id and r.status in ('out_of_service','retired')))`;
 
 /** Open jobs whose time window has ended without being started (same rule as isLate in shared/jobs). */
@@ -143,6 +152,7 @@ function scheduleOrder(tzParam: string) {
 jobRoutes.get('/jobs', async (c) => {
   const cc = c.get('cc');
   needAny(cc, 'jobs.view_all', 'jobs.view_assigned');
+  await backInService(cc); // the list marks trucks out of service
   const vals: unknown[] = [cc.company.id];
   const where = ['j.company_id = $1'];
   const add = (sql: string, v: unknown) => { vals.push(v); where.push(sql.replace('?', `$${vals.length}`)); };
@@ -227,6 +237,10 @@ jobRoutes.get('/jobs/:id', async (c) => {
   const live = job.location_id ? (await cc.db.query<any>(`select * from rigo.locations where id = $1`, [job.location_id])).rows[0] : null;
   // The site contact's phone is for people who see contact details and the driver doing the job.
   if (live && !can(cc, 'customers.contact') && !isAssignedWorker(cc, job)) live.site_contact_phone = undefined;
+  // Drivers see only the location fields marked for them (R5-M2), here as on My jobs.
+  const allLocationFields = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).locations;
+  const locationFields = can(cc, 'jobs.view_all') ? allLocationFields : allLocationFields.filter((f) => f.driverVisible);
+  if (live && !can(cc, 'jobs.view_all')) live.custom = Object.fromEntries(Object.entries(live.custom ?? {}).filter(([k]) => locationFields.some((f) => f.key === k)));
   // The job shows the address it was booked for; if the location was edited since, both are shown.
   const snap = job.location_snapshot;
   const location = live ? { ...live, ...(snap ? { label: snap.label ?? live.label, address: snap.address ?? live.address, access_instructions: snap.access ?? live.access_instructions, site_contact: snap.siteContact ?? live.site_contact } : {}),
@@ -234,7 +248,8 @@ jobRoutes.get('/jobs/:id', async (c) => {
   const resources = (await cc.db.query(`select r.id, r.name, r.kind, r.identifier from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = $1`, [job.id])).rows;
   const events = (await cc.db.query(`select e.id, e.type, e.data, e.created_at, e.actor_label, u.name as actor_name from rigo.job_events e left join rigo.users u on u.id = e.actor_user_id where e.job_id = $1 order by e.created_at`, [job.id])).rows;
   // A photo of a check shows the amount and bank details: only people who see money get it.
-  const files = (await cc.db.query(`select id, name, mime, size, created_at from rigo.files f where company_id = $1 and subject_type = 'job' and subject_id = $2
+  const files = (await cc.db.query(`select id, name, mime, size, created_at,
+        exists (select 1 from rigo.payments p where p.company_id = f.company_id and p.photo_file_id = f.id) as payment_photo from rigo.files f where company_id = $1 and subject_type = 'job' and subject_id = $2
       ${can(cc, 'finance.view') ? '' : 'and not exists (select 1 from rigo.payments p where p.company_id = f.company_id and p.photo_file_id = f.id)'} order by created_at`, [cc.company.id, job.id])).rows;
   // The invoice that bills this job is the newest one that isn't void; voided ones are listed for history.
   const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, delivery_status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor, paid_minor, credited_minor' : 'null as total_minor'}, currency, hold_reasons, void_reason, replaces_invoice_id
@@ -251,7 +266,7 @@ jobRoutes.get('/jobs/:id', async (c) => {
     service: svc ? { id: svc.id, name: svc.name, category: svc.category, fields: svc.fields, requiresPhoto: svc.requires_photo, requiresSignature: svc.requires_signature } : null,
     customer, location, resources, events, files, invoice, voidedInvoices, collected, messages, customFields,
     billTo: job.bill_to_customer_id ? (await cc.db.query<any>(`select id, name from rigo.customers where id = $1 and company_id = $2`, [job.bill_to_customer_id, cc.company.id])).rows[0] ?? null : null,
-    locationFields: customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).locations,
+    locationFields,
     can: {
       edit: can(cc, 'jobs.edit') && !isFinished(job.status), assign: can(cc, 'jobs.assign') && !isFinished(job.status),
       work: isAssignedWorker(cc, job) && ['open', 'in_progress'].includes(job.status), correct: can(cc, 'jobs.correct') && isFinished(job.status) && job.status !== 'cancelled',
@@ -320,13 +335,21 @@ const jobInput = z.object({
 
 async function validateRefs(q: Q, cc: CompanyCtx, input: z.infer<typeof jobInput>) {
   // References must belong to this company; ids from another company are rejected as not found.
-  if (input.customerId) { const r = await q.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [input.customerId, cc.company.id]); if (!r.rows.length) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } }); }
+  if (input.customerId) {
+    const r = await q.query<{ archived: boolean }>(`select archived_at is not null as archived from rigo.customers where id = $1 and company_id = $2`, [input.customerId, cc.company.id]);
+    if (!r.rows.length) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
+    if (r.rows[0].archived) throw badRequest('That customer is archived. Restore them first, or choose another.', { fields: { customerId: 'Archived customer' } });
+  }
   if (input.locationId) {
     const r = await q.query<any>(`select customer_id from rigo.locations where id = $1 and company_id = $2`, [input.locationId, cc.company.id]);
     if (!r.rows.length) throw badRequest('Choose a location from this company.', { fields: { locationId: 'Unknown location' } });
     if (input.customerId && r.rows[0].customer_id !== input.customerId) throw badRequest('That location belongs to a different customer.', { fields: { locationId: 'Belongs to another customer' } });
   }
-  if (input.billToCustomerId) { const r = await q.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [input.billToCustomerId, cc.company.id]); if (!r.rows.length) throw badRequest('Choose who pays from this company\'s customers.', { fields: { billToCustomerId: 'Unknown customer' } }); }
+  if (input.billToCustomerId) {
+    const r = await q.query<{ archived: boolean }>(`select archived_at is not null as archived from rigo.customers where id = $1 and company_id = $2`, [input.billToCustomerId, cc.company.id]);
+    if (!r.rows.length) throw badRequest('Choose who pays from this company\'s customers.', { fields: { billToCustomerId: 'Unknown customer' } });
+    if (r.rows[0].archived) throw badRequest('That customer is archived. Restore them first, or choose another.', { fields: { billToCustomerId: 'Archived customer' } });
+  }
   const svc = input.serviceId ? await service(q, cc.company.id, input.serviceId) : null;
   if (input.serviceId && !svc) throw badRequest('Choose a service from this company.', { fields: { serviceId: 'Unknown service' } });
   if (input.scheduledStart && input.scheduledEnd && input.scheduledEnd <= input.scheduledStart) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
@@ -442,6 +465,7 @@ jobRoutes.post('/jobs/:id/status', async (c) => {
 jobRoutes.post('/jobs/:id/assign', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.assign');
+  await backInService(cc);
   const input = await body(c, z.object({
     userId: z.string().uuid().nullable(), resourceIds: z.array(z.string().uuid()).max(10).default([]),
     scheduledStart: z.string().datetime({ offset: true }).nullable().optional(), scheduledEnd: z.string().datetime({ offset: true }).nullable().optional(), version: z.number().int(),
@@ -530,6 +554,7 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
 jobRoutes.post('/jobs/swap-resource', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.assign');
+  await backInService(cc);
   const input = await body(c, z.object({ fromId: z.string().uuid(), toId: z.string().uuid(), jobIds: z.array(z.string().uuid()).min(1).max(200) }));
   if (input.fromId === input.toId) throw badRequest('Choose a different truck.', { fields: { toId: 'Same truck' } });
   const out = await cc.db.tx(async (q) => {
@@ -577,7 +602,8 @@ jobRoutes.post('/jobs/:id/report-message', async (c) => {
     if (!to) throw conflict('Choose the customer for this job before preparing its report.');
     const svc = await service(q, cc.company.id, job.service_id);
     const addr = job.location_snapshot?.address ?? (job.location_id ? (await q.query<any>(`select address from rigo.locations where id = $1`, [job.location_id])).rows[0]?.address : null) ?? null;
-    const photos = (await q.query<{ n: number }>(`select count(*)::int n from rigo.files where company_id = $1 and subject_type = 'job' and subject_id = $2 and name not like 'signature%'`, [cc.company.id, job.id])).rows[0].n;
+    const photos = (await q.query<{ n: number }>(`select count(*)::int n from rigo.files where company_id = $1 and subject_type = 'job' and subject_id = $2 and name not like 'signature%'
+        and not exists (select 1 from rigo.payments p where p.company_id = rigo.files.company_id and p.photo_file_id = rigo.files.id)`, [cc.company.id, job.id])).rows[0].n;
     const lines = reportLines((svc?.fields ?? []) as FieldDef[], job.details, job.completion.values);
     const inspection = job.details?.service_detail === 'Inspection';
     const text = reportText({ company: cc.company.name, companyPhone: cc.company.phone, customer: to.name, jobNumber: job.number, serviceName: svc?.name ?? 'Service', address: addr,
