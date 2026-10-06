@@ -69,6 +69,8 @@ billingRoutes.get('/invoices/:id', async (c) => {
     invoice: { ...serializeInvoice(cc, inv), customerName: extra?.customer_name, customerEmail: can(cc, 'customers.contact') ? extra?.customer_email : undefined, billingAddress: can(cc, 'customers.contact') ? extra?.billing_address : undefined,
       jobNumber: extra?.job_number, completedAt: extra?.completed_at, locationAddress: extra?.location_address, serviceName: extra?.service_name },
     lines, payments, approvals, messages,
+    // The service's tax rate, so new lines start taxable when tax applies.
+    taxRateBp: fin ? (inv.job_id ? (await cc.db.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1 and j.company_id = $2`, [inv.job_id, cc.company.id])).rows[0]?.tax_rate_bp ?? null : null) : undefined,
     company: { name: co.name, phone: co.phone, email: co.email, address: co.address, logo: !!co.branding?.logoFileId, accent: co.branding?.accent ?? null },
     approvalRequired: co.settings?.invoiceApprovalRequired !== false,
     can: { edit: can(cc, 'invoices.edit') && fin && ['held', 'draft', 'pending_approval', 'approved'].includes(inv.status), approve: can(cc, 'invoices.approve') && ['draft', 'pending_approval'].includes(inv.status),
@@ -81,6 +83,8 @@ const lineSchema = z.object({
   description: z.string().trim().min(1, 'Enter a description').max(200), quantity: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Enter a quantity like 12 or 12.5'),
   unit: z.string().max(20).default(''), rateE4: z.number().int().min(0).max(1_000_000_000_000).nullable(), taxable: z.boolean().default(false), kind: z.enum(['charge', 'discount']).default('charge'),
   note: z.string().max(300).default(''),
+  /** The stored line this edits: unchanged lines keep their amount (a minimum charge) and price history. */
+  id: z.string().uuid().optional(),
 });
 
 billingRoutes.put('/invoices/:id/lines', async (c) => {
@@ -91,7 +95,14 @@ billingRoutes.put('/invoices/:id/lines', async (c) => {
     const inv = await loadInvoice(cc, q, c.req.param('id'), true);
     if (inv.version !== input.version) throw conflict('This invoice changed since you opened it. Reload to see the latest version.');
     if (!['held', 'draft', 'pending_approval', 'approved'].includes(inv.status)) throw conflict('Issued or voided invoices cannot be edited.');
-    const lines: DraftLine[] = input.lines.map((l) => ({ ...l, amountMinor: l.kind === 'discount' ? (l.rateE4 === null ? null : -Math.abs(lineAmount(l.quantity, l.rateE4) as number)) : lineAmount(l.quantity, l.rateE4) }));
+    const before = new Map((await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1`, [inv.id])).rows.map((r) => [r.id as string, lineFromRow(r)]));
+    const lines: DraftLine[] = input.lines.map(({ id, ...l }) => {
+      // A line whose quantity and rate weren't touched keeps what pricing worked out (a minimum
+      // charge, the price date, a price change since booking); anything edited is recomputed.
+      const o = id ? before.get(id) : undefined;
+      if (o && o.kind === l.kind && o.quantity === l.quantity && o.rateE4 === l.rateE4) return { ...l, amountMinor: o.amountMinor, note: o.note ?? '', priceDate: o.priceDate ?? null, bookedRateE4: o.bookedRateE4 ?? null };
+      return { ...l, note: '', amountMinor: l.kind === 'discount' ? (l.rateE4 === null ? null : -Math.abs(lineAmount(l.quantity, l.rateE4) as number)) : lineAmount(l.quantity, l.rateE4) };
+    });
     const svcTax = (await q.query<any>(`select s.tax_rate_bp from rigo.jobs j join rigo.services s on s.id = j.service_id where j.id = $1`, [inv.job_id])).rows[0]?.tax_rate_bp ?? null;
     const taxExempt = !!(await q.query<any>(`select tax_exempt from rigo.customers where id = $1`, [inv.customer_id])).rows[0]?.tax_exempt;
     const totals = computeTotals(lines, input.taxRateBp !== undefined ? input.taxRateBp : svcTax, [], { taxExempt });

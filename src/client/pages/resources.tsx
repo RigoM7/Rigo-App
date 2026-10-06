@@ -51,7 +51,7 @@ export function Resources() {
           <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />}</Field>
           <div className="grid-2">
             <Field label="Identifier or plate" optionalText id="f-identifier">{(p) => <Input {...p} maxLength={60} value={edit.identifier} onChange={(e) => setEdit({ ...edit, identifier: e.target.value })} />}</Field>
-            <Field label="Capacity" optionalText id="f-capacity" hint="For example: 3,000 gal">{(p) => <Input {...p} maxLength={60} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
+            <Field label="Capacity" optionalText id="f-capacity" hint="A number and unit, like 3,000 gal. Rigo asks the driver to confirm any delivery larger than this.">{(p) => <Input {...p} maxLength={60} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
           </div>
           <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={1000} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />}</Field>
         </div>}

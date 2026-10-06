@@ -10,6 +10,7 @@ import { fmtTime, fmtDate, relTime } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
 import { OUTCOMES, completionProblems } from '../../shared/jobs';
+import { quantityChecks } from '../../shared/billing';
 import { useDocumentTitle } from '../lib/title';
 
 interface MyJobs { jobs: any[]; userId: string; companyId: string; fetchedAt: string }
@@ -201,8 +202,18 @@ export function DriverJob() {
     for (const f of [...files].slice(0, 4 - urls.length)) urls.push(await downscale(f));
     update({ photos: urls });
   };
+  // Unusual quantities (more than the truck holds, or 3× the request) need typing a second time.
+  const checks = d.outcome === 'completed' ? quantityChecks(compFields, d.values, job.details ?? {}, job.resources ?? []) : [];
+  const unconfirmed = checks.filter((q) => (d.confirmQuantities?.[q.field] ?? '').trim().replace(',', '.') !== String(d.values[q.field]));
+  const numberError = (f: any) => {
+    const raw = d.values[f.key];
+    if (f.type !== 'number' || raw === undefined || raw === '') return undefined;
+    return /^\d+(\.\d+)?$/.test(String(raw).trim()) ? undefined : `${f.label} must be a number of zero or more, like 250 or 12.5`;
+  };
   const submit = async () => {
-    const probs = completionProblems({ ...d, photoCount: d.photos.length, hasSignature: !!d.signature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature });
+    const probs: Record<string, string> = completionProblems({ ...d, photoCount: d.photos.length, hasSignature: !!d.signature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature });
+    for (const f of compFields) { const e = numberError(f); if (e) probs[f.key] = e; }
+    for (const q of unconfirmed) probs[q.field] ??= `${q.message} Type it again to confirm, or correct it.`;
     setLocalErrors(probs);
     if (Object.keys(probs).length) { setTimeout(() => summaryRef.current?.focus(), 0); return; }
     const isFinal = await ask({ title: d.outcome === 'completed' ? 'Submit as completed?' : `Submit as ${OUTCOMES[d.outcome].toLowerCase()}?`, body: d.outcome === 'completed' ? 'The office will see this job as completed and billing can start once the server accepts it.' : 'The office is told so they can follow up. This visit will not be billed automatically as a successful job.', confirm: 'Submit' });
@@ -266,7 +277,7 @@ export function DriverJob() {
           <section className="card stack" aria-labelledby="checklist-h" data-guide-target="driver-record">
             <h2 id="checklist-h">Record the outcome</h2>
             {errorEntries.length > 0 && (
-              <div ref={summaryRef} tabIndex={-1} role="alert" className="banner banner-danger"><AlertTriangle aria-hidden /><div><strong>Some required information is missing</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{errorEntries.map(([k, v]) => <li key={k}><a href={`#f-details-${k}`}>{v}</a></li>)}</ul></div></div>
+              <div ref={summaryRef} tabIndex={-1} role="alert" className="banner banner-danger"><AlertTriangle aria-hidden /><div><strong>Check these before submitting</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{errorEntries.map(([k, v]) => <li key={k}><a href={`#f-details-${k}`}>{v}</a></li>)}</ul></div></div>
             )}
             <fieldset><legend>How did it go?</legend>
               <div className="big-choice">
@@ -274,7 +285,24 @@ export function DriverJob() {
               </div>
             </fieldset>
             {d.outcome !== 'completed' && <Field label="What happened?" id="f-details-reason" error={localErrors.reason}>{(p) => <Textarea {...p} maxLength={2000} value={d.reason} onChange={(e) => update({ reason: e.target.value })} />}</Field>}
-            {compFields.map((f: any) => <DynamicField key={f.key} f={{ ...f, required: f.required && d.outcome === 'completed' }} value={d.values[f.key]} error={localErrors[f.key]} onChange={(x) => update({ values: { ...d.values, [f.key]: x } })} />)}
+            {compFields.map((f: any) => {
+              const check = checks.find((q) => q.field === f.key);
+              const fieldError = numberError(f) ?? localErrors[f.key];
+              return (
+                <div key={f.key} className="stack-sm">
+                  <DynamicField f={{ ...f, required: f.required && d.outcome === 'completed' }} value={d.values[f.key]} error={fieldError} onChange={(x) => update({ values: { ...d.values, [f.key]: x } })} />
+                  {check && !numberError(f) && (
+                    <div className="qty-confirm" role="group" aria-labelledby={`qc-${f.key}`}>
+                      <p id={`qc-${f.key}`} className="qty-confirm-msg"><AlertTriangle aria-hidden />{check.message}</p>
+                      <Field label={`Type ${d.values[f.key]}${f.unit ? ` ${f.unit}` : ''} again to confirm`} id={`f-details-confirm-${f.key}`} hint="The office checks it before the invoice goes out.">
+                        {(p) => <Input {...p} className="input num-input" inputMode="decimal" autoComplete="off" value={d.confirmQuantities?.[f.key] ?? ''} onChange={(e) => update({ confirmQuantities: { ...d.confirmQuantities, [f.key]: e.target.value.replace(',', '.') } })} />}
+                      </Field>
+                      {!unconfirmed.some((q) => q.field === f.key) && <p className="small" style={{ margin: 0 }}><CheckCircle2 aria-hidden className="qty-ok" /> Confirmed</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <Field label="Notes" optionalText id="f-details-notes">{(p) => <Textarea {...p} maxLength={4000} value={d.notes} onChange={(e) => update({ notes: e.target.value })} />}</Field>
             <div className="field" id="f-details-photos">
               <span className="label">Photos{job.requires_photo && d.outcome === 'completed' ? '' : <span className="muted" style={{ fontWeight: 400 }}> (optional)</span>}</span>

@@ -34,6 +34,8 @@ export interface Draft {
   userId: string; companyId: string; jobId: string; jobNumber: number; baseVersion: number; submissionId: string;
   outcome: 'completed' | 'partial' | 'unsuccessful'; values: Record<string, string>; notes: string; reason: string; problem: string;
   photos: string[]; signature: string | null; signerName: string;
+  /** Quantities the driver typed a second time to confirm an unusual amount (more than the truck holds). */
+  confirmQuantities?: Record<string, string>;
   state: DraftState; message?: string; fields?: Record<string, string>; updatedAt: string;
 }
 
@@ -75,7 +77,7 @@ export async function syncDraft(d: Draft): Promise<Draft> {
   try {
     await post(`/c/${d.companyId}/jobs/${d.jobId}/complete`, {
       submissionId: d.submissionId, baseVersion: d.baseVersion, outcome: d.outcome, values: d.values, notes: d.notes, reason: d.reason,
-      photos: d.photos, signature: d.signature, signerName: d.signerName, problem: d.problem,
+      photos: d.photos, signature: d.signature, signerName: d.signerName, problem: d.problem, confirmQuantities: d.confirmQuantities ?? {},
     });
     const done = { ...d, state: 'accepted' as const, message: 'Accepted by the server.', fields: undefined, updatedAt: new Date().toISOString() };
     await saveDraft(done);

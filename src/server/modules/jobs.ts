@@ -6,7 +6,7 @@ import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { canTransition, completionProblems, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, type JobStatus } from '../../shared/jobs.js';
 import { customFieldsSchema, validateValues, readPricing, type FieldDef } from '../../shared/services.js';
-import { checkQuantity } from '../../shared/billing.js';
+import { quantityChecks, type JobTruck } from '../../shared/billing.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
 import { notifyPermission, notifyRoles } from './inbox.js';
@@ -123,7 +123,7 @@ jobRoutes.get('/my/jobs', async (c) => {
             j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at,
             c.name as customer_name, l.address, l.label as location_label, l.access_instructions as location_access, l.site_contact,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
-            (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
+            (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind, 'capacityQuantity', r.capacity_quantity, 'capacityUnit', r.capacity_unit)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
        from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id
       where j.company_id = $1 and j.assigned_user_id = $2 and j.status <> 'draft'
         and (j.status in ('open','in_progress') or j.completed_at > now() - interval '2 days' or j.updated_at > now() - interval '2 days')
@@ -177,15 +177,11 @@ async function bookedRates(q: Q, svc: any, customerId: string | null) {
  * driver to type it again; once confirmed it is accepted and the invoice is held for review.
  */
 async function reviewQuantities(q: Q, job: any, fields: FieldDef[], values: Record<string, unknown>, confirmed: Record<string, string>) {
-  const trucks = (await q.query<any>(`select r.name, r.capacity_quantity, r.capacity_unit from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = $1 and r.capacity_quantity is not null`, [job.id])).rows;
+  const trucks = (await q.query<any>(`select r.name, r.capacity_quantity, r.capacity_unit from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = $1 and r.capacity_quantity is not null`, [job.id])).rows
+    .map((t): JobTruck => ({ name: t.name, capacityQuantity: t.capacity_quantity, capacityUnit: t.capacity_unit }));
   const notes: string[] = [];
-  for (const f of fields.filter((x) => x.type === 'number' && x.stage !== 'request' && values[x.key] !== undefined)) {
-    const unit = (f.unit ?? '').toLowerCase();
-    const truck = trucks.filter((t) => !t.capacity_unit || !unit || t.capacity_unit.toLowerCase() === unit).sort((a, b) => Number(b.capacity_quantity) - Number(a.capacity_quantity))[0];
-    const req = fields.find((x) => x.key !== f.key && x.type === 'number' && x.stage === 'request' && (x.unit ?? '') === (f.unit ?? ''));
-    const check = checkQuantity({ label: f.label, unit: f.unit ?? '', value: String(values[f.key]), requested: req ? (job.details?.[req.key] as string | undefined) ?? null : null,
-      capacity: truck ? { name: truck.name, quantity: String(truck.capacity_quantity) } : null });
-    if (!check.message) continue;
+  for (const check of quantityChecks(fields, values, job.details ?? {}, trucks)) {
+    const f = fields.find((x) => x.key === check.field)!;
     if ((confirmed[f.key] ?? '').trim().replace(',', '.') !== String(values[f.key])) {
       throw badRequest(`${check.message} Type the quantity again to confirm it, or correct it.`, { fields: { [f.key]: check.message }, quantityCheck: { field: f.key, message: check.message } });
     }

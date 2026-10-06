@@ -188,6 +188,30 @@ describe('invoicing with the fixture company', () => {
     expect(JSON.stringify(marcusView.body)).not.toMatch(/40900|3\.899/);
   });
 
+  it('keeps a minimum charge when the office edits other lines, and recomputes a line it changes', async () => {
+    const t = await triCounty();
+    const c = t.customers.dragon;
+    const r = await t.dana.post(`/c/${t.cid}/jobs`, { customerId: c.id, locationId: c.locationId, serviceId: t.services.septic.id, details: { service_detail: 'Grease trap' }, intent: 'open', clientRequestId: rid(), scheduledStart: new Date(Date.now() + 3600_000).toISOString() });
+    const job = (await t.dana.get(`/c/${t.cid}/jobs/${r.body.id}`)).body.job;
+    const a = await t.dana.post(`/c/${t.cid}/jobs/${job.id}/assign`, { userId: t.ids.sam, resourceIds: [t.trucks['Vac truck 2']], version: job.version });
+    const done = await t.sam.post(`/c/${t.cid}/jobs/${job.id}/complete`, { submissionId: rid(), baseVersion: a.body.version, outcome: 'completed', values: { volume_pumped: '150' }, photos: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='] }); expect(done.status).toBe(200);
+    const inv = (await t.dana.post(`/c/${t.cid}/jobs/${job.id}/invoice`)).body;
+    const d = (await t.dana.get(`/c/${t.cid}/invoices/${inv.invoiceId}`)).body;
+    expect(d.lines[0]).toMatchObject({ description: 'Grease trap', amountMinor: 20000 });
+    const send = (lines: any[], version: number) => t.dana.put(`/c/${t.cid}/invoices/${inv.invoiceId}/lines`, { version, lines: lines.map(({ id, description, quantity, unit, rateE4, taxable, kind }) => ({ id, description, quantity, unit, rateE4, taxable, kind })) });
+    // Adding a line leaves the grease trap line at its $200 minimum.
+    const added = await send([...d.lines, { description: 'Disposal fee', quantity: '1', unit: '', rateE4: 250000, taxable: false, kind: 'charge' }], d.invoice.version);
+    expect(added.status).toBe(200);
+    const d2 = (await t.dana.get(`/c/${t.cid}/invoices/${inv.invoiceId}`)).body;
+    expect(d2.lines.map((l: any) => [l.description, l.amountMinor])).toEqual([['Grease trap', 20000], ['Disposal fee', 2500]]);
+    expect(d2.lines[0].note).toMatch(/Minimum charge/);
+    expect(d2.invoice.totalMinor).toBe(22500);
+    // Changing its quantity makes it an ordinary line again: quantity × rate.
+    expect((await send([{ ...d2.lines[0], quantity: '300' }, d2.lines[1]], d2.invoice.version)).status).toBe(200);
+    const d3 = (await t.dana.get(`/c/${t.cid}/invoices/${inv.invoiceId}`)).body;
+    expect(d3.lines[0]).toMatchObject({ amountMinor: 28500, note: '' });
+  });
+
   it('uses customer prices and lets only billing set exemptions and prices', async () => {
     const t = await triCounty();
     const cust = t.customers.ridgeline;

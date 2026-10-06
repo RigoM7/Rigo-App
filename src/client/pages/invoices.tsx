@@ -6,8 +6,8 @@ import { useCompany } from '../lib/session';
 import { get, post, put, newId } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, InvoiceStatus, MessageStatus, Banner, Dialog, Checkbox, Tabs, LinkButton, AskRigo, useToast, useConfirm } from '../components/ui';
-import { formatMoney, parseMoney, minorToInput, fmtDate, fmtDateTime } from '../lib/format';
-import { computeTotals, lineAmount } from '../../shared/billing';
+import { formatMoney, parseMoney, fmtDate, fmtDateTime } from '../lib/format';
+import { computeTotals, lineAmount, parseRate, rateToInput, formatRate } from '../../shared/billing';
 
 const DELIVERY: Record<string, string> = { not_prepared: 'Not prepared', prepared: 'Email prepared', simulated: 'Simulated (demo)', queued: 'Queued', sent: 'Sent', delivered: 'Delivered', failed: 'Failed' };
 const PAYMENT: Record<string, [any, string]> = { unpaid: ['neutral', 'Unpaid'], partially_paid: ['info', 'Partly paid'], paid: ['success', 'Paid'] };
@@ -67,13 +67,15 @@ export function Invoices() {
 
 function LinesEditor({ data, onDone, onCancel }: { data: any; onDone: () => void; onCancel: () => void }) {
   const c = useCompany();
-  const [lines, setLines] = useState<any[]>(() => data.lines.map((l: any) => ({ ...l, rate: minorToInput(l.rateMinor) })));
+  const [lines, setLines] = useState<any[]>(() => data.lines.map((l: any) => ({ ...l, rate: rateToInput(l.rateE4) })));
   const [notes, setNotes] = useState(data.invoice.notes ?? '');
-  const parsed = lines.map((l) => ({ ...l, rateMinor: l.rate.trim() === '' ? null : parseMoney(l.rate) }));
-  const preview = computeTotals(parsed.map((l) => ({ ...l, amountMinor: l.rateMinor === null || !/^\d+(\.\d+)?$/.test(l.quantity) ? null : l.kind === 'discount' ? -Math.abs(lineAmount(l.quantity, l.rateMinor) as number) : lineAmount(l.quantity, l.rateMinor) })), null);
+  const parsed = lines.map((l) => ({ ...l, rateE4: l.rate.trim() === '' ? null : parseRate(l.rate) }));
+  // Untouched lines keep the amount pricing worked out (a minimum charge); edited ones are quantity × rate.
+  const amountOf = (l: any) => { const o = data.lines.find((x: any) => x.id === l.id); if (o && o.kind === l.kind && o.quantity === l.quantity && o.rateE4 === l.rateE4) return o.amountMinor; if (l.rateE4 === null || !/^\d+(\.\d+)?$/.test(l.quantity)) return null; const a = lineAmount(l.quantity, l.rateE4) as number; return l.kind === 'discount' ? -Math.abs(a) : a; };
+  const preview = computeTotals(parsed.map((l) => ({ ...l, amountMinor: amountOf(l) })), null);
   const s = useSubmit(async () => {
-    if (parsed.some((l) => l.rate.trim() !== '' && l.rateMinor === null)) throw new Error('Enter rates like 12.50.');
-    await put(`/c/${c.cid}/invoices/${data.invoice.id}/lines`, { version: data.invoice.version, notes, lines: parsed.map(({ description, quantity, unit, rateMinor, taxable, kind }) => ({ description, quantity, unit, rateMinor, taxable, kind })) });
+    if (parsed.some((l) => l.rate.trim() !== '' && l.rateE4 === null)) throw new Error('Enter rates like 12.50 or 3.8995.');
+    await put(`/c/${c.cid}/invoices/${data.invoice.id}/lines`, { version: data.invoice.version, notes, lines: parsed.map(({ id, description, quantity, unit, rateE4, taxable, kind }) => ({ id, description, quantity, unit, rateE4, taxable, kind })) });
     onDone();
   });
   const set = (i: number, p: any) => setLines(lines.map((l, x) => (x === i ? { ...l, ...p } : l)));
@@ -88,7 +90,7 @@ function LinesEditor({ data, onDone, onCancel }: { data: any; onDone: () => void
               <Field label="Description" id={`f-lines-${i}-description`} error={s.fieldError(`lines.${i}.description`)}>{(p) => <Input {...p} maxLength={200} value={l.description} onChange={(e) => set(i, { description: e.target.value })} />}</Field>
               <Field label="Type" id={`f-lk-${i}`}>{(p) => <Select {...p} value={l.kind} onChange={(e) => set(i, { kind: e.target.value })}><option value="charge">Charge</option><option value="discount">Discount</option></Select>}</Field>
               <Field label="Quantity" id={`f-lines-${i}-quantity`} error={s.fieldError(`lines.${i}.quantity`)}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.quantity} onChange={(e) => set(i, { quantity: e.target.value })} />}</Field>
-              <Field label={`Rate (${data.invoice.currency})`} id={`f-lr-${i}`} hint="Empty keeps the invoice on hold.">{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.rate} onChange={(e) => set(i, { rate: e.target.value })} />}</Field>
+              <Field label={`Rate (${data.invoice.currency})`} id={`f-lr-${i}`} hint="Up to 4 decimals. Empty keeps the invoice on hold.">{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.rate} onChange={(e) => set(i, { rate: e.target.value })} />}</Field>
             </div>
             <div className="row-between" style={{ marginTop: 8 }}>
               {l.kind === 'charge' ? <Checkbox label="Taxable" checked={l.taxable} onChange={(e) => set(i, { taxable: e.target.checked })} /> : <span />}
@@ -96,7 +98,7 @@ function LinesEditor({ data, onDone, onCancel }: { data: any; onDone: () => void
             </div>
           </div>
         ))}
-        <div><Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLines([...lines, { description: '', quantity: '1', unit: '', rate: '', taxable: false, kind: 'charge' }])}>Add line</Button></div>
+        <div><Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLines([...lines, { description: '', quantity: '1', unit: '', rate: '', taxable: !!data.taxRateBp, kind: 'charge' }])}>Add line</Button></div>
         <Field label="Note on invoice" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} />}</Field>
         <p className="small muted num">Subtotal before tax: {preview.subtotalMinor === null ? 'incomplete' : formatMoney(preview.subtotalMinor - (preview.discountMinor ?? 0), data.invoice.currency)}. Tax is applied by the server from the service's configured rate.</p>
         <div className="form-actions"><Button variant="primary" busy={s.busy} onClick={() => s.run()}>Save lines</Button><Button onClick={onCancel}>Cancel</Button></div>
@@ -124,7 +126,12 @@ export function InvoiceDoc({ data }: { data: any }) {
       <table>
         <thead><tr><th>Description</th><th className="right">Qty</th>{fin && <th className="right">Rate</th>}{fin && <th className="right">Amount</th>}</tr></thead>
         <tbody>{data.lines.map((l: any) => (
-          <tr key={l.id}><td>{l.description}</td><td className="right num">{l.quantity} <span style={{ fontFamily: 'var(--font-sans)' }}>{l.unit}</span></td>{fin && <td className="right num">{l.rateMinor === null ? <strong>Not set</strong> : formatMoney(l.rateMinor, i.currency)}</td>}{fin && <td className="right num">{l.amountMinor === null ? '—' : formatMoney(l.amountMinor, i.currency)}</td>}</tr>
+          <tr key={l.id}>
+            <td>{l.description}{fin && l.priceDate && l.unit ? <span className="doc-sub"> · price on {fmtDate(l.priceDate)}</span> : null}{l.note ? <div className={l.bookedRateE4 ? 'doc-note doc-note-flag no-print' : 'doc-note'}>{l.note}</div> : null}</td>
+            <td className="right num">{l.quantity} <span style={{ fontFamily: 'var(--font-sans)' }}>{l.unit}</span></td>
+            {fin && <td className="right num">{l.rateE4 === null ? <strong>Not set</strong> : formatRate(l.rateE4, i.currency)}</td>}
+            {fin && <td className="right num">{l.amountMinor === null ? '—' : formatMoney(l.amountMinor, i.currency)}</td>}
+          </tr>
         ))}</tbody>
       </table>
       {fin && (

@@ -90,6 +90,59 @@ async function demoVisitor(label, vw = 1366, vh = 900, extra = {}) {
 const guideOf = (p) => p.getByRole('complementary', { name: 'Demo walkthrough' });
 const highlighted = (p, id) => p.locator(`[data-guide-active][data-guide-target="${id}"]`);
 
+// ---------------------------------------------------------------- Phase 1: money (pricing, billing, approvals)
+// Run only this section with E2E_ONLY=phase1.
+if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
+  for (const [vw, vh] of [[1366, 900], [390, 844]]) {
+    await step(`WP1 ${vw}px: the service editor's example bill charges only the lines a job would pay`, async () => {
+      const v = await demoVisitor(`wp1-bill-${vw}`, vw, vh);
+      const services = (await v.api.get('/services')).services;
+      const septic = services.find((s) => s.category === 'septic');
+      await v.p.goto(`${v.C}/services/${septic.id}`);
+      const bill = v.p.getByRole('region', { name: 'Example bill' });
+      await bill.waitFor({ timeout: 8000 });
+      const table = bill.getByRole('table', { name: 'Example bill' });
+      // Defaults: a pump-out of 1,250 gal, so the overage beyond the included 1,000 gal is billed.
+      await table.getByText('Pump-out (includes 1,000 gal)').waitFor();
+      await table.getByText('Pump-out: 250 gal over 1,000 included').waitFor();
+      if (!(await table.getByText('$462.50').count())) throw new Error('pump-out total is not $462.50');
+      await bill.getByLabel('Service details').selectOption('Grease trap');
+      await bill.getByLabel('Volume pumped (gal)').fill('150');
+      await table.getByText(/Minimum charge \$200\.00 applies/).waitFor();
+      if (await table.getByText('Pump-out', { exact: false }).count()) throw new Error('pump-out still charged on a grease trap job');
+      await bill.getByText(/Not charged on this job: .*Pump-out/).waitFor();
+      // A $0 rate is flagged before saving.
+      await v.p.locator('#f-rate-0').fill('0');
+      await v.p.getByText(/is priced at \$0\.00/).waitFor();
+      await noOverflow(v.p, `wp1-editor-${vw}`);
+      const a = await axe(v.p, `wp1-editor-${vw}`);
+      await v.c.close();
+      return a;
+    });
+  }
+  await step('WP1: fuel example bill charges one product and the delivery fee, not all four products (R3-C1)', async () => {
+    const v = await demoVisitor('wp1-fuel');
+    const fuel = (await v.api.get('/services')).services.find((s) => s.category === 'fuel');
+    await v.p.goto(`${v.C}/services/${fuel.id}`);
+    const bill = v.p.getByRole('region', { name: 'Example bill' });
+    await bill.waitFor({ timeout: 8000 });
+    await bill.getByLabel('Product').selectOption('Gasoline');
+    await bill.getByLabel('Delivered quantity (gal)').fill('100');
+    const rows = await bill.getByRole('table', { name: 'Example bill' }).locator('tbody tr').allInnerTexts();
+    if (rows.length !== 2 || !/Gasoline/.test(rows[0]) || !/Delivery fee/.test(rows[1])) throw new Error(`rows: ${JSON.stringify(rows)}`);
+    await bill.getByText(/Not charged on this job: Diesel, Dyed diesel, Heating oil/).waitFor();
+    await v.c.close();
+  });
+}
+if (process.env.E2E_ONLY === 'phase1') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-phase1.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
+
 if (process.env.E2E_ONLY !== 'auth') {
   await step('M1: from the driver view, the walkthrough reaches the simulated email using only its own buttons', async () => {
     const v = await demoVisitor('guide');

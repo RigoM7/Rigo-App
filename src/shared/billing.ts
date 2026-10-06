@@ -231,6 +231,29 @@ export function checkQuantity(q: { label: string; unit: string; value: string; r
   return { overCapacity, overRequested, message };
 }
 
+/** A truck on the job, with the capacity parsed from its description ("3,000 gal"). */
+export interface JobTruck { name: string; capacityQuantity: string | number | null; capacityUnit: string | null }
+
+/**
+ * Every confirmed quantity on a job that needs a second look: more than the largest assigned truck
+ * (in the same unit) holds, or more than 3× the matching requested quantity. Used by the driver's
+ * form before submitting and by the server, which holds the invoice until the office checks it.
+ */
+export function quantityChecks(fields: Pick<FieldDef, 'key' | 'label' | 'type' | 'unit' | 'stage'>[], values: Record<string, unknown>, details: Record<string, unknown>, trucks: JobTruck[]) {
+  const out: { field: string; message: string }[] = [];
+  for (const f of fields.filter((x) => x.type === 'number' && x.stage !== 'request' && values[x.key] !== undefined && values[x.key] !== '')) {
+    const unit = (f.unit ?? '').toLowerCase();
+    const truck = trucks.filter((t) => t.capacityQuantity !== null && t.capacityQuantity !== undefined && (!t.capacityUnit || !unit || t.capacityUnit.toLowerCase() === unit))
+      .sort((a, b) => Number(b.capacityQuantity) - Number(a.capacityQuantity))[0];
+    const req = fields.find((x) => x.key !== f.key && x.type === 'number' && x.stage === 'request' && (x.unit ?? '') === (f.unit ?? ''));
+    const requested = req ? details[req.key] : null;
+    const check = checkQuantity({ label: f.label, unit: f.unit ?? '', value: String(values[f.key]), requested: requested === null || requested === undefined ? null : String(requested),
+      capacity: truck ? { name: truck.name, quantity: String(Number(truck.capacityQuantity)) } : null });
+    if (check.message) out.push({ field: f.key, message: check.message });
+  }
+  return out;
+}
+
 export function computeTotals(lines: DraftLine[], taxRateBp: number | null, discounts: DiscountInput[] = [], opts: { taxExempt?: boolean } = {}): Totals {
   const holdReasons: string[] = [];
   const charges = lines.filter((l) => l.kind === 'charge');

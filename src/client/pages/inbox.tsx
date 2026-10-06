@@ -7,6 +7,7 @@ import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, Pill, PriorityPill, GuideTarget, Dialog, Field, Textarea, ErrorSummary, useToast } from '../components/ui';
 import { relTime, fmtDateTime, formatMoney } from '../lib/format';
+import { formatRate } from '../../shared/billing';
 import { useDocumentTitle } from '../lib/title';
 
 /** What an approval would act on: the invoice lines and total, or a job's or message's key facts. */
@@ -30,7 +31,7 @@ export function ApprovalSummary({ s, compact }: { s: any; compact?: boolean }) {
             <thead><tr><th scope="col">Item</th><th scope="col" className="r">Quantity</th>{fin ? <><th scope="col" className="r">Rate</th><th scope="col" className="r">Amount</th></> : null}</tr></thead>
             <tbody>
               {s.lines.map((l: any, i: number) => (
-                <tr key={i}><td>{l.description}</td><td className="r num">{l.quantity}{l.unit ? ` ${l.unit}` : ''}</td>{fin ? <><td className="r num">{l.rateMinor === null ? 'Not set' : formatMoney(l.rateMinor, s.currency)}</td><td className="r num">{l.amountMinor === null ? '—' : formatMoney(l.amountMinor, s.currency)}</td></> : null}</tr>
+                <tr key={i}><td>{l.description}{l.note ? <div className="as-line-note">{l.note}</div> : null}</td><td className="r num">{l.quantity}{l.unit ? ` ${l.unit}` : ''}</td>{fin ? <><td className="r num">{l.rateE4 === null ? 'Not set' : formatRate(l.rateE4, s.currency)}</td><td className="r num">{l.amountMinor === null ? '—' : formatMoney(l.amountMinor, s.currency)}</td></> : null}</tr>
               ))}
             </tbody>
             {fin ? (

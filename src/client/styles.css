@@ -926,7 +926,21 @@ dl.approval-summary { display: grid; }
 .charge-when legend { font-weight: 550; padding: 0; margin-bottom: 4px; }
 .charge-when-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .charge-when-row .select { width: auto; min-width: 0; max-width: 100%; padding-right: 36px; }
-details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-content; }
+details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-content; padding: 4px 0; min-height: 24px; }
 .as-lines-wrap { overflow-x: auto; max-width: 100%; border-radius: 4px; }
 /* Long labels with amounts ("Approve and issue · $2,066.68") wrap instead of widening the page at large text sizes. */
 .guide-target > .btn, .btn.btn-wrap { max-width: 100%; white-space: normal; text-align: left; padding-top: 6px; padding-bottom: 6px; }
+/* Service editor: price warnings and the example bill */
+.warn-list { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.example-bill tfoot td, .example-bill tfoot th { border-bottom: 0; padding-top: 6px; padding-bottom: 6px; }
+.example-bill tfoot th { font-weight: 650; color: var(--text); }
+/* Invoice lines: price date and pricing notes (minimum charge, price changed since booking) */
+.doc .doc-sub { color: #52525B; font-size: var(--fs-13); }
+.doc .doc-note { color: #52525B; font-size: var(--fs-13); margin-top: 2px; }
+.doc .doc-note-flag { color: #B45309; font-weight: 550; }
+.as-line-note { color: var(--text-2); font-size: var(--fs-12); margin-top: 2px; }
+/* Driver form: an unusual quantity, typed a second time to confirm */
+.qty-confirm { border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); background: var(--warning-soft); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.qty-confirm-msg { margin: 0; display: flex; gap: 8px; align-items: flex-start; font-weight: 550; }
+.qty-confirm-msg svg { flex: none; width: 18px; height: 18px; color: var(--warning); margin-top: 2px; }
+.qty-ok { width: 15px; height: 15px; vertical-align: -2px; color: var(--success); }
