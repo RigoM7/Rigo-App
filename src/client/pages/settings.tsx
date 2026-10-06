@@ -1,3 +1,4 @@
+import { TimezoneSelect } from './workspaces';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -101,7 +102,8 @@ export function SettingsPage() {
   const toast = useToast();
   const [sp, setSp] = useSearchParams();
   const tab = (sp.get('tab') ?? 'company') as 'company' | 'branding' | 'fields' | 'services';
-  const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories });
+  const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories,
+    invoiceDueDays: c.company.invoiceDueDays ?? 30, paymentInstructions: c.company.paymentInstructions ?? '' });
   const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, v); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved'); });
   return (
     <div className="page page-narrow">
@@ -118,9 +120,13 @@ export function SettingsPage() {
             </div>
             <Field label="Address" optionalText id="f-address" hint="Shown on invoices.">{(p) => <Input {...p} maxLength={300} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
             <div className="grid-2">
-              <Field label="Time zone" id="f-timezone" error={s.fieldError('timezone')}>{(p) => <Input {...p} maxLength={60} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })} />}</Field>
+              <Field label="Time zone" id="f-timezone" hint="Schedules, late jobs and due dates use this." error={s.fieldError('timezone')}>{(p) => <TimezoneSelect {...p} value={v.timezone} onChange={(tz) => setV({ ...v, timezone: tz })} />}</Field>
               <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((x) => <option key={x}>{x}</option>)}</Select>}</Field>
             </div>
+            <div className="grid-2">
+              <Field label="Payment due (days after the invoice is issued)" id="f-invoiceDueDays" error={s.fieldError('invoiceDueDays')}>{(p) => <Input {...p} inputMode="numeric" value={v.invoiceDueDays} onChange={(e) => setV({ ...v, invoiceDueDays: Math.min(180, Math.max(0, Number(e.target.value.replace(/\D/g, '')) || 0)) })} />}</Field>
+            </div>
+            <Field label="How customers pay you" optionalText id="f-paymentInstructions" hint="Shown on invoices and in invoice emails, for example who to make checks out to or a number to call to pay by card." error={s.fieldError('paymentInstructions')}>{(p) => <Textarea {...p} maxLength={500} value={v.paymentInstructions} onChange={(e) => setV({ ...v, paymentInstructions: e.target.value })} />}</Field>
             <fieldset><legend>Service types</legend>{Object.entries(SERVICE_CATEGORIES).map(([k, l]) => <Checkbox key={k} label={l} checked={v.serviceCategories.includes(k)} onChange={(e) => setV({ ...v, serviceCategories: e.target.checked ? [...v.serviceCategories, k] : v.serviceCategories.filter((x) => x !== k) })} />)}</fieldset>
             <div><Button type="submit" variant="primary" busy={s.busy}>Save</Button></div>
           </form>

@@ -5,7 +5,7 @@ import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, Cl
 import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, type Draft, type DraftState } from '../lib/offline';
-import { Button, Card, Field, Textarea, Input, Banner, LoadingBlock, Empty, JobStatus, Pill, ErrorSummary, useToast, useConfirm } from '../components/ui';
+import { Button, Card, Field, Textarea, Input, Banner, LoadingBlock, Empty, JobStatus, Pill, PriorityPill, GuideTarget, ErrorSummary, useToast, useConfirm } from '../components/ui';
 import { fmtTime, fmtDate, relTime } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
@@ -79,7 +79,7 @@ export function Today() {
       <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}`}>
         <div className="row-between">
           <span className="time">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span>
-          <JobStatus status={j.status} />
+          <span className="row" style={{ gap: 6 }}><PriorityPill priority={j.priority} /><JobStatus status={j.status} /></span>
         </div>
         <div className="addr">{j.address ?? 'No address'}</div>
         <div className="small"><span className="num muted">#{j.number}</span> · {j.service_name} · {j.customer_name}</div>
@@ -227,7 +227,7 @@ export function DriverJob() {
     <div className="driver-page">
       <Link className="back-link" to={c.to('today')}><ChevronLeft aria-hidden />My jobs</Link>
       <div className="stack-sm">
-        <div className="row-between" style={{ alignItems: 'flex-start' }}><h1 style={{ fontSize: 'var(--fs-22)' }}><span className="num muted" style={{ fontSize: 'var(--fs-16)', display: 'block', fontWeight: 500 }}>#{job.number}</span>{job.service_name}</h1><JobStatus status={job.status} /></div>
+        <div className="row-between" style={{ alignItems: 'flex-start' }}><h1 style={{ fontSize: 'var(--fs-22)' }}><span className="num muted" style={{ fontSize: 'var(--fs-16)', display: 'block', fontWeight: 500 }}>#{job.number}</span>{job.service_name}</h1><span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}><PriorityPill priority={job.priority} /><JobStatus status={job.status} /></span></div>
         {stale && <Banner tone="warning">Offline copy from {relTime(stale)}. Details may have changed.</Banner>}
       </div>
       <Card id="essentials">
@@ -238,7 +238,7 @@ export function DriverJob() {
           {access && <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div><strong>Access:</strong> {access}</div></div>}
           {(job.contact_name || job.site_contact || job.contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</span></div>}
           {job.resources?.length ? <div className="row"><Truck aria-hidden /><span>{job.resources.map((r: any) => r.name).join(', ')}</span></div> : null}
-          {Object.keys(job.details ?? {}).length > 0 && <dl className="kv">{(job.fields ?? []).filter((f: any) => f.stage !== 'completion' && job.details[f.key]).map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{job.details[f.key]}{f.unit ? ` ${f.unit}` : ''}</dd></div>)}</dl>}
+          {Object.keys(job.details ?? {}).length > 0 && <dl className="kv">{(job.fields ?? []).filter((f: any) => f.stage !== 'completion' && job.details[f.key]).map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{f.type === 'boolean' ? (job.details[f.key] === true || job.details[f.key] === 'true' ? 'Yes' : 'No') : job.details[f.key]}{f.unit ? ` ${f.unit}` : ''}</dd></div>)}</dl>}
           {job.notes && <p className="pre" style={{ margin: 0 }}><strong>Notes:</strong> {job.notes}</p>}
         </div>
       </Card>
@@ -249,7 +249,7 @@ export function DriverJob() {
         <>
           {job.status === 'open' && (
             <div className="stack-sm">
-              <Button variant="primary" size="lg" block icon={<Play aria-hidden />} onClick={start}>Start job</Button>
+              <GuideTarget id="driver-start" block><Button variant="primary" size="lg" block icon={<Play aria-hidden />} onClick={start}>Start job</Button></GuideTarget>
               {startErr && <Banner tone={startErr.code === 'offline' ? 'warning' : 'danger'}>{startErr.code === 'offline' ? 'Starting needs a connection. You can still record the outcome below; it syncs later.' : startErr.message}</Banner>}
             </div>
           )}
@@ -263,7 +263,7 @@ export function DriverJob() {
               </div>
             </Card>
           ) : null}
-          <section className="card stack" aria-labelledby="checklist-h">
+          <section className="card stack" aria-labelledby="checklist-h" data-guide-target="driver-record">
             <h2 id="checklist-h">Record the outcome</h2>
             {errorEntries.length > 0 && (
               <div ref={summaryRef} tabIndex={-1} role="alert" className="banner banner-danger"><AlertTriangle aria-hidden /><div><strong>Some required information is missing</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{errorEntries.map(([k, v]) => <li key={k}><a href={`#f-details-${k}`}>{v}</a></li>)}</ul></div></div>

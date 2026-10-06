@@ -234,7 +234,7 @@ export function WorkflowEditor() {
           )}
           {view === 'versions' && (
             <div className="stack">
-              <Card id="vers" title="Versions"><ul className="list">{q.data.versions.map((v: any) => <li key={v.id} style={{ padding: '8px 0' }} className="row-between"><span>v{v.version} · {v.source}<div className="small muted">Created {fmtDateTime(v.createdAt)}{v.createdByName ? ` by ${v.createdByName}` : ''}{v.testedAt ? ` · tested ${relTime(v.testedAt)}` : ''}</div></span><Pill tone={VERSION_TONE[v.status]}>{v.status}</Pill></li>)}</ul></Card>
+              <Card id="vers" title="Versions"><ul className="list">{q.data.versions.map((v: any) => <li key={v.id} style={{ padding: '8px 0' }} className="row-between"><span>v{v.version} · {v.source}<div className="small muted">Created {fmtDateTime(v.createdAt, c.company.timezone)}{v.createdByName ? ` by ${v.createdByName}` : ''}{v.testedAt ? ` · tested ${relTime(v.testedAt)}` : ''}</div></span><Pill tone={VERSION_TONE[v.status]}>{v.status}</Pill></li>)}</ul></Card>
               <Card id="runs" title="Recent runs">{q.data.runs.length === 0 ? <p className="muted">No runs yet.</p> : <ul className="list">{q.data.runs.map((r: any) => <li key={r.id} style={{ padding: '8px 0' }}><div className="row-between"><span>v{r.version} · {relTime(r.created_at)}</span><Pill tone={r.status === 'completed' ? 'success' : r.status === 'failed' ? 'danger' : r.status === 'blocked' ? 'warning' : 'neutral'}>{r.status.replace('_', ' ')}</Pill></div><div className="small muted">{r.summary}</div></li>)}</ul>}</Card>
             </div>
           )}

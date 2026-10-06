@@ -10,7 +10,9 @@ import { starterService } from '../../shared/services.js';
 import { stableHash } from '../../shared/workflows.js';
 import { createCompany, createCompanySchema } from './companies.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
-import { prepareInvoiceForJob } from './invoicing.js';
+import { prepareInvoiceForJob, issueInvoice } from './invoicing.js';
+import { generateForCompany } from './recurring.js';
+import { startingRole } from '../../shared/demo.js';
 import { processAll } from '../automation/engine.js';
 
 // Each person's demo is their own isolated company (kind = 'demo') filled with clearly fictional
@@ -28,11 +30,13 @@ async function fictionalUser(q: Q, name: string, tag: string) {
   return rows[0].id;
 }
 
-export async function seedDemo(q: Q, userId: string) {
+/** Fill a demo company. `companyId` reuses an id (reset keeps the same web address). */
+export async function seedDemo(q: Q, userId: string, companyId?: string) {
   const { rows } = await q.query<{ id: string }>(
-    `insert into rigo.companies (name, kind, demo_user_id, timezone, currency, service_categories, automation_mode, created_by, phone, email, address, settings)
-     values ('Northwind Field Services (Demo)', 'demo', $1, $2, 'USD', '{fuel,portable_toilet,septic}', 'assisted', $1, '(555) 010-0199', 'office@northwind.example', '100 Example Way, Springfield', $3) returning id`,
-    [userId, TZ, JSON.stringify({ setup: { basics: true, automation: true }, demo: { guide: { step: 0, dismissed: false }, simRole: 'owner' }, invoiceDueDays: 30 })]);
+    `insert into rigo.companies (id, name, kind, demo_user_id, timezone, currency, service_categories, automation_mode, created_by, phone, email, address, settings)
+     values (coalesce($4::uuid, gen_random_uuid()), 'Northwind Field Services (Demo)', 'demo', $1, $2, 'USD', '{fuel,portable_toilet,septic}', 'assisted', $1, '(555) 010-0199', 'office@northwind.example', '100 Example Way, Springfield', $3) returning id`,
+    [userId, TZ, JSON.stringify({ setup: { basics: true, automation: true }, demo: { guide: { step: 0, dismissed: false }, simRole: 'owner' }, invoiceDueDays: 30,
+      paymentInstructions: 'Pay by check to Northwind Field Services, 100 Example Way, Springfield (fictional), or call the office to pay by card.' }), companyId ?? null]);
   const cid = rows[0].id;
   await seedRoles(q, cid);
   await q.query(`insert into rigo.memberships (company_id, user_id, role_key) values ($1,$2,'owner')`, [cid, userId]);
@@ -45,10 +49,13 @@ export async function seedDemo(q: Q, userId: string) {
   }
   await q.query(`update rigo.companies set settings = jsonb_set(settings, '{demo,driverUserId}', to_jsonb($2::text)) where id = $1`, [cid, dana]);
 
-  // Services with fictional example rates (not recommendations).
-  const fuel = starterService('fuel'); fuel.pricing[0].rateMinor = 389; fuel.pricing.push({ id: 'delivery', label: 'Delivery fee', basis: 'flat', quantityField: '', unit: '', rateMinor: 4500, taxable: false });
+  // Services with fictional example rates (not recommendations). Fuel is priced per product; septic
+  // inspections are deliberately left without a rate so the demo shows an invoice on hold.
+  const rate = (svc: ReturnType<typeof starterService>, rates: Record<string, number | null>) => { for (const p of svc.pricing) if (p.id in rates) p.rateMinor = rates[p.id]; return svc; };
+  const fuel = rate(starterService('fuel'), { fuel_diesel: 419, fuel_gasoline: 389, fuel_heating_oil: 359, after_hours: 7500 });
+  fuel.pricing.splice(3, 0, { id: 'delivery', label: 'Delivery fee', basis: 'flat', quantityField: '', unit: '', rateMinor: 4500, taxable: false, when: null });
   const toilet = starterService('portable_toilet'); toilet.pricing[0].rateMinor = 3500; toilet.requiresPhoto = false;
-  const septic = starterService('septic'); septic.pricing[0].rateMinor = null; septic.requiresPhoto = false; // left unset to show an invoice hold
+  const septic = rate(starterService('septic'), { pump_out: 35, inspection: null, repair_visit: 12500, after_hours: 15000 }); septic.requiresPhoto = false;
   const sFuel = await insertService(q, cid, fuel), sToilet = await insertService(q, cid, toilet), sSeptic = await insertService(q, cid, septic);
 
   const res: Record<string, string> = {};
@@ -77,52 +84,85 @@ export async function seedDemo(q: Q, userId: string) {
 
   const today = localDate(new Date(), TZ);
   let n = 0;
-  const job = async (o: { cust: number; svc: string; status: string; day: string; time: string; driver?: string | null; resources?: string[]; details: Record<string, string>; notes?: string }) => {
+  const job = async (o: { cust: number; svc: string; status: string; day: string; time: string; driver?: string | null; resources?: string[]; details: Record<string, unknown>; notes?: string; priority?: string }) => {
     n++;
     const start = zonedToUtc(o.day, o.time, TZ);
     const { rows: j } = await q.query<{ id: string }>(
-      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, assigned_user_id, scheduled_start, scheduled_end, details, notes, access_instructions, contact_name, contact_phone, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'', 'Site lead (fictional)', '(555) 010-2000', $12) returning id`,
-      [cid, n, custs[o.cust].id, custs[o.cust].loc, o.svc, o.status, o.driver ?? null, start.toISOString(), new Date(start.getTime() + 3600_000).toISOString(), JSON.stringify(o.details), o.notes ?? '', userId]);
+      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, assigned_user_id, scheduled_start, scheduled_end, details, notes, access_instructions, contact_name, contact_phone, created_by, priority)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'', 'Site lead (fictional)', '(555) 010-2000', $12, $13) returning id`,
+      [cid, n, custs[o.cust].id, custs[o.cust].loc, o.svc, o.status, o.driver ?? null, start.toISOString(), new Date(start.getTime() + 3600_000).toISOString(), JSON.stringify(o.details), o.notes ?? '', userId, o.priority ?? 'normal']);
     for (const r of o.resources ?? []) await q.query(`insert into rigo.job_resources (job_id, resource_id, company_id) values ($1,$2,$3)`, [j[0].id, res[r], cid]);
     await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_label, data) values ($1,$2,'created','Demo data',$3)`, [cid, j[0].id, JSON.stringify({ status: o.status })]);
     return j[0].id;
   };
+  // Seeded notes describe the site or the request, never a status that would go out of date.
   await job({ cust: 0, svc: sFuel, status: 'open', day: today, time: '08:00', driver: dana, resources: ['Tanker 12'], details: { product: 'Diesel', requested_qty: '450' } });
   await job({ cust: 2, svc: sToilet, status: 'open', day: today, time: '10:30', driver: dana, resources: ['Flatbed 7'], details: { visit_type: 'Service', units: '6', placement: 'By the stage' } });
-  await job({ cust: 1, svc: sFuel, status: 'open', day: today, time: '13:00', driver: null, details: { product: 'Gasoline', requested_qty: '200' }, notes: 'Unassigned: needs a driver.' });
+  await job({ cust: 1, svc: sFuel, status: 'open', day: today, time: '13:00', driver: null, priority: 'urgent', details: { product: 'Gasoline', requested_qty: '200' }, notes: 'Generator tank by the north barn is running low. (fictional)' });
   await job({ cust: 3, svc: sSeptic, status: 'open', day: addDays(today, 1), time: '09:00', driver: rafa, resources: ['Vac Truck 3'], details: { service_detail: 'Pump-out' } });
-  await job({ cust: 2, svc: sToilet, status: 'draft', day: addDays(today, 2), time: '07:30', driver: null, details: { visit_type: 'Pickup' }, notes: 'Draft: unit count not confirmed yet.' });
-  // A completed delivery whose invoice is waiting for the owner's approval.
+  await job({ cust: 2, svc: sToilet, status: 'draft', day: addDays(today, 2), time: '07:30', driver: null, details: { visit_type: 'Pickup' }, notes: 'Pickup after the weekend event. (fictional)' });
+  const complete = async (id: string, by: string, hoursAgo: number, values: Record<string, unknown>, notes = '') => {
+    await q.query(`update rigo.jobs set completion = $2, completion_submission_id = $3, completed_at = now() - make_interval(hours => $4), billing_status = 'ready' where id = $1`,
+      [id, JSON.stringify({ outcome: 'completed', values, notes, reason: '', photoIds: [], signatureId: null, signerName: '' }), `demo-seed-${id}`, hoursAgo]);
+    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_label, data) values ($1,$2,'completion',$3,$4)`, [cid, id, by, JSON.stringify({ outcome: 'completed', values })]);
+  };
+  // A completed delivery whose invoice is waiting for the owner's approval (the workflow prepares it).
   const done = await job({ cust: 0, svc: sFuel, status: 'completed', day: addDays(today, -1), time: '09:00', driver: dana, resources: ['Tanker 12'], details: { product: 'Diesel', requested_qty: '500' } });
-  await q.query(`update rigo.jobs set completion = $2, completion_submission_id = 'demo-seed', completed_at = now() - interval '20 hours', billing_status = 'ready' where id = $1`,
-    [done, JSON.stringify({ outcome: 'completed', values: { delivered_qty: '482.5' }, notes: 'Tank topped off. (fictional)', reason: '', photoIds: [], signatureId: null, signerName: '' })]);
-  await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_label, data) values ($1,$2,'completion','Dana Driver (fictional)',$3)`, [cid, done, JSON.stringify({ outcome: 'completed', values: { delivered_qty: '482.5' } })]);
+  await complete(done, 'Dana Driver (fictional)', 20, { delivered_qty: '482.5' }, 'Tank topped off. (fictional)');
   await q.query(`insert into rigo.events (company_id, type, subject_type, subject_id) values ($1,'job.completed','job',$2)`, [cid, done]);
-  // A septic job completed without a configured rate: its invoice will be held.
-  const held = await job({ cust: 3, svc: sSeptic, status: 'completed', day: addDays(today, -2), time: '14:00', driver: rafa, resources: ['Vac Truck 3'], details: { service_detail: 'Pump-out' } });
-  await q.query(`update rigo.jobs set completion = $2, completion_submission_id = 'demo-seed-2', completed_at = now() - interval '44 hours', billing_status = 'ready' where id = $1`,
-    [held, JSON.stringify({ outcome: 'completed', values: { volume_pumped: '1000', condition_notes: 'Normal levels. (fictional)' }, notes: '', reason: '', photoIds: [], signatureId: null, signerName: '' })]);
+  // A septic inspection with no rate set: its invoice is held, showing that Rigo never prices at zero.
+  const held = await job({ cust: 3, svc: sSeptic, status: 'completed', day: addDays(today, -2), time: '14:00', driver: rafa, resources: ['Vac Truck 3'], details: { service_detail: 'Inspection' } });
+  await complete(held, 'Rafa Route (fictional)', 44, { condition_notes: 'Normal levels. (fictional)' });
   await prepareInvoiceForJob(q, cid, held, { userId });
+  // An emergency, after-hours pump-out: priced by the gallons pumped plus the after-hours fee, issued.
+  const emergency = await job({ cust: 1, svc: sSeptic, status: 'completed', day: addDays(today, -3), time: '22:30', driver: rafa, resources: ['Vac Truck 3'], priority: 'emergency',
+    details: { service_detail: 'Pump-out', after_hours: true }, notes: 'Called in after heavy rain; tank backing up. (fictional)' });
+  await complete(emergency, 'Rafa Route (fictional)', 66, { volume_pumped: '1200', after_hours: true, condition_notes: 'Baffle intact; recommend inspection in spring. (fictional)' });
+  // A heating oil delivery from last week, issued and paid.
+  const paid = await job({ cust: 2, svc: sFuel, status: 'completed', day: addDays(today, -6), time: '08:30', driver: dana, resources: ['Tanker 12'], details: { product: 'Heating oil', requested_qty: '300' } });
+  await complete(paid, 'Dana Driver (fictional)', 140, { delivered_qty: '300' });
+  for (const [id, payNow] of [[emergency, false], [paid, true]] as const) {
+    const inv = await prepareInvoiceForJob(q, cid, id, { userId });
+    await q.query(`update rigo.invoices set approved_by = $2, approved_at = now() where id = $1`, [inv.invoiceId, userId]);
+    await issueInvoice(q, cid, inv.invoiceId, { userId });
+    if (payNow) {
+      const { rows: t } = await q.query<{ total_minor: number }>(`select total_minor from rigo.invoices where id = $1`, [inv.invoiceId]);
+      await q.query(`insert into rigo.payments (company_id, invoice_id, amount_minor, method, note, recorded_by, idempotency_key) values ($1,$2,$3,'check','Check #1042 (fictional)',$4,$5)`, [cid, inv.invoiceId, t[0].total_minor, userId, `demo-pay-${inv.invoiceId}`]);
+      await q.query(`update rigo.invoices set paid_minor = total_minor, payment_status = 'paid' where id = $1`, [inv.invoiceId]);
+    }
+  }
   await q.query(`update rigo.companies set job_seq = $2 where id = $1`, [cid, n]);
 
-  // A rental plan: weekly servicing billed monthly.
-  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through, billed_through)
-      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8,$7)`,
+  // A rental plan: weekly servicing, billed every 28 days from the start date. The first period's
+  // invoice is prepared right after seeding (see generateForCompany in the routes below).
+  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through)
+      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8)`,
     [cid, custs[2].id, custs[2].loc, sToilet, JSON.stringify({ frequency: 'weekly', interval: 1, weekdays: [5], time: '07:00', durationMinutes: 60 }),
-      JSON.stringify({ frequency: 'monthly', rateMinor: 12500, description: 'Unit rental' }), addDays(today, -10), addDays(today, 14)]);
+      JSON.stringify({ frequency: 'every_n_days', everyDays: 28, rateMinor: 12500, description: 'Unit rental' }), addDays(today, -10), addDays(today, 14)]);
   return cid;
 }
 
 demoPublic.post('/demo', async (c) => {
   const user = requireUser(c);
   const db = await getDb();
-  const existing = await db.query<{ id: string }>(`select id from rigo.companies where demo_user_id = $1 and kind = 'demo'`, [user.id]);
-  if (existing.rows[0]) return c.json({ id: existing.rows[0].id, created: false });
+  const existing = await db.query<{ id: string; settings: any }>(`select id, settings from rigo.companies where demo_user_id = $1 and kind = 'demo'`, [user.id]);
+  if (existing.rows[0]) {
+    // Opening the demo again starts as Owner, unless the visitor is mid-step in a step that needs another role.
+    const { id, settings } = existing.rows[0];
+    const role = startingRole(settings?.demo?.guide, settings?.demo?.simRole);
+    if (role !== (settings?.demo?.simRole ?? 'owner')) await db.query(`update rigo.companies set settings = jsonb_set(settings, '{demo,simRole}', to_jsonb($2::text)) where id = $1`, [id, role]);
+    return c.json({ id, created: false });
+  }
   const id = await db.tx((q) => seedDemo(q, user.id));
-  await processAll(3000);
+  await afterSeed(db, id);
   return c.json({ id, created: true });
 });
+
+/** Work that runs after the seed commits: the rental's first invoice and the workflows' first steps. */
+async function afterSeed(db: Awaited<ReturnType<typeof getDb>>, id: string) {
+  await generateForCompany(db, id);
+  await processAll(3000);
+}
 
 function demoOnly(cc: any) {
   if (!cc.isDemo || cc.company.demo_user_id !== cc.user.id) throw forbidden('This only works in your own demo workspace.');
@@ -136,9 +176,10 @@ demoRoutes.post('/demo/reset', async (c) => {
     const fict = await q.query<{ user_id: string }>(`select user_id from rigo.memberships where company_id = $1 and is_fictional`, [cc.company.id]);
     await q.query(`delete from rigo.companies where id = $1 and kind = 'demo' and demo_user_id = $2`, [cc.company.id, cc.user.id]);
     for (const f of fict.rows) await q.query(`delete from rigo.users where id = $1 and email like '%@demo.rigo.invalid'`, [f.user_id]);
-    return seedDemo(q, cc.user.id);
+    // Reseed under the same id so saved links to demo pages keep working.
+    return seedDemo(q, cc.user.id, cc.company.id);
   });
-  await processAll(3000);
+  await afterSeed(db, id);
   return c.json({ id });
 });
 

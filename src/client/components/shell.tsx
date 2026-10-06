@@ -197,7 +197,7 @@ function DemoBar() {
   const setRole = async (role: string) => {
     await post(`/c/${c.cid}/demo/role`, { role });
     await qc.invalidateQueries({ queryKey: [c.cid] });
-    toast(`Now viewing as ${role === 'office' ? 'Office / billing' : role} (simulated)`, 'info');
+    toast(role === 'owner' ? 'Now viewing as Owner' : `Now viewing as ${role === 'office' ? 'Office / billing' : role.charAt(0).toUpperCase() + role.slice(1)} (simulated)`, 'info');
     nav(c.to(role === 'driver' ? 'today' : ''));
   };
   const reset = async () => {
@@ -210,18 +210,20 @@ function DemoBar() {
   return (
     <div className="banner banner-demo" role="region" aria-label="Demo workspace">
       <FlaskConical aria-hidden />
-      <strong className="nowrap">Demo workspace</strong>
-      <span className="hide-mobile muted-chrome">Fictional data. Nothing is sent, charged or connected.</span>
+      <strong className="nowrap"><span className="hide-mobile">Demo workspace</span><span className="hide-desktop">Demo</span></strong>
+      {/* The safety line stays visible on phones, shortened. */}
+      <span className="muted-chrome demo-note"><span className="hide-mobile">Fictional data. Nothing is sent, charged or connected.</span><span className="hide-desktop">Fictional. Nothing is sent or charged.</span></span>
       <span className="spacer" />
-      <label className="row small" style={{ gap: 8, minWidth: 0, maxWidth: '100%', flexWrap: 'nowrap' }}>
-        <span className="hide-mobile muted-chrome">View as</span>
+      <button className="btn btn-sm demo-reset" onClick={reset}><RotateCcw aria-hidden />Reset<span className="sr-only"> demo</span></button>
+      <span className="demo-break" aria-hidden />
+      <label className="row small demo-role" style={{ gap: 8, minWidth: 0, maxWidth: '100%', flexWrap: 'nowrap' }}>
+        <span className="muted-chrome nowrap">View as</span>
         <select className="select" style={{ minHeight: 34, padding: '2px 32px 2px 10px', width: 'auto', maxWidth: '100%', minWidth: 0, fontSize: 'var(--fs-14)' }} value={c.demo.simRole} onChange={(e) => setRole(e.target.value)} aria-label="Simulated role">
-          <option value="owner">Owner</option><option value="dispatcher">Dispatcher (simulated)</option><option value="driver">Driver (simulated)</option><option value="office">Office (simulated)</option>
+          <option value="owner">Owner</option><option value="dispatcher">Dispatcher</option><option value="driver">Driver</option><option value="office">Office / billing</option>
         </select>
       </label>
-      <span className="hide-mobile"><ResumeGuideButton /></span>
-      <button className="btn btn-sm" onClick={reset} aria-label="Reset demo"><RotateCcw aria-hidden /><span className="hide-mobile">Reset</span></button>
-      <Link className="btn btn-sm btn-invert" to={c.to('setup-company')}>Set up my company</Link>
+      <ResumeGuideButton />
+      <Link className="btn btn-sm btn-invert demo-setup" to={c.to('setup-company')}>Set up my company</Link>
       {node}
     </div>
   );
@@ -376,7 +378,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <span className="hide-mobile" aria-hidden style={{ fontWeight: 600, letterSpacing: '-0.03em', marginLeft: -2 }}>Rigo</span>
         <span className="topbar-sep hide-mobile" aria-hidden />
         <CompanySwitcher />
-        {c.role.simulated ? <Pill tone="demo">{c.role.name} view</Pill> : <span className="hide-mobile"><Pill tone="neutral" icon={<UserRound aria-hidden />}>{c.role.name}</Pill></span>}
+        {/* On phones the demo bar's "View as" menu already shows the simulated role, so the pill is desktop-only. */}
+        {c.role.simulated ? <span className="hide-mobile topbar-role"><Pill tone="demo">{c.role.name} view</Pill></span> : <span className="hide-mobile"><Pill tone="neutral" icon={<UserRound aria-hidden />}>{c.role.name}</Pill></span>}
         <span className="spacer" />
         <button type="button" className="cmd-trigger" onClick={() => setCmdk(true)} aria-keyshortcuts={mac ? 'Meta+K' : 'Control+K'}>
           <Search aria-hidden /><span>Search or jump to…</span><span aria-hidden style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}><kbd>{mac ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd></span>

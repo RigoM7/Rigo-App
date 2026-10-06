@@ -107,7 +107,7 @@ export function CustomerDetail() {
               </>}
               {q.data.customFields.customers.map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{String(customer.custom?.[f.key] ?? '—')}</dd></div>)}
               <dt>Notes</dt><dd className="pre">{customer.notes || '—'}</dd>
-              <dt>Customer since</dt><dd>{fmtDate(customer.createdAt)}</dd>
+              <dt>Customer since</dt><dd>{fmtDate(customer.createdAt, c.company.timezone)}</dd>
             </dl>
           </Card>
           <Card id="locs" title={<h2 className="row"><MapPin aria-hidden />Service locations</h2>} actions={c.can('customers.edit') ? <Button size="sm" icon={<Plus aria-hidden />} onClick={() => setLoc({ label: '', address: '', accessInstructions: '', siteContact: '' })}>Add location</Button> : undefined}>
@@ -124,7 +124,7 @@ export function CustomerDetail() {
         <div className="stack">
           <Card id="jobs" title="Jobs">{jobs.length === 0 ? <p className="muted">No jobs yet.</p> : <ul className="list">{jobs.map((j: any) => <li key={j.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`jobs/${j.id}`)}>#{j.number} {j.service_name}</Link><span className="row"><span className="small muted">{fmtDateTime(j.scheduled_start, c.company.timezone)}</span><JobStatus status={j.status} /></span></li>)}</ul>}</Card>
           {invoices && <Card id="invs" title="Invoices">{invoices.length === 0 ? <p className="muted">No invoices yet.</p> : <ul className="list">{invoices.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`invoices/${i.id}`)}>{i.number ?? 'Draft'}</Link><span className="row">{i.total_minor !== null ? <span className="num">{formatMoney(i.total_minor, i.currency)}</span> : null}<InvoiceStatus status={i.status} /></span></li>)}</ul>}</Card>}
-          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}<div className="small muted">{fmtDateTime(m.created_at)}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
+          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}<div className="small muted">{fmtDateTime(m.created_at, c.company.timezone)}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
         </div>
       </div>
       {editing && <CustomerDialog open existing={customer} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Customer saved'); }} />}

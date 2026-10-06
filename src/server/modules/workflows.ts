@@ -9,6 +9,8 @@ import {
 } from '../../shared/workflows.js';
 import { capabilities } from '../adapters/index.js';
 import { insertWorkflow } from './structure.js';
+import { visibleApprovals, approvalSummary } from './approvals.js';
+export { approvalSummary };
 import { runActionNow, dismissAction, takeOver, decideApproval, isEligibleApprover, processAll, type Actor } from '../automation/engine.js';
 
 export const workflowRoutes = new Hono<AppEnv>();
@@ -229,16 +231,11 @@ workflowRoutes.post('/automation/runs/:id/takeover', async (c) => {
 
 workflowRoutes.get('/approvals', async (c) => {
   const cc = c.get('cc');
-  const status = c.req.query('status') ?? 'pending';
-  const { rows } = await cc.db.query<any>(
-    `select a.*, x.type as action_type, x.run_id, w.name as workflow_name, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id
-       left join rigo.automation_runs r on r.id = x.run_id left join rigo.workflows w on w.id = r.workflow_id left join rigo.users u on u.id = a.decided_by
-      where a.company_id = $1 and ${status === 'pending' ? `a.status = 'pending'` : `a.status <> 'pending'`} order by a.created_at desc limit 100`, [cc.company.id]);
+  const status = c.req.query('status') === 'decided' ? 'decided' : 'pending';
   const out = [];
-  for (const ap of rows) {
-    const eligible = await isEligibleApprover(cc.db, ap, actor(cc));
-    if (!eligible && !can(cc, 'automation.control') && !cc.isOwner) continue;
-    out.push({ ...ap, canDecide: eligible && ap.status === 'pending', actionLabel: ACTIONS[ap.action_type]?.label });
+  for (const ap of await visibleApprovals(cc, status)) {
+    // The approver sees what they are approving; amounts only with finance.view (removed here, not in the UI).
+    out.push({ ...ap, actionType: ap.action_type, actionLabel: ACTIONS[ap.action_type]?.label, summary: await approvalSummary(cc.db, ap, cc.perms) });
   }
   return c.json({ approvals: out });
 });

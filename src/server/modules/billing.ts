@@ -57,7 +57,7 @@ billingRoutes.get('/invoices/:id', async (c) => {
     rateMinor: fin ? l.rate_minor : undefined, amountMinor: fin ? l.amount_minor : undefined, rateMissing: l.rate_minor === null,
   }));
   const payments = fin ? (await cc.db.query(`select p.*, u.name as recorded_by_name from rigo.payments p left join rigo.users u on u.id = p.recorded_by where p.invoice_id = $1 order by p.recorded_at`, [inv.id])).rows : [];
-  const approvals = (await cc.db.query(`select a.id, a.status, a.title, a.created_at, a.decided_at, a.decision_note, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id left join rigo.users u on u.id = a.decided_by where a.subject_type = 'invoice' and a.subject_id = $1 order by a.created_at`, [inv.id])).rows;
+  const approvals = (await cc.db.query(`select a.id, a.status, a.title, a.created_at, a.decided_at, a.decision_note, a.subject_version, x.type as action_type, u.name as decided_by_name from rigo.approvals a join rigo.actions x on x.id = a.action_id left join rigo.users u on u.id = a.decided_by where a.subject_type = 'invoice' and a.subject_id = $1 order by a.created_at`, [inv.id])).rows;
   const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, status_detail, recipient, created_at from rigo.messages where invoice_id = $1 order by created_at desc`, [inv.id])).rows : [];
   const co = cc.company;
   return c.json({

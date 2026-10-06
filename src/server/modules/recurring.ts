@@ -22,7 +22,10 @@ const visitRule = z.object({
   weekdays: z.array(z.number().int().min(0).max(6)).max(7).default([]), dayOfMonth: z.number().int().min(1).max(31).optional(),
   time: z.string().regex(/^\d{2}:\d{2}$/, 'Use a time like 08:30').default('08:00'), durationMinutes: z.number().int().min(15).max(720).default(60),
 });
-const billingRule = z.object({ frequency: z.enum(['none', 'per_visit', 'weekly', 'monthly']), rateMinor: z.number().int().min(0).nullable().default(null), description: z.string().max(120).default('Rental') });
+const billingRule = z.object({
+  frequency: z.enum(['none', 'per_visit', 'weekly', 'every_n_days', 'monthly']), everyDays: z.number().int().min(1).max(365).default(28),
+  rateMinor: z.number().int().min(0).nullable().default(null), description: z.string().max(120).default('Rental'),
+});
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date');
 
 const planInput = z.object({
@@ -176,7 +179,7 @@ export async function generateForCompany(db: Db, companyId: string) {
       if (horizon > (locked.generated_through ?? '')) await q.query(`update rigo.recurring_plans set generated_through = $2 where id = $1`, [locked.id, horizon]);
       // Billing schedule (rentals): one invoice per period, independent of visit frequency.
       const br = locked.billing_rule;
-      for (const p of billingPeriods(br.frequency, locked.starts_on, locked.ends_on, locked.billed_through, today)) {
+      for (const p of billingPeriods(br.frequency, locked.starts_on, locked.ends_on, locked.billed_through, today, br.everyDays ?? 28)) {
         const key = `plan:${locked.id}:${p.start}`;
         const held = br.rateMinor === null;
         const pausedWhole = locked.paused_from && p.start >= locked.paused_from && (!locked.paused_until || p.end <= locked.paused_until);

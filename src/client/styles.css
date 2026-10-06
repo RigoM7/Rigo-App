@@ -853,3 +853,80 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .lp-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); max-width: 1240px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); border-top: 1px solid var(--border); }
 @media (min-width: 768px) { .lp-foot { padding-left: var(--space-6); padding-right: var(--space-6); } }
 .lp-foot .small.muted { flex: 1 1 18rem; }
+
+/* ---------------------------------------------------------------- Round 2: walkthrough, demo bar, toasts */
+.toast-action { flex: none; font: inherit; font-weight: 650; background: transparent; border: 1px solid var(--chrome-control); border-radius: var(--radius); padding: 2px 12px; min-height: 30px; cursor: pointer; }
+.toast-action:hover { background: var(--chrome-hover); }
+
+/* The walkthrough points at a control with a dashed outline and a text label, drawn around a wrapper
+   6px outside the control so it never covers the control or its 3px focus ring. */
+.guide-target { display: inline-flex; max-width: 100%; border-radius: var(--radius); }
+.guide-target.block { display: block; }
+[data-guide-active] { position: relative; outline: 2px dashed var(--primary); outline-offset: 6px; border-radius: var(--radius); }
+/* Room for the label above a highlighted control, so it covers neither the control nor the text above it. */
+.guide-target[data-guide-active] { margin-top: 30px; }
+[data-guide-active]::after { content: attr(data-guide-label); position: absolute; left: -8px; bottom: calc(100% + 10px); z-index: 6; max-width: min(320px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+  background: var(--primary); color: #FFFFFF; font: 600 var(--fs-12)/1.5 var(--font-sans); padding: 1px 8px; border-radius: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-guide-active] { animation: guide-pulse 700ms var(--ease) 2; }
+  @keyframes guide-pulse { 50% { outline-offset: 10px; } }
+}
+.guide-head { display: flex; align-items: flex-start; gap: 8px; flex-wrap: nowrap; }
+.guide-head h2 { display: flex; align-items: flex-start; font-size: var(--fs-16); gap: 8px; min-width: 0; flex: 1; padding-top: 6px; }
+.guide-head h2 .guide-icon { margin-top: 3px; }
+.guide-icon { width: 16px; height: 16px; flex: none; }
+.guide-count { font-size: var(--fs-13); color: var(--text-2); white-space: nowrap; padding: 0 6px; }
+.guide-done { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-weight: 600; color: var(--success); font-size: var(--fs-14); }
+.guide-done svg, .guide-note svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+.guide-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: var(--fs-14); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+.guide-collapsed { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px !important; }
+.guide-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: var(--fs-14); }
+.guide-done-inline { color: var(--success); }
+.guide-done-inline svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 2px; }
+@media (max-width: 767px) { .guide { margin-bottom: var(--space-4); } .guide-head h2 { font-size: var(--fs-14); } }
+
+/* Demo bar: two short rows on phones, the safety line always visible. */
+.banner-demo .demo-break { display: none; }
+@media (max-width: 1023px) {
+  .banner-demo { padding: 6px 12px 9px; gap: 6px 8px; }
+  .banner-demo .demo-note { flex: 1 1 140px; min-width: 0; font-size: var(--fs-13); }
+  .banner-demo > .spacer { display: none; }
+  .banner-demo .demo-break { display: block; flex-basis: 100%; height: 0; }
+  .banner-demo .demo-role > span { font-size: var(--fs-13); }
+  .banner-demo .demo-setup { margin-left: auto; }
+}
+.topbar-role { min-width: 0; overflow: hidden; }
+.topbar-role .pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.quick-assign { display: inline-flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.quick-assign .qa-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--text-2); }
+.quick-assign .qa-error { font-size: var(--fs-13); color: var(--danger); max-width: 260px; }
+.tl-prio { position: absolute; top: 3px; right: 4px; display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 4px; font-size: var(--fs-12); font-weight: 650; line-height: 1.4; border: 1px solid transparent; }
+.tl-prio svg { width: 12px; height: 12px; flex: none; }
+.tl-prio.prio-emergency { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, transparent); }
+.tl-prio.prio-urgent { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 25%, transparent); }
+.tl-block.compact .tl-prio { font-size: 0; gap: 0; padding: 0 3px; }
+
+/* Approval summaries: what an approval would act on, amounts in Geist Mono, right-aligned. */
+.approval-summary { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: var(--fs-14); }
+dl.approval-summary { display: grid; }
+.as-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.as-total { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: var(--fs-18); letter-spacing: -0.02em; white-space: nowrap; }
+.as-note { display: flex; gap: 6px; align-items: center; margin: 0; font-size: var(--fs-13); }
+.as-note svg { width: 15px; height: 15px; flex: none; color: var(--info); }
+.as-lines { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
+.as-lines th, .as-lines td { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+.as-lines th { font-weight: 550; color: var(--text-2); }
+.as-lines .r { text-align: right; }
+.as-lines .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.as-lines tfoot th { color: var(--text-2); font-weight: 500; border-bottom: 0; }
+.as-lines tfoot td { border-bottom: 0; }
+.as-lines .as-total-row th, .as-lines .as-total-row td { color: var(--text); font-weight: 650; font-size: var(--fs-14); }
+.decided-side { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.charge-when { margin-top: 10px; border: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.charge-when legend { font-weight: 550; padding: 0; margin-bottom: 4px; }
+.charge-when-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.charge-when-row .select { width: auto; min-width: 0; max-width: 100%; padding-right: 36px; }
+details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-content; }
+.as-lines-wrap { overflow-x: auto; max-width: 100%; border-radius: 4px; }
+/* Long labels with amounts ("Approve and issue · $2,066.68") wrap instead of widening the page at large text sizes. */
+.guide-target > .btn, .btn.btn-wrap { max-width: 100%; white-space: normal; text-align: left; padding-top: 6px; padding-bottom: 6px; }

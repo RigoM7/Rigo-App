@@ -85,6 +85,8 @@ export function ServiceEditor() {
   const setField = (i: number, patch: Partial<FieldDef>) => setV({ ...v, fields: v.fields.map((f: FieldDef, x: number) => (x === i ? { ...f, ...patch } : f)) });
   const setPrice = (i: number, patch: Partial<PriceLine>) => setV({ ...v, pricing: v.pricing.map((p: PriceLine, x: number) => (x === i ? { ...p, ...patch } : p)) });
   const numberFields = v.fields.filter((f: FieldDef) => f.type === 'number');
+  const choiceFields = v.fields.filter((f: FieldDef) => f.type === 'select' || f.type === 'boolean');
+  const whenValues = (key: string): [string, string][] => { const f = choiceFields.find((x: FieldDef) => x.key === key); return f ? (f.type === 'boolean' ? [['true', 'Yes'], ['false', 'No']] : (f.options ?? []).map((o: string): [string, string] => [o, o])) : []; };
   return (
     <div className="page page-narrow">
       <PageHeader back={{ to: c.to('services'), label: 'Services' }} title={v.name || 'Service'} />
@@ -124,13 +126,13 @@ export function ServiceEditor() {
                       <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => setV({ ...v, fields: v.fields.filter((_: any, x: number) => x !== i) })}>Remove</Button>
                     </span>
                   </div>
-                  <div className="small muted">Key: {f.key}</div>
+                  <details className="advanced"><summary className="small">Advanced</summary><p className="small muted" style={{ margin: '6px 0 0' }}>Field key for imports and workflows: <code>{f.key}</code></p></details>
                 </li>
               ))}
             </ol>
           </Card>
-          <Card id="pricing" title="Pricing" actions={<Button size="sm" icon={<Plus aria-hidden />} onClick={() => setV({ ...v, pricing: [...v.pricing, { id: `line_${Date.now()}`, label: 'Charge', basis: 'flat', quantityField: '', unit: '', rateMinor: null, taxable: false }] })}>Add price line</Button>}>
-            <p className="muted">Leave a rate empty if you have not decided it. Invoices that need it are held, never priced at zero.</p>
+          <Card id="pricing" title="Pricing" actions={<Button size="sm" icon={<Plus aria-hidden />} onClick={() => setV({ ...v, pricing: [...v.pricing, { id: `line_${Date.now()}`, label: 'Charge', basis: 'flat', quantityField: '', unit: '', rateMinor: null, taxable: false, when: null }] })}>Add price line</Button>}>
+            <p className="muted">Leave a rate empty if you have not decided it. Invoices that need it are held, never priced at zero. A line can apply only to some jobs, for example a different price per product.</p>
             <ol className="stack" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {v.pricing.map((p: PriceLine, i: number) => (
                 <li key={p.id} className="card" style={{ padding: 12 }}>
@@ -140,6 +142,26 @@ export function ServiceEditor() {
                     {p.basis === 'per_quantity' && <Field label="Quantity field" id={`f-service-pricing-${i}-quantityField`} error={s.fieldError(`service.pricing.${i}.quantityField`)}>{(pp) => <Select {...pp} value={p.quantityField} onChange={(e) => { const f = numberFields.find((x: FieldDef) => x.key === e.target.value); setPrice(i, { quantityField: e.target.value, unit: f?.unit ?? p.unit }); }}><option value="">Choose…</option>{numberFields.map((f: FieldDef) => <option key={f.key} value={f.key}>{f.label}</option>)}</Select>}</Field>}
                     <Field label={`Rate (${c.company.currency})${p.basis === 'per_quantity' && p.unit ? ` per ${p.unit}` : ''}`} id={`f-rate-${i}`} hint="Empty means not set yet.">{(pp) => <Input {...pp} inputMode="decimal" value={rates[p.id] ?? ''} onChange={(e) => setRates({ ...rates, [p.id]: e.target.value })} />}</Field>
                   </div>
+                  <fieldset className="charge-when" aria-describedby={`f-pw-${i}-hint`}>
+                    <legend className="small">When to charge this line</legend>
+                    <div className="charge-when-row">
+                      <Select aria-label={`When to charge ${p.label}`} value={p.when ? 'when' : 'always'} disabled={!choiceFields.length}
+                        onChange={(e) => { if (e.target.value === 'always') setPrice(i, { when: null }); else { const f = choiceFields[0]; setPrice(i, { when: { field: f.key, equals: whenValues(f.key)[0]?.[0] ?? '' } }); } }}>
+                        <option value="always">On every job</option><option value="when">Only when…</option>
+                      </Select>
+                      {p.when ? <>
+                        <Select aria-label={`Field that decides whether ${p.label} is charged`} value={p.when.field} onChange={(e) => setPrice(i, { when: { field: e.target.value, equals: whenValues(e.target.value)[0]?.[0] ?? '' } })}>
+                          {choiceFields.map((f: FieldDef) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                        </Select>
+                        <span className="small">is</span>
+                        <Select aria-label={`Value of ${choiceFields.find((f: FieldDef) => f.key === p.when!.field)?.label ?? 'the field'} that charges ${p.label}`} value={p.when.equals} onChange={(e) => setPrice(i, { when: { field: p.when!.field, equals: e.target.value } })}>
+                          {whenValues(p.when.field).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                        </Select>
+                      </> : null}
+                    </div>
+                    <p id={`f-pw-${i}-hint`} className="hint" style={{ margin: 0 }}>{p.when ? `Charge only when ${choiceFields.find((f: FieldDef) => f.key === p.when!.field)?.label ?? p.when.field} is ${whenValues(p.when.field).find(([val]) => val === p.when!.equals)?.[1] ?? p.when.equals}.` : choiceFields.length ? 'Charged on every job of this service.' : 'Charged on every job. Add a choice list or yes/no field to charge only some jobs.'}</p>
+                    {s.fieldError(`service.pricing.${i}.when.field`) || s.fieldError(`service.pricing.${i}.when.equals`) ? <p className="field-error" style={{ margin: 0 }}>{s.fieldError(`service.pricing.${i}.when.field`) ?? s.fieldError(`service.pricing.${i}.when.equals`)}</p> : null}
+                  </fieldset>
                   <div className="row-between" style={{ marginTop: 8 }}>
                     <Checkbox label="Taxable" checked={p.taxable} onChange={(e) => setPrice(i, { taxable: e.target.checked })} />
                     <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => setV({ ...v, pricing: v.pricing.filter((_: any, x: number) => x !== i) })}>Remove</Button>

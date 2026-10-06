@@ -1,3 +1,4 @@
+import { timezoneOptions } from '../../shared/timezones';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -39,7 +40,8 @@ export function Workspaces() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
-  const demo = useSubmit(async () => { const r = await post('/demo'); await refreshMe(qc); nav(`/c/${r.id}`); });
+  // "Open my demo" also goes through the server so a returning visitor starts in the Owner view.
+  const demo = useSubmit(async () => { const r = await post('/demo'); await qc.invalidateQueries({ queryKey: [r.id] }); await refreshMe(qc); nav(`/c/${r.id}`); });
   const accept = useSubmit(async (id: string) => { const r = await post(`/me/invitations/${id}/accept`); await refreshMe(qc); toast('Invitation accepted'); nav(`/c/${r.companyId}`); });
   useDocumentTitle('Workspaces');
   if (me.isLoading || !me.data) return <div className="auth-wrap"><LoadingBlock /></div>;
@@ -87,7 +89,7 @@ export function Workspaces() {
             <p>{real.length ? '' : 'Not sure yet? Try a sample company first; nothing is sent or charged. '}A fictional fuel, portable toilet and septic company where you can dispatch a job, finish it as a driver and approve the invoice.</p>
             <ErrorSummary error={demo.error} />
             <div className="row">
-              <Button busy={demo.busy} icon={<FlaskConical aria-hidden />} onClick={() => (demoCo ? nav(`/c/${demoCo.id}`) : demo.run())}>{demoCo ? 'Open my demo' : 'Explore the demo'}</Button>
+              <Button busy={demo.busy} icon={<FlaskConical aria-hidden />} onClick={() => demo.run()}>{demoCo ? 'Open my demo' : 'Explore the demo'}</Button>
               {demoCo ? <Pill tone="demo">Demo workspace</Pill> : null}
             </div>
           </Card>
@@ -98,18 +100,22 @@ export function Workspaces() {
   );
 }
 
-const TIMEZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Vancouver', 'America/Mexico_City', 'Europe/London', 'Europe/Berlin', 'Australia/Sydney'];
+/** Time zone picker with friendly names; the device's zone is offered even when it is not a common one. */
+export function TimezoneSelect({ value, onChange, ...p }: { value: string; onChange: (tz: string) => void; id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }) {
+  const device = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+  return <Select {...p} value={value} onChange={(e) => onChange(e.target.value)}>{timezoneOptions(value, device).map((t) => <option key={t.id} value={t.id}>{t.label}{t.id === device && device !== value ? ' (this device)' : ''}</option>)}</Select>;
+}
 
 export function CompanyBasicsForm({ onSubmit, busy, error, submitLabel, initial }: { onSubmit: (v: any) => void; busy: boolean; error: any; submitLabel: string; initial?: any }) {
-  const guessTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [v, setV] = useState({ name: '', timezone: TIMEZONES.includes(guessTz) ? guessTz : 'America/New_York', currency: 'USD', categories: [] as string[], start: 'starter', ...(initial ?? {}) });
+  const guessTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'; } catch { return 'America/New_York'; } })();
+  const [v, setV] = useState({ name: '', timezone: guessTz, currency: 'USD', categories: [] as string[], start: 'starter', ...(initial ?? {}) });
   const toggle = (c: string) => setV({ ...v, categories: v.categories.includes(c) ? v.categories.filter((x: string) => x !== c) : [...v.categories, c] });
   return (
     <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); onSubmit(v); }}>
       <ErrorSummary error={error} />
       <Field label="Company name" id="f-name" error={error?.fields?.name}>{(p) => <Input {...p} maxLength={80} autoComplete="organization" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
       <div className="grid-2">
-        <Field label="Time zone" id="f-timezone" hint="Schedules and recurring visits use this." error={error?.fields?.timezone}>{(p) => <Select {...p} value={v.timezone} onChange={(e) => setV({ ...v, timezone: e.target.value })}>{[...new Set([v.timezone, ...TIMEZONES])].map((t) => <option key={t}>{t}</option>)}</Select>}</Field>
+        <Field label="Time zone" id="f-timezone" hint="Schedules and recurring visits use this." error={error?.fields?.timezone}>{(p) => <TimezoneSelect {...p} value={v.timezone} onChange={(tz) => setV({ ...v, timezone: tz })} />}</Field>
         <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</Select>}</Field>
       </div>
       <fieldset>

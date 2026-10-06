@@ -14,7 +14,7 @@ import { useDocumentTitle } from '../lib/title';
 // around it, compact. Every number comes from real records; empty companies get setup actions.
 
 const NEED_ACTION: Record<string, string> = {
-  approvals: 'Review', ready: 'Run steps', blocked: 'See why', held: 'Fix holds', problems: 'Open', unassigned: 'Assign', exceptions: 'Review', drafts: 'Complete',
+  approvals: 'Review', ready: 'Run steps', blocked: 'See why', held: 'Fix holds', problems: 'Open', unassigned: 'Assign', urgent: 'Assign', late: 'See late jobs', exceptions: 'Review', drafts: 'Complete',
 };
 
 function useClock(tz: string) {
@@ -46,7 +46,7 @@ export function Dashboard() {
         {c.can('jobs.create') && <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton>}
       </div>
 
-      <section aria-labelledby="att-h" className="needs-strip">
+      <section aria-labelledby="att-h" className="needs-strip" data-guide-target="needs-you">
         <h2 id="att-h" className="needs-strip-label">Needs you</h2>
         {d.attention.length === 0 ? (
           <span className="all-clear"><CheckCircle2 aria-hidden />Nothing needs your attention right now.</span>
@@ -59,6 +59,24 @@ export function Dashboard() {
           </div>
         ))}
       </section>
+
+      {d.invoiceApprovals?.length > 0 && (
+        <section className="card stack-sm" aria-labelledby="inv-ap-h">
+          <div className="section-head"><h2 id="inv-ap-h">Invoices waiting for your approval</h2><Link to={c.to('inbox')} className="small">Open the inbox</Link></div>
+          <ul className="list">
+            {d.invoiceApprovals.map((a: any) => (
+              <li key={a.id} className="row-between" style={{ padding: '8px 0', alignItems: 'center' }}>
+                <span style={{ minWidth: 0 }}><strong>{a.summary?.customerName ?? 'Invoice'}</strong>{a.summary?.jobNumber ? <> · Job <span className="num">#{a.summary.jobNumber}</span></> : null}{a.summary?.serviceName ? ` · ${a.summary.serviceName}` : ''}
+                  <div className="small muted">{a.summary?.lines?.map((l: any) => l.description).join(', ')}{a.summary?.quantityNote ? ` · ${a.summary.quantityNote}` : ''}</div></span>
+                <span className="row" style={{ gap: 10, flexWrap: 'nowrap' }}>
+                  {a.summary?.totalMinor !== undefined ? <span className="as-total">{a.summary.totalMinor === null ? 'Incomplete' : formatMoney(a.summary.totalMinor, a.summary.currency)}</span> : null}
+                  <Link className="btn btn-sm" to={`${c.to('inbox')}#ap-${a.id}`} aria-label={`Review the invoice for ${a.summary?.customerName ?? 'this customer'}${a.summary?.jobNumber ? `, job #${a.summary.jobNumber}` : ''}`}>Review</Link>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {c.setup && !c.setup.ready && !c.demo && <SetupChecklist compact />}
 
@@ -106,6 +124,7 @@ export function Dashboard() {
                 <dt>Partial or unsuccessful</dt><dd><TickNumber value={d.business.exceptions30} /></dd>
                 <dt>Customers</dt><dd><TickNumber value={d.business.customers} /></dd>
                 {d.business.issued30Minor !== undefined && <><dt>Invoiced</dt><dd>{formatMoney(d.business.issued30Minor, d.business.currency)}</dd></>}
+                {d.business.waitingMinor ? <><dt>Drafts waiting for approval</dt><dd>{formatMoney(d.business.waitingMinor, d.business.currency)}</dd></> : null}
                 {d.business.outstandingMinor !== undefined && <><dt>Outstanding</dt><dd>{formatMoney(d.business.outstandingMinor, d.business.currency)}</dd></>}
               </dl>
               <p className="xsmall muted" style={{ margin: 0 }}>Calculated from your records. Payments are recorded by your team; Rigo does not process payments.</p>

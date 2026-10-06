@@ -9,6 +9,7 @@ import { seedRoles, seedStarterServices, seedDefaultWorkflows, applyStructure, e
 import { CURRENCIES } from '../../shared/billing.js';
 import { customFieldsSchema, type ServiceCategory } from '../../shared/services.js';
 import { accentVariants, ACCENT_PRESETS } from '../../shared/branding.js';
+import { guideProgress } from './demo-guide.js';
 import { attentionCounts } from './inbox.js';
 
 export const companiesPublic = new Hono<AppEnv>();
@@ -97,13 +98,14 @@ companyRoutes.get('/', async (c) => {
   const roles = (await db.query(`select key, name from rigo.roles where company_id = $1 order by is_owner desc, name`, [cc.company.id])).rows;
   const { settings, ...company } = cc.company;
   return c.json({
-    company: { ...company, customFields: customFieldsSchema.parse(settings?.customFields ?? {}), accent: accentVariants(cc.company.branding?.accent) },
+    company: { ...company, customFields: customFieldsSchema.parse(settings?.customFields ?? {}), accent: accentVariants(cc.company.branding?.accent),
+      invoiceDueDays: settings?.invoiceDueDays ?? 30, paymentInstructions: settings?.paymentInstructions ?? '' },
     role: { key: cc.roleKey, name: cc.roleName, isOwner: cc.isOwner, simulated: cc.simulatedRole },
     permissions: [...cc.perms],
     capabilities: caps,
     attention: counts,
     setup: can(cc, 'company.settings') ? await setupChecklist(db, cc.company.id) : null,
-    demo: cc.isDemo ? { guide: settings?.demo?.guide ?? { step: 0, dismissed: false }, simRole: settings?.demo?.simRole ?? 'owner' } : null,
+    demo: cc.isDemo ? { guide: settings?.demo?.guide ?? { step: 0, dismissed: false }, simRole: settings?.demo?.simRole ?? 'owner', progress: await guideProgress(db, cc.company.id, settings) } : null,
     members,
     roles,
     me: { id: cc.user.id, actingUserId: cc.actingUserId },
@@ -121,6 +123,7 @@ companyRoutes.patch('/settings', async (c) => {
     serviceCategories: categories.optional(),
     customFields: customFieldsSchema.optional(),
     invoiceDueDays: z.number().int().min(0).max(180).optional(),
+    paymentInstructions: z.string().trim().max(500).optional(),
   }));
   await cc.db.tx(async (q) => {
     const sets: string[] = []; const vals: unknown[] = [cc.company.id];
@@ -135,6 +138,7 @@ companyRoutes.patch('/settings', async (c) => {
     if (sets.length) await q.query(`update rigo.companies set ${sets.join(', ')} where id = $1`, vals);
     if (input.customFields) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{customFields}', $2::jsonb), config_version = config_version + 1 where id = $1`, [cc.company.id, JSON.stringify(input.customFields)]);
     if (input.invoiceDueDays !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{invoiceDueDays}', $2::jsonb) where id = $1`, [cc.company.id, JSON.stringify(input.invoiceDueDays)]);
+    if (input.paymentInstructions !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{paymentInstructions}', to_jsonb($2::text)) where id = $1`, [cc.company.id, input.paymentInstructions]);
     await audit(q, cc, 'company.settings_updated', Object.keys(input));
   });
   return c.json({ ok: true });

@@ -4,9 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, List, Columns3, GanttChartSquare, Search, AlertTriangle, X, ClipboardList } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
-import { LinkButton, Segmented, Field, Input, Select, LoadingBlock, ErrorState, Empty, JobStatus, Pill, Button, useToast } from '../components/ui';
+import { LinkButton, Segmented, Field, Input, Select, LoadingBlock, ErrorState, Empty, JobStatus, Pill, Button, PriorityPill, LatePill, useToast } from '../components/ui';
 import { fmtDateTime, fmtTime, toLocalInput } from '../lib/format';
-import { BILLING_STATUSES } from '../../shared/jobs';
+import { BILLING_STATUSES, isLate } from '../../shared/jobs';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { DispatchTimeline } from '../components/timeline';
 import { QuickAssign } from '../components/assign';
 import { useDocumentTitle } from '../lib/title';
@@ -27,11 +28,13 @@ export function Jobs() {
   const sort = sp.get('sort') ?? 'schedule';
   const qtext = sp.get('q') ?? '';
   const set = (k: string, v: string) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); setSp(n, { replace: true }); };
-  const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}) });
+  const priority = sp.get('priority') ?? '';
+  const late = sp.get('late') === '1';
+  const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}), ...(priority ? { priority } : {}), ...(late ? { late: '1' } : {}) });
   const q = useQuery({ queryKey: [c.cid, 'jobs', params.toString()], queryFn: () => get(`/c/${c.cid}/jobs?${params}`), refetchInterval: 30_000, enabled: view !== 'schedule' });
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
   const jobs: any[] = q.data?.jobs ?? [];
-  const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem'));
+  const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem') || priority || late);
   return (
     <div className={`page${view === 'schedule' ? ' page-wide' : ''}`}>
       <div className="page-header">
@@ -47,14 +50,16 @@ export function Jobs() {
           <Field label="Status" id="f-status">{(p) => <Select {...p} value={status} onChange={(e) => set('status', e.target.value)}>
             <option value="active">Active (draft, open, in progress)</option><option value="draft">Drafts</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="finished">Finished</option><option value="completed">Completed</option><option value="partial">Partial</option><option value="unsuccessful">Unsuccessful</option><option value="cancelled">Cancelled</option><option value="all">All</option>
           </Select>}</Field>
+          <Field label="Priority" id="f-priority">{(p) => <Select {...p} value={priority} onChange={(e) => set('priority', e.target.value)}><option value="">Any priority</option><option value="high">Urgent or emergency</option><option value="emergency">Emergency only</option><option value="normal">Normal only</option></Select>}</Field>
           <Field label="Driver" id="f-assignee">{(p) => <Select {...p} value={assignee} onChange={(e) => set('assignee', e.target.value)}><option value="">Anyone</option><option value="none">Unassigned</option>{c.members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>}</Field>
           {view === 'list' && <Field label="Sort by" id="f-sort">{(p) => <Select {...p} value={sort} onChange={(e) => set('sort', e.target.value)}><option value="schedule">Scheduled time</option><option value="number">Newest job number</option><option value="updated">Recently updated</option><option value="customer">Customer</option></Select>}</Field>}
         </form>
         {sp.get('problem') && <div className="row"><Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Showing jobs with problems</Pill><Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => set('problem', '')}>Clear</Button></div>}
+        {late && <div className="row"><LatePill /><span className="small">Showing open jobs whose time window has ended without a start</span><Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => set('late', '')}>Clear</Button></div>}
         {q.isLoading ? <LoadingBlock rows={6} /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} /> : jobs.length === 0 ? (
           <div className="card"><Empty icon={<ClipboardList />} title={filtered ? 'No jobs match' : 'No active jobs'} action={c.can('jobs.create') ? <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton> : undefined}>{filtered ? 'Try a different filter or search.' : 'Create a job when a customer contacts you.'}</Empty></div>
         ) : view === 'list' ? <JobTable jobs={jobs} onChange={refresh} /> : <Board jobs={jobs} />}
-        {q.data && <p className="xsmall muted" aria-live="polite">{jobs.length} job{jobs.length === 1 ? '' : 's'} · updated {fmtTime(q.data.serverTime)}</p>}
+        {q.data && <p className="xsmall muted" aria-live="polite">{jobs.length} job{jobs.length === 1 ? '' : 's'} · updated {fmtTime(q.data.serverTime, c.company.timezone)}</p>}
       </>}
     </div>
   );
@@ -72,6 +77,8 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
   const sel = assignable.filter((j) => selected.has(j.id));
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allOn = assignable.length > 0 && sel.length === assignable.length;
+  const guard = useUnsavedGuard(!!bulkDriver && sel.length > 0 && !busy, { message: 'You have unsaved driver changes. Save or discard?', onSave: async () => { await applyBulk(); return true; } });
+  const now = Date.now();
   const applyBulk = async () => {
     setBusy(true);
     let ok = 0; const failed: string[] = [];
@@ -101,7 +108,7 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
                 <td data-label="Scheduled" className="num nowrap">{j.scheduled_start ? fmtDateTime(j.scheduled_start, c.company.timezone) : <span className="muted" style={{ fontFamily: 'var(--font-sans)' }}>Not scheduled</span>}</td>
                 <td data-label="Customer">{j.customer_name ?? <span className="muted">No customer</span>}<div className="xsmall muted">{j.address}</div></td>
                 <td data-label="Driver"><QuickAssign job={j} onDone={onChange} /></td>
-                <td data-label="Status"><div className="row" style={{ gap: 6 }}><JobStatus status={j.status} />{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</div></td>
+                <td data-label="Status"><div className="row" style={{ gap: 6 }}><JobStatus status={j.status} /><PriorityPill priority={j.priority} />{isLate(j, now) ? <LatePill /> : null}{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</div></td>
                 {c.can('invoices.view') && <td data-label="Billing" className="small muted">{(BILLING_STATUSES as any)[j.billing_status] ?? '—'}</td>}
               </tr>
             ))}
@@ -116,10 +123,12 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
             <option value="">Choose a driver…</option><option value="none">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <Button size="sm" variant="primary" busy={busy} disabled={!bulkDriver} onClick={applyBulk}>Assign {sel.length} job{sel.length === 1 ? '' : 's'}</Button>
+          {bulkDriver ? <span className="small">Not assigned yet</span> : null}
           <span className="spacer" />
           <Button size="sm" icon={<X aria-hidden />} onClick={() => setSelected(new Set())}>Clear selection</Button>
         </div>
       )}
+      {guard}
     </>
   );
 }
@@ -145,7 +154,7 @@ function Board({ jobs }: { jobs: any[] }) {
                 <span className="row-between" style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}><strong style={{ fontWeight: 550 }}><span className="num muted" style={{ marginRight: 6 }}>#{j.number}</span>{j.service_name ?? ''}</strong><JobStatus status={j.status} /></span>
                 <span>{j.customer_name}</span>
                 <span className="xsmall muted"><span className="num">{j.scheduled_start ? fmtDateTime(j.scheduled_start, c.company.timezone) : 'Not scheduled'}</span>{j.assignee_name ? ` · ${j.assignee_name}` : ''}</span>
-                {j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem reported</Pill> : null}
+                {j.priority !== 'normal' || isLate(j) || j.problem_open ? <span className="row" style={{ gap: 6 }}><PriorityPill priority={j.priority} />{isLate(j) ? <LatePill /> : null}{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem reported</Pill> : null}</span> : null}
               </Link>
             ))}
             {items.length === 0 && <p className="xsmall muted" style={{ padding: 6, margin: 0 }}>None</p>}

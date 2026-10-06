@@ -208,7 +208,7 @@ Motion explains state and makes the business feel live; it never decorates.
 | Button | 44px; primary (filled crimson), default (outlined), ghost, danger (outlined + icon). States: hover, focus, active (1px press), disabled (50%), busy (spinner, `aria-busy`). |
 | Field | Visible label; "(optional)"; hint via `aria-describedby`; inline error with icon; invalid fields get a danger border and `aria-invalid`. Numeric fields use mono. |
 | ErrorSummary | After a failed multi-field submit: `role="alert"`, focused, links to each field. |
-| Pill (status) | Always icon + text. In progress uses a live dot. |
+| Pill (status) | Always icon + text. In progress uses a live dot. Priority pills: Urgent (warning, double chevron) and Emergency (danger, siren); "Late" (warning, hourglass). Normal priority shows no pill. |
 | Banner | info / warning / danger / success with icon; danger is `role="alert"`. |
 | Dialog | Native `<dialog>` for confirmations and protected focus only. |
 | Drawer | Native modal `<dialog>` sliding in from the right; used for the job side panel. |
@@ -216,7 +216,9 @@ Motion explains state and makes the business feel live; it never decorates.
 | Table | 13px header row on `--surface-2`, 14px rows, mono numbers, money right-aligned; group header rows for grouped lists; bulk-select column with a black bulk action bar. Labelled cards below 768px. |
 | Tabs / Segmented | Tabs underline in text color with mono counts; segmented controls are a soft track with a raised selected item. |
 | Empty / Loading / Error | Empty states have an icon box, a heading and a next action; skeletons are shaped like the page; errors offer retry; 403/404 explained. |
-| Toast | Black, bottom-right, `role="status"`, dismissible, 6s. |
+| Toast | Black, bottom-right, `role="status"`, dismissible, 6s. A toast may carry one action (Undo); it then stays 12s. |
+| Walkthrough highlight | The demo walkthrough outlines the control it points at: a 2px dashed `--primary` outline 6px outside a wrapper (`GuideTarget`), with a small filled label ("Step 3: Choose a driver here") above it. Never covers the control or its 3px focus ring; a short pulse of the outline offset only without reduced motion. |
+| Approval summary | Inside an approval card, on `--surface-2`: customer · job · service with the total in Geist Mono at the right, an info line for quantity differences, then up to 5 lines (mono, right-aligned money) and tax/total. The approve button names the action and amount ("Approve and issue · $773.99") and wraps at large text sizes. |
 | Ask Rigo | Small outlined chip that opens the Assistant with a prefilled question (held invoices, blocked or failed steps). |
 
 ## Screens (summary)

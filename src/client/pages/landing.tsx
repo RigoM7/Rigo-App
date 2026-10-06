@@ -9,7 +9,7 @@ import { useResolvedTheme } from '../lib/theme';
 const SHOTS = {
   timeline: { w: 1440, h: 900, alt: "Rigo's Home screen for an office: today's jobs on a timeline, one lane per driver, with an unassigned job at the top." },
   driver: { w: 780, h: 1688, alt: "A driver's fuel delivery on a phone: the address, time and gate code first, the record saved on the phone, and a Submit to office button." },
-  invoice: { w: 1440, h: 1100, alt: 'An invoice Rigo prepared from a completed septic job. It is on hold because no price is set for the service yet, so it cannot be approved or sent.' },
+  invoice: { w: 1440, h: 1100, alt: 'An invoice Rigo prepared from a completed septic job. It is on hold because no price is set for septic inspections yet, so it cannot be approved or sent.' },
 } as const;
 
 function Shot({ name, eager, className }: { name: keyof typeof SHOTS; eager?: boolean; className?: string }) {
