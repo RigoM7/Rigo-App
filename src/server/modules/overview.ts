@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { type AppEnv, can } from '../http/context.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
+import { DEFAULT_JOB_MINUTES } from '../../shared/jobs.js';
+import { visibleApprovals, approvalSummary } from './approvals.js';
 
 // Owner/dispatcher dashboard: attention first, then today's operations, then a brief business
 // overview. Every number comes from real records; empty companies get setup actions instead.
@@ -17,8 +19,12 @@ overviewRoutes.get('/overview', async (c) => {
   const cid = cc.company.id;
 
   const attention: { key: string; label: string; count: number; link: string; tone: 'action' | 'warning' }[] = [];
-  const pendingApprovals = (await db.query<any>(`select count(*)::int n from rigo.approvals where company_id = $1 and status = 'pending'`, [cid])).rows[0].n;
-  if (pendingApprovals && (can(cc, 'approvals.decide') || can(cc, 'invoices.approve'))) attention.push({ key: 'approvals', label: 'Approvals waiting for a decision', count: pendingApprovals, link: 'inbox', tone: 'action' });
+  // Same rule as the inbox: approvals this person, in their current role, may decide.
+  const toDecide = (await visibleApprovals(cc, 'pending')).filter((a) => a.canDecide);
+  if (toDecide.length) attention.push({ key: 'approvals', label: 'Approvals waiting for a decision', count: toDecide.length, link: 'inbox', tone: 'action' });
+  // Invoices waiting for approval, with what they would bill (amounts only with finance.view).
+  const invoiceApprovals = [];
+  for (const a of toDecide.filter((x) => x.subject_type === 'invoice').slice(0, 3)) invoiceApprovals.push({ id: a.id, actionType: a.action_type, summary: await approvalSummary(db, a, cc.perms) });
   if (can(cc, 'workflows.view')) {
     const w = (await db.query<any>(`select count(*) filter (where status in ('suggested','proposed'))::int ready, count(*) filter (where status in ('blocked','failed') and updated_at > now() - interval '7 days')::int problems from rigo.actions where company_id = $1`, [cid])).rows[0];
     if (w.ready) attention.push({ key: 'ready', label: 'Steps prepared for you to run', count: w.ready, link: 'automation', tone: 'action' });
@@ -32,8 +38,12 @@ overviewRoutes.get('/overview', async (c) => {
     const j = (await db.query<any>(`select count(*) filter (where problem_open)::int problems,
         count(*) filter (where status in ('open') and assigned_user_id is null and scheduled_start < $2)::int unassigned_soon,
         count(*) filter (where status in ('partial','unsuccessful') and completed_at > now() - interval '3 days')::int exceptions,
-        count(*) filter (where status = 'draft')::int drafts
+        count(*) filter (where status = 'draft')::int drafts,
+        count(*) filter (where status in ('draft','open') and assigned_user_id is null and priority in ('urgent','emergency'))::int urgent_unassigned,
+        count(*) filter (where status = 'open' and coalesce(scheduled_end, scheduled_start + interval '${DEFAULT_JOB_MINUTES} minutes') < now())::int late
         from rigo.jobs where company_id = $1`, [cid, dayEnd])).rows[0];
+    if (j.urgent_unassigned) attention.push({ key: 'urgent', label: 'Urgent or emergency jobs without a driver', count: j.urgent_unassigned, link: 'jobs?assignee=none&priority=high', tone: 'action' });
+    if (j.late) attention.push({ key: 'late', label: 'Jobs running late', count: j.late, link: 'jobs?late=1', tone: 'warning' });
     if (j.problems) attention.push({ key: 'problems', label: 'Jobs with a reported problem', count: j.problems, link: 'jobs?problem=1', tone: 'warning' });
     if (j.unassigned_soon) attention.push({ key: 'unassigned', label: 'Jobs today or overdue without a driver', count: j.unassigned_soon, link: 'jobs?assignee=none', tone: 'action' });
     if (j.exceptions) attention.push({ key: 'exceptions', label: 'Partial or unsuccessful visits (last 3 days)', count: j.exceptions, link: 'jobs?status=finished', tone: 'warning' });
@@ -67,9 +77,11 @@ overviewRoutes.get('/overview', async (c) => {
         (select count(*)::int from rigo.jobs where company_id = $1 and status in ('partial','unsuccessful') and completed_at > now() - interval '30 days') as exceptions_30,
         (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and issued_at > now() - interval '30 days') as issued_30,
         (select coalesce(sum(total_minor - paid_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid') as outstanding,
+        (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status in ('draft','pending_approval','approved')) as waiting,
         (select count(*)::int from rigo.customers where company_id = $1) as customers`, [cid])).rows[0];
-    business = { completed30: b.completed_30, exceptions30: b.exceptions_30, customers: b.customers, issued30Minor: fin ? Number(b.issued_30) : undefined, outstandingMinor: fin ? Number(b.outstanding) : undefined, currency: cc.company.currency };
+    business = { completed30: b.completed_30, exceptions30: b.exceptions_30, customers: b.customers, issued30Minor: fin ? Number(b.issued_30) : undefined, outstandingMinor: fin ? Number(b.outstanding) : undefined,
+      waitingMinor: fin ? Number(b.waiting) : undefined, currency: cc.company.currency };
   }
   const empty = can(cc, 'jobs.view_all') ? (await db.query<any>(`select count(*)::int n from rigo.jobs where company_id = $1`, [cid])).rows[0].n === 0 : false;
-  return c.json({ attention, today: today_ops, rigo, business, empty });
+  return c.json({ attention, invoiceApprovals, today: today_ops, rigo, business, empty });
 });

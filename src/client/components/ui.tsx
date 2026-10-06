@@ -1,6 +1,6 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ButtonHTMLAttributes } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand, Sparkles, PlayCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand, Sparkles, PlayCircle, Siren, ChevronsUp, Hourglass } from 'lucide-react';
 import type { ApiError } from '../lib/api';
 import { useDocumentTitle } from '../lib/title';
 
@@ -220,6 +220,26 @@ export function JobStatus({ status }: { status: string }) {
   return <Pill tone={tone} icon={status === 'cancelled' ? <Ban aria-hidden /> : undefined}>{label}</Pill>;
 }
 
+/** Urgent / Emergency pill (icon and text). Normal priority shows nothing. */
+export function PriorityPill({ priority }: { priority?: string | null }) {
+  if (priority === 'emergency') return <Pill tone="danger" icon={<Siren aria-hidden />}>Emergency</Pill>;
+  if (priority === 'urgent') return <Pill tone="warning" icon={<ChevronsUp aria-hidden />}>Urgent</Pill>;
+  return null;
+}
+
+/** "Late": an open job whose time window ended without being started (rule in shared/jobs). */
+export function LatePill() {
+  return <Pill tone="warning" icon={<Hourglass aria-hidden />}>Late</Pill>;
+}
+
+/**
+ * Marks a control the demo walkthrough can point at. The walkthrough draws a dashed outline with a
+ * text label around this wrapper, outside the control and its focus ring.
+ */
+export function GuideTarget({ id, children, block }: { id: string; children: ReactNode; block?: boolean }) {
+  return <span className={`guide-target${block ? ' block' : ''}`} data-guide-target={id}>{children}</span>;
+}
+
 const INVOICE_TONES: Record<string, [Tone, string]> = {
   held: ['warning', 'On hold'], draft: ['neutral', 'Draft'], pending_approval: ['info', 'Awaiting approval'], approved: ['info', 'Approved'], issued: ['success', 'Issued'], void: ['neutral', 'Void'],
 };
@@ -306,15 +326,18 @@ export function useConfirm() {
 }
 
 // ------------------------------------------------------------ toasts
-type Toast = { id: number; text: string; tone: 'success' | 'info' | 'error' };
-const ToastCtx = createContext<(text: string, tone?: Toast['tone']) => void>(() => {});
+export interface ToastAction { label: string; onClick: () => void }
+type Toast = { id: number; text: string; tone: 'success' | 'info' | 'error'; action?: ToastAction };
+const ToastCtx = createContext<(text: string, tone?: Toast['tone'], action?: ToastAction) => void>(() => {});
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, tone: Toast['tone'] = 'success') => {
+  const push = useCallback((text: string, tone: Toast['tone'] = 'success', action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
+    setToasts((t) => [...t.slice(-2), { id, text, tone, action }]);
+    // Toasts with an action (Undo) stay longer so there is time to use it.
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 12000 : 6000);
   }, []);
+  const dismiss = (id: number) => setToasts((x) => x.filter((y) => y.id !== id));
   return (
     <ToastCtx.Provider value={push}>
       {children}
@@ -323,7 +346,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div key={t.id} className="toast">
             {t.tone === 'error' ? <AlertCircle className="t-error" aria-hidden /> : t.tone === 'info' ? <Info className="t-info" aria-hidden /> : <CheckCircle2 className="t-success" aria-hidden />}
             <span style={{ flex: 1 }}>{t.text}</span>
-            <button className="icon-btn" style={{ width: 28, height: 28, color: 'inherit' }} aria-label="Dismiss" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}><X aria-hidden style={{ width: 16, height: 16 }} /></button>
+            {t.action ? <button type="button" className="toast-action" onClick={() => { dismiss(t.id); t.action!.onClick(); }}>{t.action.label}</button> : null}
+            <button className="icon-btn" style={{ width: 28, height: 28, color: 'inherit' }} aria-label="Dismiss" onClick={() => dismiss(t.id)}><X aria-hidden style={{ width: 16, height: 16 }} /></button>
           </div>
         ))}
       </div>

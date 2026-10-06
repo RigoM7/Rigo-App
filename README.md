@@ -103,18 +103,21 @@ DATABASE_URL=postgres://… npm test         # the same tests on a real PostgreS
 npm run build && npm start &
 BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) npm run test:browser
 # Add NOEMAIL_URL=http://localhost:8788 (the production-like copy above) to also check recovery
-# without email; E2E_ONLY=auth runs only the account and sign-in checks.
+# without email; E2E_ONLY=auth runs only the account and sign-in checks, E2E_ONLY=round2 only
+# the demo walkthrough, assignment, approval-card and demo-content checks.
 ```
 
 The browser checks run real flows (the landing page, sign-in and sign-up from any entry point,
 lockout warnings, password recovery by mailbox and by an owner's reset link, email change,
-demo, live timeline and job panel, command menu,
-sidebar collapse, dispatch, driver completion, approval,
+demo and its guided walkthrough from the driver view to the simulated invoice email, live
+timeline and job panel, command menu, sidebar collapse, dispatch (save on change, Undo, stale
+tabs, keyboard, unsaved-changes warning), driver completion, approval cards with the invoice
+total, per-product fuel pricing, 28-day rental billing, late and urgent jobs,
 workflow edit/test, assistant proposal, company creation, employee invitation), an axe
 WCAG 2.2 AA scan of 18 app pages plus the landing, sign-in, sign-up, forgot, reset,
 workspaces and account pages and the Team reset-link dialog in light and dark themes,
 horizontal-overflow checks at 375,
-768, 1024 and 1440 px, 200% text, reduced motion and keyboard skip link. Screenshots go to
+768, 1024 and 1440 px (in every simulated demo role), 200% text, reduced motion and keyboard skip link. Screenshots go to
 `e2e/output/`.
 
 ## Deploying (Vercel + Supabase)

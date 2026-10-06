@@ -48,7 +48,7 @@ export function Invoices() {
                 <tr className="group-row"><th colSpan={fin ? 6 : 5} scope="colgroup">{g.title}<span className="num muted">{rows.length}</span></th></tr>
                 {rows.map((i: any) => (
                   <tr key={i.id}>
-                    <td data-primary><Link className="row-link" to={c.to(`invoices/${i.id}`)}>{i.number ? <span className="num">{i.number}</span> : 'Draft'}</Link><div className="xsmall muted">{i.jobNumber ? <>Job <span className="num">#{i.jobNumber}</span></> : i.recurringPlanId ? 'Rental billing' : ''} · {fmtDate(i.createdAt)}</div></td>
+                    <td data-primary><Link className="row-link" to={c.to(`invoices/${i.id}`)}>{i.number ? <span className="num">{i.number}</span> : 'Draft'}</Link><div className="xsmall muted">{i.jobNumber ? <>Job <span className="num">#{i.jobNumber}</span></> : i.recurringPlanId ? 'Rental billing' : ''} · {fmtDate(i.createdAt, c.company.timezone)}</div></td>
                     <td data-label="Customer">{i.customerName ?? '—'}</td>
                     <td data-label="Status"><InvoiceStatus status={i.status} /></td>
                     <td data-label="Delivery" className="small muted">{DELIVERY[i.deliveryStatus]}</td>
@@ -115,11 +115,11 @@ export function InvoiceDoc({ data }: { data: any }) {
       <div className="doc-accent" style={{ background: c.company.accent.light }} aria-hidden />
       <div className="row-between" style={{ alignItems: 'flex-start' }}>
         <div className="row">{co.logo ? <img src={`/api/c/${c.cid}/branding/logo`} alt={`${co.name} logo`} style={{ maxHeight: 56, maxWidth: 160 }} /> : null}<div><h2>{co.name}</h2><div className="muted small">{[co.address, co.phone, co.email].filter(Boolean).join(' · ')}</div></div></div>
-        <div style={{ textAlign: 'right' }}><div className="doc-title">Invoice</div><div className="num">{i.number ?? 'DRAFT — not issued'}</div><div className="muted small">{i.issuedAt ? `Issued ${fmtDate(i.issuedAt)}` : `Prepared ${fmtDate(i.createdAt)}`}</div></div>
+        <div style={{ textAlign: 'right' }}><div className="doc-title">Invoice</div><div className="num">{i.number ?? 'DRAFT — not issued'}</div><div className="muted small">{i.issuedAt ? `Issued ${fmtDate(i.issuedAt, c.company.timezone)}` : `Prepared ${fmtDate(i.createdAt, c.company.timezone)}`}</div></div>
       </div>
       <div className="grid-2" style={{ margin: '20px 0' }}>
         <div><div className="muted small">Bill to</div><strong>{i.customerName}</strong>{i.billingAddress ? <div>{i.billingAddress}</div> : null}</div>
-        <div><div className="muted small">Service</div>{i.serviceName ?? '—'}{i.jobNumber ? ` · job #${i.jobNumber}` : ''}{i.locationAddress ? <div>{i.locationAddress}</div> : null}{i.completedAt ? <div className="muted small">Completed {fmtDate(i.completedAt)}</div> : null}</div>
+        <div><div className="muted small">Service</div>{i.serviceName ?? '—'}{i.jobNumber ? ` · job #${i.jobNumber}` : ''}{i.locationAddress ? <div>{i.locationAddress}</div> : null}{i.completedAt ? <div className="muted small">Completed {fmtDate(i.completedAt, c.company.timezone)}</div> : null}</div>
       </div>
       <table>
         <thead><tr><th>Description</th><th className="right">Qty</th>{fin && <th className="right">Rate</th>}{fin && <th className="right">Amount</th>}</tr></thead>
@@ -139,7 +139,8 @@ export function InvoiceDoc({ data }: { data: any }) {
         </table>
       )}
       {i.notes ? <p className="pre small" style={{ marginTop: 16 }}>{i.notes}</p> : null}
-      {i.dueDays ? <p className="muted small" style={{ marginTop: 8 }}>Payment due within {i.dueDays} days of issue.</p> : null}
+      {i.dueDays ? <p className="muted small" style={{ marginTop: 8 }}>{i.issuedAt ? `Due ${fmtDate(new Date(new Date(i.issuedAt).getTime() + i.dueDays * 86400_000).toISOString(), c.company.timezone)} (within ${i.dueDays} days).` : `Payment due within ${i.dueDays} days of issue.`}</p> : null}
+      {c.company.paymentInstructions ? <p className="small pre" style={{ marginTop: 8 }}><strong>How to pay:</strong> {c.company.paymentInstructions}</p> : null}
     </article>
   );
 }
@@ -151,7 +152,9 @@ export function InvoiceDetail() {
   const toast = useToast();
   const { ask, node } = useConfirm();
   const q = useQuery({ queryKey: [c.cid, 'invoice', id], queryFn: () => get(`/c/${c.cid}/invoices/${id}`) });
-  const [editing, setEditing] = useState(false);
+  const [sp] = useSearchParams();
+  // "Edit invoice" from an approval card opens the line editor directly; "View invoice" does not.
+  const [editing, setEditing] = useState(sp.get('edit') === '1');
   const [payOpen, setPayOpen] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
   const [pay, setPay] = useState({ amount: '', method: 'check', note: '', key: newId('pay') });
@@ -176,6 +179,10 @@ export function InvoiceDetail() {
   const d = q.data;
   const i = d.invoice;
   const err = approve.error ?? issue.error ?? email.error;
+  // Approving here also decides a waiting workflow approval, which issues the invoice: say so, with the amount.
+  const issuesOnApprove = d.approvals.some((a: any) => a.status === 'pending' && a.action_type === 'invoice.issue');
+  const amount = i.totalMinor !== undefined && i.totalMinor !== null ? ` · ${formatMoney(i.totalMinor, i.currency)}` : '';
+  const approveText = `${issuesOnApprove ? 'Approve and issue' : 'Approve'}${amount}`;
   return (
     <div className="page">
       <div className="no-print record-head">
@@ -183,7 +190,7 @@ export function InvoiceDetail() {
         <div className="page-header">
           <div className="stack-sm" style={{ minWidth: 0 }}>
             <div className="ident"><h1 className={i.number ? 'num' : undefined} style={{ letterSpacing: '-0.03em' }}>{i.number ?? 'Draft invoice'}</h1><InvoiceStatus status={i.status} /></div>
-            <div className="record-meta"><span>{i.customerName ?? 'No customer'}</span>{i.jobId ? <span><ClipboardList aria-hidden /><Link to={c.to(`jobs/${i.jobId}`)}>Job <span className="num">#{i.jobNumber}</span></Link></span> : null}<span>Prepared {fmtDate(i.createdAt)}</span></div>
+            <div className="record-meta"><span>{i.customerName ?? 'No customer'}</span>{i.jobId ? <span><ClipboardList aria-hidden /><Link to={c.to(`jobs/${i.jobId}`)}>Job <span className="num">#{i.jobNumber}</span></Link></span> : null}<span>Prepared {fmtDate(i.createdAt, c.company.timezone)}</span></div>
           </div>
           <div className="row">
             <Button icon={<Printer aria-hidden />} onClick={() => window.print()}>Print / save PDF</Button>
@@ -191,7 +198,7 @@ export function InvoiceDetail() {
             {d.can.edit && !editing && <Button icon={<Pencil aria-hidden />} onClick={() => setEditing(true)}>Edit lines</Button>}
             {d.can.message && <Button icon={<Mail aria-hidden />} busy={email.busy} onClick={() => email.run()}>Prepare email</Button>}
             {d.can.pay && <Button icon={<CircleDollarSign aria-hidden />} onClick={() => setPayOpen(true)}>Record payment</Button>}
-            {d.can.approve && i.status !== 'held' && <Button variant="primary" icon={<CheckCircle2 aria-hidden />} busy={approve.busy} onClick={() => approve.run()}>Approve</Button>}
+            {d.can.approve && i.status !== 'held' && <Button variant="primary" icon={<CheckCircle2 aria-hidden />} busy={approve.busy} onClick={() => approve.run()}>{approveText}</Button>}
             {d.can.issue && (i.status === 'approved' || !d.approvalRequired) && <Button variant="primary" icon={<Send aria-hidden />} busy={issue.busy} onClick={() => issue.run()}>Issue</Button>}
           </div>
         </div>
@@ -213,12 +220,12 @@ export function InvoiceDetail() {
       <div className="detail-grid">
       <InvoiceDoc data={d} />
       <div className="stack no-print" style={{ minWidth: 0 }}>
-        <Card id="appr" title="Approvals">{d.approvals.length === 0 ? <p className="muted">No approval requests yet.</p> : <ul className="list">{d.approvals.map((a: any) => <li key={a.id} style={{ padding: '8px 0' }} className="row-between"><span><span className="small">{fmtDateTime(a.created_at)}</span>{a.decided_by_name ? <div className="small muted">{a.status} by {a.decided_by_name}{a.decision_note ? `: ${a.decision_note}` : ''}</div> : a.decision_note ? <div className="small muted">{a.decision_note}</div> : null}</span><Pill tone={a.status === 'approved' ? 'success' : a.status === 'pending' ? 'warning' : a.status === 'rejected' ? 'danger' : 'neutral'}>{a.status}</Pill></li>)}</ul>}</Card>
+        <Card id="appr" title="Approvals">{d.approvals.length === 0 ? <p className="muted">No approval requests yet.</p> : <ul className="list">{d.approvals.map((a: any) => <li key={a.id} style={{ padding: '8px 0' }} className="row-between"><span><span className="small">{fmtDateTime(a.created_at, c.company.timezone)}</span>{a.decided_by_name ? <div className="small muted">{a.status} by {a.decided_by_name}{a.decision_note ? `: ${a.decision_note}` : ''}</div> : a.decision_note ? <div className="small muted">{a.decision_note}</div> : null}</span><Pill tone={a.status === 'approved' ? 'success' : a.status === 'pending' ? 'warning' : a.status === 'rejected' ? 'danger' : 'neutral'}>{a.status}</Pill></li>)}</ul>}</Card>
         <Card id="msg" title="Messages and payments">
           {d.messages.length === 0 && d.payments.length === 0 ? <p className="muted">Nothing yet.</p> : null}
           <ul className="list">
             {d.messages.map((m: any) => <li key={m.id} style={{ padding: '8px 0' }} className="row-between"><span>{m.subject}<div className="small muted">{m.recipient || 'No recipient'}{m.status_detail ? ` · ${m.status_detail}` : ''}</div></span><MessageStatus status={m.status} /></li>)}
-            {d.payments.map((p: any) => <li key={p.id} style={{ padding: '8px 0' }} className="row-between"><span>Payment ({p.method.replace('_', ' ')}){p.note ? ` · ${p.note}` : ''}<div className="small muted">{fmtDateTime(p.recorded_at)} by {p.recorded_by_name}</div></span><span className="num">{formatMoney(p.amount_minor, i.currency)}</span></li>)}
+            {d.payments.map((p: any) => <li key={p.id} style={{ padding: '8px 0' }} className="row-between"><span>Payment ({p.method.replace('_', ' ')}){p.note ? ` · ${p.note}` : ''}<div className="small muted">{fmtDateTime(p.recorded_at, c.company.timezone)} by {p.recorded_by_name}</div></span><span className="num">{formatMoney(p.amount_minor, i.currency)}</span></li>)}
           </ul>
           {d.messages.length > 0 && <LinkButton size="sm" to={c.to('messages')}>Open messages</LinkButton>}
         </Card>

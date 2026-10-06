@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, can } from '../http/context.js';
 import { body } from '../lib/util.js';
+import { approvalsToDecide } from './approvals.js';
 
 export const inboxRoutes = new Hono<AppEnv>();
 
@@ -39,14 +40,18 @@ export async function resolveNotices(q: Q, companyId: string, refType: string, r
   await q.query(`update rigo.notifications set resolved_at = now() where company_id = $1 and ref_type = $2 and ref_id = $3 and resolved_at is null`, [companyId, refType, refId]);
 }
 
+/**
+ * Inbox counts. "Needs action" counts the same things the Needs action tab shows: open action notices
+ * (other than approval notices) plus the approvals this person, in their current role, may decide.
+ */
 export async function attentionCounts(cc: CompanyCtx) {
   const { rows } = await cc.db.query<any>(
     `select
-       count(*) filter (where category = 'needs_action' and resolved_at is null)::int as needs_action,
+       count(*) filter (where category = 'needs_action' and resolved_at is null and ref_type is distinct from 'approval')::int as needs_action,
        count(*) filter (where category = 'warning' and resolved_at is null)::int as warnings,
        count(*) filter (where read_at is null)::int as unread
      from rigo.notifications where company_id = $1 and user_id = $2`, [cc.company.id, cc.user.id]);
-  return rows[0];
+  return { ...rows[0], needs_action: rows[0].needs_action + (await approvalsToDecide(cc)) };
 }
 
 inboxRoutes.get('/notifications', async (c) => {

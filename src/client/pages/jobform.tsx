@@ -8,6 +8,7 @@ import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, PageHeader, Dialog, Checkbox, Banner, useToast } from '../components/ui';
 import { toLocalInput } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
+import { tzLabel } from '../../shared/timezones';
 import type { FieldDef } from '../../shared/services';
 
 export function DynamicField({ f, value, onChange, error, idPrefix = 'details' }: { f: { key: string; label: string; type: string; unit?: string; options?: string[]; required?: boolean; help?: string }; value: any; onChange: (v: any) => void; error?: string; idPrefix?: string }) {
@@ -62,10 +63,10 @@ export function JobForm() {
   const services = useQuery({ queryKey: [c.cid, 'services'], queryFn: () => get(`/c/${c.cid}/services`) });
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const existing = useQuery({ queryKey: [c.cid, 'job', id], queryFn: () => get(`/c/${c.cid}/jobs/${id}`), enabled: editing });
-  const [v, setV] = useState<any>({ customerId: '', locationId: '', serviceId: '', start: '', end: '', contactName: '', contactPhone: '', accessInstructions: '', notes: '', details: {}, custom: {}, assignee: '', resourceIds: [] as string[] });
+  const [v, setV] = useState<any>({ customerId: '', locationId: '', serviceId: '', start: '', end: '', contactName: '', contactPhone: '', accessInstructions: '', notes: '', details: {}, custom: {}, assignee: '', resourceIds: [] as string[], priority: 'normal' });
   useEffect(() => {
     const j = existing.data?.job;
-    if (j) setV((x: any) => ({ ...x, customerId: j.customer_id ?? '', locationId: j.location_id ?? '', serviceId: j.service_id ?? '', start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone), contactName: j.contact_name, contactPhone: j.contact_phone, accessInstructions: j.access_instructions, notes: j.notes, details: j.details ?? {} }));
+    if (j) setV((x: any) => ({ ...x, customerId: j.customer_id ?? '', locationId: j.location_id ?? '', serviceId: j.service_id ?? '', start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone), contactName: j.contact_name, contactPhone: j.contact_phone, accessInstructions: j.access_instructions, notes: j.notes, details: j.details ?? {}, priority: j.priority ?? 'normal' }));
   }, [existing.data, c.company.timezone]);
   const custDetail = useQuery({ queryKey: [c.cid, 'customer', v.customerId], queryFn: () => get(`/c/${c.cid}/customers/${v.customerId}`), enabled: !!v.customerId && c.can('customers.view') });
   const locations: any[] = custDetail.data?.locations ?? [];
@@ -75,7 +76,7 @@ export function JobForm() {
   const toIso = (local: string) => (local ? zonedToUtc(local.slice(0, 10), local.slice(11, 16), c.company.timezone).toISOString() : null);
   const payload = () => ({
     customerId: v.customerId || null, locationId: v.locationId || null, serviceId: v.serviceId || null, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end),
-    contactName: v.contactName, contactPhone: v.contactPhone, accessInstructions: v.accessInstructions, notes: v.notes, details: v.details, custom: v.custom,
+    contactName: v.contactName, contactPhone: v.contactPhone, accessInstructions: v.accessInstructions, notes: v.notes, details: v.details, custom: v.custom, priority: v.priority,
   });
   const s = useSubmit(async (intent: 'draft' | 'open') => {
     if (editing) {
@@ -134,9 +135,12 @@ export function JobForm() {
           </div>
         </Card>
         <Card title="When" id="when">
+          <div className="stack">
+          <Field label="Priority" id="f-priority" hint="Urgent and emergency jobs are listed first for their day and marked on the timeline, the job list and the driver's phone." error={fe('priority')}>{(p) => <Select {...p} value={v.priority} onChange={(e) => setV({ ...v, priority: e.target.value })}><option value="normal">Normal</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option></Select>}</Field>
           <div className="grid-2">
-            <Field label="Requested start" optionalText id="f-scheduledStart" hint={`Company time zone: ${c.company.timezone}`} error={fe('scheduledStart')}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
-            <Field label="Window ends" optionalText id="f-scheduledEnd" hint="Defaults to one hour after the start." error={fe('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
+            <Field label="Requested start" optionalText id="f-scheduledStart" hint={`In ${tzLabel(c.company.timezone)}`} error={fe('scheduledStart')}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+            <Field label="Window ends" optionalText id="f-scheduledEnd" hint="Defaults to one hour after the start. Jobs not started by then are marked Late." error={fe('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
+          </div>
           </div>
         </Card>
         {!editing && c.can('jobs.assign') && (

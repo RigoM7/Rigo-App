@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme, refreshMe, safeNext } from './lib/session';
 import { useDocumentTitle } from './lib/title';
@@ -81,8 +81,9 @@ function StartDemo() {
   const start = useCallback(async () => {
     setError(null);
     try {
-      const existing = me.data?.companies.find((c) => c.kind === 'demo');
-      const id = existing ? existing.id : (await post('/demo')).id;
+      // Always ask the server: it returns the existing demo and starts it in the Owner view.
+      const { id } = await post('/demo');
+      await qc.invalidateQueries({ queryKey: [id] });
       await refreshMe(qc);
       nav(`/c/${id}`, { replace: true });
     } catch (e) { setError(e); }
@@ -189,27 +190,32 @@ function CompanyRoutes() {
   );
 }
 
-export function App() {
+function AppRoutes() {
   return (
-    <BrowserRouter>
-      <ToastProvider>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/signin" element={<SignedOutOnly><SignIn /></SignedOutOnly>} />
-          <Route path="/signup" element={<SignedOutOnly><SignUp /></SignedOutOnly>} />
-          <Route path="/forgot" element={<Forgot />} />
-          <Route path="/reset/:token" element={<Reset />} />
-          <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
-          <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
-          <Route path="/invite/:token" element={<InvitePage />} />
-          <Route path="/dev/mailbox" element={<DevMailbox />} />
-          <Route path="/workspaces" element={<RequireUser><Workspaces /></RequireUser>} />
-          <Route path="/workspaces/new" element={<RequireUser><NewCompany /></RequireUser>} />
-          <Route path="/account" element={<RequireUser><Account /></RequireUser>} />
-          <Route path="/c/:cid/*" element={<RequireUser><CompanyRoot /></RequireUser>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </ToastProvider>
-    </BrowserRouter>
+    <ToastProvider>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/signin" element={<SignedOutOnly><SignIn /></SignedOutOnly>} />
+        <Route path="/signup" element={<SignedOutOnly><SignUp /></SignedOutOnly>} />
+        <Route path="/forgot" element={<Forgot />} />
+        <Route path="/reset/:token" element={<Reset />} />
+        <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
+        <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
+        <Route path="/invite/:token" element={<InvitePage />} />
+        <Route path="/dev/mailbox" element={<DevMailbox />} />
+        <Route path="/workspaces" element={<RequireUser><Workspaces /></RequireUser>} />
+        <Route path="/workspaces/new" element={<RequireUser><NewCompany /></RequireUser>} />
+        <Route path="/account" element={<RequireUser><Account /></RequireUser>} />
+        <Route path="/c/:cid/*" element={<RequireUser><CompanyRoot /></RequireUser>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </ToastProvider>
   );
+}
+
+// A data router (rather than <BrowserRouter>) so screens can warn before leaving unsaved changes (useBlocker).
+const router = createBrowserRouter([{ path: '*', element: <AppRoutes /> }]);
+
+export function App() {
+  return <RouterProvider router={router} />;
 }

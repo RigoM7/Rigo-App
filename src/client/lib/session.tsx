@@ -1,3 +1,4 @@
+import type { GuideProgress } from '../../shared/demo';
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { get, post } from './api';
@@ -39,13 +40,13 @@ export async function signOutAndForget(qc: QueryClient) {
 
 export interface Capability { state: 'available' | 'simulated' | 'disabled'; reason: string }
 export interface Boot {
-  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string } };
+  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string };
   role: { key: string; name: string; isOwner: boolean; simulated: string | null };
   permissions: Permission[];
   capabilities: Record<'email' | 'sms' | 'ai' | 'payments' | 'maps' | 'fileStorage', Capability>;
   attention: { needs_action: number; warnings: number; unread: number };
   setup: null | { items: { key: string; label: string; done: boolean; required: boolean; link: string; note?: string }[]; ready: boolean; done: number; total: number; step: string; dismissed: boolean };
-  demo: null | { guide: { step: number; dismissed: boolean }; simRole: string };
+  demo: null | { guide: { step: number; dismissed: boolean }; simRole: string; progress: GuideProgress };
   members: { id: string; name: string; role_key: string }[];
   roles: { key: string; name: string }[];
   me: { id: string; actingUserId: string };

@@ -55,13 +55,21 @@ function nextAction(job: any): string {
   }
 }
 
-const listSelect = `select j.id, j.number, j.status, j.billing_status, j.problem_open, j.scheduled_start, j.scheduled_end, j.assigned_user_id, j.version,
+const listSelect = `select j.id, j.number, j.status, j.priority, j.billing_status, j.problem_open, j.scheduled_start, j.scheduled_end, j.assigned_user_id, j.version,
     j.updated_at, j.created_at, j.completed_at, c.name as customer_name, l.address, l.label as location_label, s.name as service_name, s.category,
     coalesce(m.display_name, u.name) as assignee_name,
     (select coalesce(json_agg(json_build_object('id', r.id, 'name', r.name, 'kind', r.kind)), '[]'::json) from rigo.job_resources jr join rigo.resources r on r.id = jr.resource_id where jr.job_id = j.id) as resources
   from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id
   left join rigo.services s on s.id = j.service_id left join rigo.users u on u.id = j.assigned_user_id
   left join rigo.memberships m on m.company_id = j.company_id and m.user_id = j.assigned_user_id`;
+
+/** Open jobs whose time window has ended without being started (same rule as isLate in shared/jobs). */
+const LATE_SQL = `(j.status = 'open' and coalesce(j.scheduled_end, j.scheduled_start + interval '${DEFAULT_JOB_MINUTES} minutes') < now())`;
+
+/** Day by day in the company's time zone; within a day emergencies, then urgent jobs, then by time. */
+function scheduleOrder(tzParam: string) {
+  return `(j.scheduled_start at time zone ${tzParam})::date asc nulls last, case j.priority when 'emergency' then 0 when 'urgent' then 1 else 2 end, j.scheduled_start asc nulls last, j.number`;
+}
 
 jobRoutes.get('/jobs', async (c) => {
   const cc = c.get('cc');
@@ -78,6 +86,10 @@ jobRoutes.get('/jobs', async (c) => {
   if (assignee === 'none') where.push('j.assigned_user_id is null');
   else if (assignee) add('j.assigned_user_id = ?', assignee);
   if (c.req.query('problem') === '1') where.push('j.problem_open');
+  const priority = c.req.query('priority');
+  if (priority === 'high') where.push(`j.priority in ('urgent','emergency')`);
+  else if (priority === 'urgent' || priority === 'emergency' || priority === 'normal') add('j.priority = ?', priority);
+  if (c.req.query('late') === '1') where.push(LATE_SQL);
   const from = c.req.query('from'), to = c.req.query('to');
   if (from) add('j.scheduled_start >= ?', from);
   if (to) add('j.scheduled_start < ?', to);
@@ -88,8 +100,12 @@ jobRoutes.get('/jobs', async (c) => {
     where.push(`(lower(coalesce(c.name,'')) like $${n} or lower(coalesce(l.address,'')) like $${n} or lower(coalesce(s.name,'')) like $${n} or j.number::text = $${n + 1})`);
     vals.push(qtext.replace(/^#/, ''));
   }
-  const sorts: Record<string, string> = { schedule: 'j.scheduled_start asc nulls last, j.number', number: 'j.number desc', updated: 'j.updated_at desc', customer: 'lower(c.name), j.number' };
-  const order = sorts[c.req.query('sort') ?? 'schedule'] ?? sorts.schedule;
+  const sorts: Record<string, () => string> = {
+    // Only the schedule order uses the company time zone; an unused parameter is an error in PostgreSQL.
+    schedule: () => { vals.push(cc.company.timezone); return scheduleOrder(`$${vals.length}`); },
+    number: () => 'j.number desc', updated: () => 'j.updated_at desc', customer: () => 'lower(c.name), j.number',
+  };
+  const order = (sorts[c.req.query('sort') ?? 'schedule'] ?? sorts.schedule)();
   const { rows } = await cc.db.query(`${listSelect} where ${where.join(' and ')} order by ${order} limit 500`, vals);
   return c.json({
     jobs: rows.map((j: any) => ({ ...j, billing_status: can(cc, 'invoices.view') ? j.billing_status : undefined, nextAction: nextAction(j) })),
@@ -102,7 +118,7 @@ jobRoutes.get('/my/jobs', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.work');
   const { rows } = await cc.db.query<any>(
-    `select j.id, j.number, j.status, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
+    `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
             j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at,
             c.name as customer_name, l.address, l.label as location_label, l.access_instructions as location_access, l.site_contact,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
@@ -110,7 +126,7 @@ jobRoutes.get('/my/jobs', async (c) => {
        from rigo.jobs j left join rigo.customers c on c.id = j.customer_id left join rigo.locations l on l.id = j.location_id left join rigo.services s on s.id = j.service_id
       where j.company_id = $1 and j.assigned_user_id = $2 and j.status <> 'draft'
         and (j.status in ('open','in_progress') or j.completed_at > now() - interval '2 days' or j.updated_at > now() - interval '2 days')
-      order by j.scheduled_start asc nulls last, j.number`, [cc.company.id, cc.actingUserId]);
+      order by ${scheduleOrder('$3')}`, [cc.company.id, cc.actingUserId, cc.company.timezone]);
   const driverNext = (j: any) => (j.status === 'open' ? 'Start the job' : j.status === 'in_progress' ? 'Record the outcome' : '');
   return c.json({ jobs: rows.map((j) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
 });
@@ -157,6 +173,7 @@ const jobInput = z.object({
   accessInstructions: z.string().max(2000).optional(), notes: z.string().max(4000).optional(),
   details: z.record(z.string(), z.unknown()).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
+  priority: z.enum(['normal', 'urgent', 'emergency']).optional(),
 });
 
 async function validateRefs(q: Q, cc: CompanyCtx, input: z.infer<typeof jobInput>) {
@@ -193,11 +210,11 @@ jobRoutes.post('/jobs', async (c) => {
     const seq = await q.query<{ job_seq: number }>(`update rigo.companies set job_seq = job_seq + 1 where id = $1 returning job_seq`, [cc.company.id]);
     const end = input.scheduledEnd ?? (input.scheduledStart ? new Date(new Date(input.scheduledStart).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString() : null);
     const { rows } = await q.query<{ id: string }>(
-      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, scheduled_start, scheduled_end, contact_name, contact_phone, access_instructions, notes, details, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
+      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, scheduled_start, scheduled_end, contact_name, contact_phone, access_instructions, notes, details, created_by, priority)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
       [cc.company.id, seq.rows[0].job_seq, draftLike.customer_id, draftLike.location_id, draftLike.service_id, input.intent, input.scheduledStart ?? null, end,
         input.contactName ?? '', input.contactPhone ?? '', input.accessInstructions ?? '', input.notes ?? '',
-        JSON.stringify({ ...req.clean, ...Object.fromEntries(Object.entries(custom.clean).map(([k, v]) => [`custom_${k}`, v])), _clientRequestId: input.clientRequestId }), cc.user.id]);
+        JSON.stringify({ ...req.clean, ...Object.fromEntries(Object.entries(custom.clean).map(([k, v]) => [`custom_${k}`, v])), _clientRequestId: input.clientRequestId }), cc.user.id, input.priority ?? 'normal']);
     await event(q, cc, rows[0].id, 'created', { status: input.intent });
     await emit(q, cc.company.id, 'job.created', { type: 'job', id: rows[0].id }, {}, { actorUserId: cc.user.id });
     return { id: rows[0].id, number: seq.rows[0].job_seq, duplicate: false, missing };
@@ -224,12 +241,12 @@ jobRoutes.patch('/jobs/:id', async (c) => {
       const missing = missingForOpen({ customer_id: merged.customerId, location_id: merged.locationId, service_id: merged.serviceId, details }, fields);
       if (missing.length) throw badRequest('An open job must keep its required information.', { missing });
     }
-    const before = { customer_id: job.customer_id, location_id: job.location_id, service_id: job.service_id, scheduled_start: job.scheduled_start, details: publicDetails(job.details), notes: job.notes };
+    const before = { customer_id: job.customer_id, location_id: job.location_id, service_id: job.service_id, scheduled_start: job.scheduled_start, details: publicDetails(job.details), notes: job.notes, priority: job.priority };
     await q.query(`update rigo.jobs set customer_id = $3, location_id = $4, service_id = $5, scheduled_start = coalesce($6, scheduled_start), scheduled_end = coalesce($7, scheduled_end),
         contact_name = coalesce($8, contact_name), contact_phone = coalesce($9, contact_phone), access_instructions = coalesce($10, access_instructions), notes = coalesce($11, notes),
-        details = $12, version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
+        details = $12, priority = coalesce($13, priority), version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
       [job.id, cc.company.id, merged.customerId, merged.locationId, merged.serviceId, input.scheduledStart ?? null, input.scheduledEnd ?? null,
-        input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details)]);
+        input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details), input.priority ?? null]);
     await event(q, cc, job.id, 'edited', { before });
     return { version: job.version + 1 };
   });

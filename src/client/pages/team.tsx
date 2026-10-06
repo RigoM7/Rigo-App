@@ -87,7 +87,7 @@ function Delegations({ members }: { members: any[] }) {
           <div style={{ gridColumn: '1 / -1' }}><ErrorSummary error={s.error} /></div>
         </form>
       )}
-      <ul className="list" style={{ marginTop: 12 }}>{q.data?.delegations.map((d: any) => <li key={d.id} className="row-between" style={{ padding: '8px 0' }}><span>{d.from_name} → {d.to_name}{d.ends_at ? ` until ${fmtDate(d.ends_at)}` : ''}</span><Button size="sm" variant="ghost" onClick={() => end(d.id)}>End</Button></li>)}</ul>
+      <ul className="list" style={{ marginTop: 12 }}>{q.data?.delegations.map((d: any) => <li key={d.id} className="row-between" style={{ padding: '8px 0' }}><span>{d.from_name} → {d.to_name}{d.ends_at ? ` until ${fmtDate(d.ends_at, c.company.timezone)}` : ''}</span><Button size="sm" variant="ghost" onClick={() => end(d.id)}>End</Button></li>)}</ul>
     </Card>
   );
 }
@@ -187,9 +187,9 @@ export function Team() {
               <thead><tr><th>Email</th><th>Role</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>{q.data.invitations.map((i: any) => (
                 <tr key={i.id}>
-                  <td data-primary className="wrap-anywhere">{i.email}<div className="small muted">Sent {fmtDate(i.created_at)}</div></td>
+                  <td data-primary className="wrap-anywhere">{i.email}<div className="small muted">Sent {fmtDate(i.created_at, c.company.timezone)}</div></td>
                   <td data-label="Role">{i.role_name}</td>
-                  <td data-label="Status"><Pill tone={i.status === 'accepted' ? 'success' : i.status === 'pending' ? 'info' : 'neutral'}>{i.status === 'pending' ? `Pending until ${fmtDate(i.expires_at)}` : i.status === 'accepted' ? 'Accepted' : i.status === 'expired' ? 'Expired' : 'Revoked'}</Pill></td>
+                  <td data-label="Status"><Pill tone={i.status === 'accepted' ? 'success' : i.status === 'pending' ? 'info' : 'neutral'}>{i.status === 'pending' ? `Pending until ${fmtDate(i.expires_at, c.company.timezone)}` : i.status === 'accepted' ? 'Accepted' : i.status === 'expired' ? 'Expired' : 'Revoked'}</Pill></td>
                   <td data-label="">{['pending', 'expired', 'revoked'].includes(i.status) && <span className="row"><Button size="sm" icon={<RotateCw aria-hidden />} onClick={() => invAction(i.id, 'resend')}>New link</Button>{i.status === 'pending' && <Button size="sm" variant="ghost" icon={<Ban aria-hidden />} onClick={() => invAction(i.id, 'revoke')}>Revoke</Button>}</span>}</td>
                 </tr>
               ))}</tbody>

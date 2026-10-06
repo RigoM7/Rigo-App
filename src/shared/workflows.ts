@@ -80,6 +80,7 @@ export const CONDITION_FIELDS = {
   'job.service_name': { label: 'Service name', type: 'text', subject: 'job' },
   'job.problem_open': { label: 'Problem reported', type: 'boolean', subject: 'job' },
   'job.has_assignee': { label: 'Job has a driver', type: 'boolean', subject: 'job' },
+  'job.priority': { label: 'Job priority', type: 'select', options: ['normal', 'urgent', 'emergency'], subject: 'job' },
   'customer.name': { label: 'Customer name', type: 'text', subject: 'any' },
   'invoice.total_minor': { label: 'Invoice total (cents)', type: 'number', subject: 'invoice' },
   'invoice.held': { label: 'Invoice is on hold', type: 'boolean', subject: 'invoice' },

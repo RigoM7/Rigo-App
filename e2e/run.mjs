@@ -71,6 +71,342 @@ async function openSignInFromHome(p) {
   await p.waitForURL(/\/signin/);
 }
 
+// ---------------------------------------------------------------- Round 2: demo walkthrough, assignment, approvals
+// Run only this section with E2E_ONLY=round2.
+const H = { 'x-rigo': '1' };
+async function demoVisitor(label, vw = 1366, vh = 900, extra = {}) {
+  const c = await browser.newContext({ viewport: { width: vw, height: vh }, ...extra });
+  const p = await c.newPage(); watch(p, label);
+  const mail = `${label}-${Date.now()}-${++accountN}@example.test`;
+  const r = await c.request.post(`${BASE}/api/auth/signup`, { headers: H, data: { name: 'Vera Visitor', email: mail, password: STRONG } });
+  if (!r.ok()) throw new Error(`signup ${r.status()} ${await r.text()}`);
+  const cid = (await (await c.request.post(`${BASE}/api/demo`, { headers: H })).json()).id;
+  const api = {
+    get: async (path) => (await c.request.get(`${BASE}/api/c/${cid}${path}`, { headers: H })).json(),
+    post: async (path, data = {}) => (await c.request.post(`${BASE}/api/c/${cid}${path}`, { headers: H, data })).json(),
+  };
+  return { c, p, cid, C: `${BASE}/c/${cid}`, api };
+}
+const guideOf = (p) => p.getByRole('complementary', { name: 'Demo walkthrough' });
+const highlighted = (p, id) => p.locator(`[data-guide-active][data-guide-target="${id}"]`);
+
+if (process.env.E2E_ONLY !== 'auth') {
+  await step('M1: from the driver view, the walkthrough reaches the simulated email using only its own buttons', async () => {
+    const v = await demoVisitor('guide');
+    const { p } = v;
+    const guide = guideOf(p);
+    await p.goto(v.C);
+    await guide.waitFor();
+    await p.getByLabel('Simulated role').selectOption('driver');
+    await p.waitForURL(/\/today$/);
+    await guide.getByText('Step 1 of 7').waitFor();
+    if (await guide.getByText(/^\d\. /).count()) throw new Error('step titles still carry their own numbers');
+    await guide.getByRole('button', { name: /^Next/ }).click();
+    // Step 2 needs the Owner: one button switches and shows the place.
+    await guide.getByText('Step 2 of 7').waitFor();
+    await guide.getByText('This step is done as the Owner. You are viewing as Driver.').waitFor();
+    await guide.getByRole('button', { name: 'Switch to Owner to see what needs you' }).click();
+    await highlighted(p, 'needs-you').waitFor();
+    await guide.getByRole('button', { name: /^Next/ }).click();
+    // Step 3: assign job #3 from the jobs table; it saves on change.
+    await guide.getByText('Step 3 of 7').waitFor();
+    await guide.getByRole('button', { name: 'Show me' }).click();
+    await p.waitForURL(/\/jobs$/);
+    await highlighted(p, 'assign-job-3').waitFor();
+    const focused = await p.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+    if (focused !== 'Driver for job #3') throw new Error(`Show me focused ${focused}`);
+    await p.screenshot({ path: `${OUT}/r2-guide-step3-1366.png` });
+    await p.getByLabel('Driver for job #3').selectOption({ label: 'Dana Driver (fictional)' });
+    await p.getByText('Dana Driver (fictional) assigned to job #3').waitFor();
+    await guide.getByText(/Done\. Job #3 is assigned to Dana Driver/).waitFor();
+    await guide.getByRole('button', { name: 'Next step' }).click();
+    // Step 4 is the driver's: switch, start, record, submit.
+    await guide.getByText('Step 4 of 7').waitFor();
+    await guide.getByRole('button', { name: 'Switch to Driver to complete the job' }).click();
+    await p.waitForURL(/\/today\/[0-9a-f-]+$/);
+    await highlighted(p, 'driver-start').waitFor();
+    await p.getByRole('button', { name: 'Start job' }).click();
+    await p.getByText('Job started').waitFor();
+    await highlighted(p, 'driver-record').waitFor();
+    await p.getByLabel(/Delivered quantity/).fill('187.4');
+    await p.getByRole('button', { name: 'Submit to office' }).click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
+    await p.getByText('Accepted. The office has your record.').waitFor();
+    await guide.getByText(/Done\. The office has the driver's record/).waitFor();
+    await guide.getByRole('button', { name: 'Next step' }).click();
+    // Step 5: back to the Owner, approve from a card that shows the bill.
+    await guide.getByText('Step 5 of 7').waitFor();
+    await guide.getByRole('button', { name: 'Switch to Owner to approve' }).click();
+    await p.waitForURL(/\/inbox$/);
+    const approve = p.getByRole('button', { name: 'Approve and issue · $773.99' });
+    await approve.waitFor();
+    await highlighted(p, 'approve-job-3').waitFor();
+    const card = p.locator('article', { has: approve });
+    const text = await card.innerText();
+    for (const want of ['Delivered 187.4 gal of 200 requested', 'Gasoline', '187.4 gal', '$3.89', '$728.99', 'Delivery fee', '$45.00', '$773.99']) if (!text.includes(want)) throw new Error(`card is missing "${want}"`);
+    await card.scrollIntoViewIfNeeded();
+    await p.screenshot({ path: `${OUT}/r2-walkthrough-step5-1366.png` });
+    await card.screenshot({ path: `${OUT}/r2-approval-card.png` });
+    // The card's total is the invoice page's total; viewing the invoice changes nothing.
+    const href = await card.getByRole('link', { name: 'View invoice' }).getAttribute('href');
+    const p2 = await v.c.newPage();
+    await p2.goto(`${BASE}${href}`);
+    const pageTotal = (await p2.locator('.state-track .money-big').innerText()).trim();
+    await p2.close();
+    if (pageTotal !== '$773.99') throw new Error(`invoice page total ${pageTotal}`);
+    await approve.click();
+    await p.getByText(/Approved\. Rigo will continue/).waitFor();
+    await guide.getByText(/Done\. The invoice for job #3 is approved and issued/).waitFor();
+    await guide.getByRole('button', { name: 'Next step' }).click();
+    // Step 6: the prepared email opens with Send (simulated) highlighted.
+    await guide.getByText('Step 6 of 7').waitFor();
+    await guide.getByText('Press Send (simulated) to see what the customer would receive.').waitFor();
+    await guide.getByRole('button', { name: 'Show me' }).click();
+    const dlg = p.getByRole('dialog');
+    await dlg.getByRole('button', { name: 'Send (simulated)' }).waitFor();
+    await highlighted(p, 'send-simulated').waitFor();
+    const mail = await dlg.innerText();
+    for (const want of ['Gasoline: 187.4 gal × $3.89 = $728.99', 'Total: $773.99', 'Due:', 'How to pay:']) if (!mail.includes(want)) throw new Error(`email is missing "${want}"`);
+    await dlg.getByRole('button', { name: 'Send (simulated)' }).click();
+    await dlg.getByText('Simulated: this is what the customer would receive').waitFor();
+    await p.keyboard.press('Escape');
+    await guide.getByText(/Done\. Sent as Simulated/).waitFor();
+    const msgs = (await v.api.get('/messages')).messages;
+    if (!msgs.some((m) => m.status === 'simulated' && m.job_number === 3)) throw new Error('job #3 email is not marked simulated');
+    await guide.getByRole('button', { name: 'Next step' }).click();
+    await guide.getByText('Step 7 of 7').waitFor();
+    await guide.getByRole('button', { name: 'Done', exact: true }).click();
+    await guide.waitFor({ state: 'hidden' });
+    // Reopening the demo starts as Owner.
+    await p.getByLabel('Simulated role').selectOption('driver');
+    await p.waitForURL(/\/today$/);
+    await p.goto(`${BASE}/start-demo`);
+    await p.waitForURL(new RegExp(`/c/${v.cid}`));
+    const boot = await v.api.get('');
+    if (boot.role.key !== 'owner') throw new Error(`reopened as ${boot.role.key}`);
+    if ((await p.getByLabel('Simulated role').inputValue()) !== 'owner') throw new Error('View as is not Owner after reopening');
+    await v.c.close();
+  });
+
+  await step('M1: a step that is not possible yet says why and offers the step that unlocks it', async () => {
+    const v = await demoVisitor('guide-blocked');
+    await v.api.post('/demo/guide', { step: 4 });
+    await v.p.goto(`${v.C}/inbox`);
+    const guide = guideOf(v.p);
+    await guide.getByText('Job #3 is not completed yet, so there is no invoice to approve.').waitFor();
+    await guide.getByRole('button', { name: 'Go to step 4' }).click();
+    await guide.getByText('Step 4 of 7').waitFor();
+    await guide.getByText(/Job #3 first needs Dana Driver as its driver/).waitFor();
+    await v.c.close();
+  });
+
+  await step('M2: a driver chosen in the table is saved, survives navigation, and can be undone', async () => {
+    const v = await demoVisitor('assign');
+    const { p } = v;
+    await v.api.post('/demo/guide', { dismissed: true });
+    await p.goto(`${v.C}/jobs`);
+    const sel = p.getByLabel('Driver for job #3');
+    await sel.selectOption({ label: 'Rafa Route (fictional)' });
+    await p.getByText('Rafa Route (fictional) assigned to job #3').waitFor();
+    await p.screenshot({ path: `${OUT}/r2-jobs-assign-1366.png` });
+    await p.getByRole('link', { name: 'Home' }).first().click();
+    await p.getByRole('heading', { name: 'Needs you' }).waitFor();
+    await p.goBack();
+    if ((await p.getByLabel('Driver for job #3').locator('option:checked').innerText()) !== 'Rafa Route (fictional)') throw new Error('assignment not kept');
+    const job3 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 3);
+    const detail = await v.api.get(`/jobs/${job3.id}`);
+    if (detail.job.assignee_name !== 'Rafa Route (fictional)') throw new Error(`job page says ${detail.job.assignee_name}`);
+    // Undo restores the previous driver (none) using the new version.
+    await sel.selectOption({ label: 'Dana Driver (fictional)' });
+    const toast = p.locator('.toast', { hasText: 'Dana Driver (fictional) assigned to job #3' });
+    await toast.getByRole('button', { name: 'Undo' }).click();
+    await p.getByText('Change undone on job #3').waitFor();
+    if ((await p.getByLabel('Driver for job #3').inputValue()) !== job3.assigned_user_id && job3.assigned_user_id) throw new Error('undo did not restore');
+    const after = (await v.api.get(`/jobs/${job3.id}`)).job;
+    if (after.assignee_name !== 'Rafa Route (fictional)') throw new Error(`after undo: ${after.assignee_name}`);
+    await v.c.close();
+  });
+
+  await step('M2: a stale second tab is refused, the menu goes back and the reason is shown', async () => {
+    const v = await demoVisitor('assign-stale');
+    await v.api.post('/demo/guide', { dismissed: true });
+    const a = v.p;
+    const b = await v.c.newPage();
+    await a.goto(`${v.C}/jobs`);
+    await b.goto(`${v.C}/jobs`);
+    await a.getByLabel('Driver for job #2').waitFor();
+    await b.getByLabel('Driver for job #2').selectOption({ label: 'Rafa Route (fictional)' });
+    await b.getByText('Rafa Route (fictional) assigned to job #2').waitFor();
+    const before = await a.getByLabel('Driver for job #2').inputValue();
+    await a.getByLabel('Driver for job #2').selectOption({ label: 'Sam Dispatch (fictional)' });
+    await a.getByText(/Not changed: This job changed since you loaded it/).waitFor();
+    if ((await a.getByLabel('Driver for job #2').inputValue()) !== before) throw new Error('menu was not put back');
+    await a.screenshot({ path: `${OUT}/r2-jobs-assign-conflict.png` });
+    await v.c.close();
+  });
+
+  await step('M2: arrowing through the menu with the keyboard saves once', async () => {
+    const v = await demoVisitor('assign-keys');
+    await v.api.post('/demo/guide', { dismissed: true });
+    const { p } = v;
+    await p.goto(`${v.C}/jobs`);
+    const job4 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 4);
+    const count = async () => (await v.api.get(`/jobs/${job4.id}`)).events.filter((e) => ['assigned', 'reassigned', 'unassigned'].includes(e.type)).length;
+    const n0 = await count();
+    await p.getByLabel('Driver for job #4').focus();
+    for (let i = 0; i < 3; i++) await p.keyboard.press('ArrowDown');
+    await p.keyboard.press('Tab');
+    await p.locator('.toast', { hasText: /assigned to job #4|removed from job #4/ }).waitFor();
+    await p.waitForTimeout(1500);
+    const n1 = await count();
+    if (n1 - n0 !== 1) throw new Error(`${n1 - n0} assignments were saved`);
+    await v.c.close();
+  });
+
+  await step('M2: leaving the job page with unsaved driver changes asks first', async () => {
+    const v = await demoVisitor('assign-guard');
+    await v.api.post('/demo/guide', { dismissed: true });
+    const { p } = v;
+    const job3 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 3);
+    await p.goto(`${v.C}/jobs/${job3.id}`);
+    await p.getByLabel('Driver', { exact: true }).selectOption({ label: 'Dana Driver (fictional)' });
+    await p.getByText('Unsaved changes.').waitFor();
+    await p.getByRole('link', { name: 'Jobs', exact: true }).first().click();
+    const dlg = p.getByRole('dialog', { name: 'Leave without saving?' });
+    await dlg.getByText('You have unsaved driver changes. Save or discard?').waitFor();
+    await dlg.getByRole('button', { name: 'Save' }).click();
+    await p.waitForURL(/\/jobs$/);
+    if ((await v.api.get(`/jobs/${job3.id}`)).job.assignee_name !== 'Dana Driver (fictional)') throw new Error('not saved from the dialog');
+    await v.c.close();
+  });
+
+  await step('M4 + m4: demo shows per-product fuel prices, 28-day rental billing, a priced emergency and late jobs', async () => {
+    const v = await demoVisitor('business');
+    await v.api.post('/demo/guide', { dismissed: true });
+    const { p } = v;
+    const svcs = (await v.api.get('/services')).services;
+    const fuel = svcs.find((x) => x.category === 'fuel');
+    await p.goto(`${v.C}/services/${fuel.id}`);
+    await p.getByText('Charge only when Product is Heating oil.').waitFor();
+    await p.getByRole('heading', { name: 'Pricing' }).scrollIntoViewIfNeeded();
+    await p.screenshot({ path: `${OUT}/r2-fuel-pricing-1366.png`, fullPage: true });
+    await p.goto(`${v.C}/recurring/new`);
+    await p.getByLabel('Bill', { exact: true }).waitFor();
+    if (!(await p.getByLabel('Bill', { exact: true }).locator('option:checked').innerText()).startsWith('Every 4 weeks (28 days)')) throw new Error('28-day billing is not offered first');
+    await p.screenshot({ path: `${OUT}/r2-recurring-form-1366.png`, fullPage: true });
+    await p.goto(`${v.C}/recurring`);
+    await p.getByText(/every 4 weeks \(28 days\)/).waitFor();
+    await p.goto(`${v.C}/jobs?status=all`);
+    await p.locator('tr', { hasText: '#3' }).getByText('Urgent').waitFor();
+    await p.goto(`${v.C}/invoices?status=all`);
+    const em = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.priority === 'emergency');
+    const inv = (await v.api.get(`/jobs/${em.id}`)).invoice;
+    await p.goto(`${v.C}/invoices/${inv.id}`);
+    await p.getByRole('cell', { name: 'After-hours visit' }).waitFor();
+    await p.getByRole('cell', { name: 'Pump-out' }).waitFor();
+    // A job whose window ended without a start is flagged, and counted on Home.
+    const job1 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 1);
+    await v.api.post(`/jobs/${job1.id}/assign`, { userId: job1.assigned_user_id, resourceIds: [], scheduledStart: new Date(Date.now() - 3 * 3600_000).toISOString(), scheduledEnd: new Date(Date.now() - 2 * 3600_000).toISOString(), version: job1.version });
+    await p.goto(`${v.C}/jobs`);
+    await p.locator('tr', { hasText: '#1' }).getByText('Late').waitFor();
+    await p.goto(v.C);
+    await p.getByText('Jobs running late').waitFor();
+    await p.getByText('Urgent or emergency jobs without a driver').waitFor();
+    await p.getByRole('heading', { name: 'Invoices waiting for your approval' }).waitFor();
+    await p.getByText('Drafts waiting for approval').waitFor();
+    await p.goto(`${v.C}/jobs/${job1.id}`);
+    await p.locator('.ident').getByText('Late').waitFor();
+    await v.c.close();
+  });
+
+  await step('m1/m2: phone demo bar keeps the warning and labels, walkthrough collapses, no overflow at 375 in any role', async () => {
+    const v = await demoVisitor('phone', 375, 812);
+    const { p } = v;
+    const notes = [];
+    for (const role of ['owner', 'dispatcher', 'driver', 'office']) {
+      await v.api.post('/demo/role', { role });
+      for (const path of ['', '/jobs', '/inbox', '/today']) {
+        await p.goto(`${v.C}${path}`);
+        await p.waitForLoadState('networkidle');
+        await noOverflow(p, `${role} 375 ${path || '/'}`);
+        const tb = await p.evaluate(() => document.querySelector('.topbar')?.scrollWidth ?? 0);
+        if (tb > 375) throw new Error(`${role} ${path}: top bar is ${tb}px wide`);
+      }
+      notes.push(role);
+    }
+    await v.api.post('/demo/role', { role: 'owner' });
+    await p.goto(v.C);
+    const bar = p.getByRole('region', { name: 'Demo workspace' });
+    await bar.getByText('Fictional. Nothing is sent or charged.').waitFor();
+    await bar.getByRole('button', { name: 'Reset demo' }).waitFor();
+    if (!(await bar.getByRole('button', { name: 'Reset demo' }).innerText()).includes('Reset')) throw new Error('Reset has no visible label');
+    const guide = guideOf(p);
+    await guide.waitFor();
+    await p.screenshot({ path: `${OUT}/r2-demo-bar-390-open.png` });
+    await guide.getByRole('button', { name: 'Collapse the walkthrough to one line' }).click();
+    const h = await guide.evaluate((el) => el.getBoundingClientRect().height);
+    if (h > 64) throw new Error(`collapsed walkthrough is ${h}px tall`);
+    const stack = await p.evaluate(() => (document.querySelector('.banner-demo')?.getBoundingClientRect().height ?? 0) + (document.querySelector('.topbar')?.getBoundingClientRect().height ?? 0) + (document.querySelector('.guide')?.getBoundingClientRect().height ?? 0));
+    if (stack > 844 * 0.3) throw new Error(`demo bar, top bar and walkthrough take ${Math.round(stack)}px`);
+    await p.screenshot({ path: `${OUT}/r2-demo-bar-390.png` });
+    // Hidden walkthrough stays reachable from the bar.
+    await guide.getByRole('button', { name: 'Expand the walkthrough' }).click();
+    await guide.getByRole('button', { name: /Hide walkthrough/ }).click();
+    await bar.getByRole('button', { name: 'Resume walkthrough' }).click();
+    await guide.waitFor();
+    return `${notes.length} roles, stacked chrome ${Math.round(stack)}px`;
+  });
+
+  for (const width of [768, 1024, 1440]) {
+    await step(`no horizontal overflow at ${width}px in every simulated role`, async () => {
+      const v = await demoVisitor(`roles-${width}`, width, 900);
+      for (const role of ['owner', 'dispatcher', 'driver', 'office']) {
+        await v.api.post('/demo/role', { role });
+        for (const path of ['', '/jobs', '/inbox', '/today']) {
+          await v.p.goto(`${v.C}${path}`);
+          await v.p.waitForLoadState('networkidle');
+          await noOverflow(v.p, `${role} ${width} ${path || '/'}`);
+        }
+      }
+      await v.c.close();
+    });
+  }
+
+  for (const theme of ['light', 'dark']) {
+    await step(`axe on Round 2 screens, ${theme} theme`, async () => {
+      const v = await demoVisitor(`axe-${theme}`, 1366, 900, { colorScheme: theme });
+      await v.c.request.patch(`${BASE}/api/auth/me`, { headers: H, data: { theme } });
+      const fuel = (await v.api.get('/services')).services.find((x) => x.category === 'fuel');
+      const out = [];
+      for (const path of ['', '/jobs', '/inbox', `/services/${fuel.id}`, '/recurring/new', '/jobs/new']) {
+        await v.p.goto(`${v.C}${path}`);
+        await v.p.waitForLoadState('networkidle');
+        await v.p.locator('main h1').first().waitFor();
+        await guideOf(v.p).waitFor();
+        out.push(`${path || '/'}: ${await axe(v.p, `${theme} ${path || '/'}`)}`);
+      }
+      // The inbox approval card at 200% text, and the demo home on a phone in this theme.
+      await v.p.setViewportSize({ width: 390, height: 844 });
+      await v.p.goto(`${v.C}/inbox`);
+      await v.p.waitForLoadState('networkidle');
+      await v.p.screenshot({ path: `${OUT}/r2-inbox-390-${theme}.png`, fullPage: true });
+      await v.p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+      await noOverflow(v.p, `${theme} inbox 200% text`);
+      await v.c.close();
+      return out.filter((n) => !n.endsWith('no violations')).join('; ') || 'no violations';
+    });
+  }
+}
+
+if (process.env.E2E_ONLY === 'round2') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-round2.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
+
 for (const [vw, vh] of [[1440, 900], [390, 844]]) {
   await step(`C1 ${vw}px: from "/", sign in once and land on workspaces`, async () => {
     const who = await apiAccount('Sam Returning');
@@ -552,8 +888,7 @@ await step('dispatcher: assign the unassigned fuel job to Dana from the list', a
   await page.goto(`${BASE}${cidPath()}/jobs?assignee=none`);
   const sel = page.getByLabel(/Driver for job #3/);
   await sel.selectOption({ label: 'Dana Driver (fictional)' });
-  await page.getByRole('button', { name: 'Save' }).first().click();
-  await page.getByText('Driver assigned').waitFor();
+  await page.getByText('Dana Driver (fictional) assigned to job #3').waitFor();
 });
 
 await step('create a job through the form (draft explains missing info)', async () => {

@@ -42,12 +42,14 @@ describe('demo workspace', () => {
     expect(myJobs.length).toBeGreaterThan(0);
     await a.post(`/c/${da}/demo/role`, { role: 'owner' });
 
-    // Reset gives a fresh copy.
+    // Reset gives a fresh copy at the same address, so saved links keep working.
     await a.post(`/c/${da}/customers`, { name: 'Added during demo' });
     const reset = (await a.post(`/c/${da}/demo/reset`)).body.id;
+    expect(reset).toBe(da);
     const custs = (await a.get(`/c/${reset}/customers`)).body.customers.map((c: any) => c.name);
     expect(custs).not.toContain('Added during demo');
-    expect((await a.get(`/c/${da}`)).status).toBe(404);
+    // Still isolated: the other visitor cannot open it.
+    expect((await b.get(`/c/${da}`)).status).toBe(404);
   });
 
   it('creating a company from the demo copies structure only', async () => {
@@ -112,6 +114,50 @@ describe('recurring service and rentals', () => {
     expect(p.status).toBe(200);
     const open = await db.query(`select count(*)::int n from rigo.jobs where recurring_plan_id = $1 and status = 'open' and scheduled_start::date >= $2::date + 1`, [r.body.id, today]);
     expect(open.rows[0].n).toBe(0);
+  });
+});
+
+describe('rentals billed every 28 days', () => {
+  it('counts periods from the plan start in company time, never doubles invoices, and skips paused periods', async () => {
+    const owner = await signup();
+    const cid = await newCompany(owner);
+    const { customerId, locationId } = await customer(owner, cid);
+    const svcs = await services(owner, cid);
+    const db = await getDb();
+    const r = await owner.post(`/c/${cid}/recurring`, {
+      name: 'Event rental', kind: 'rental', customerId, locationId, serviceId: svcs.portable_toilet.id, units: 3,
+      visitRule: { frequency: 'weekly', interval: 1, weekdays: [5], time: '07:00', durationMinutes: 60 },
+      billingRule: { frequency: 'every_n_days', everyDays: 28, rateMinor: 12500, description: 'Unit rental' }, startsOn: '2030-01-23', details: { visit_type: 'Service' },
+    });
+    expect(r.status).toBe(200);
+    const lines = async () => (await db.query<any>(`select l.description, i.total_minor from rigo.invoice_lines l join rigo.invoices i on i.id = l.invoice_id where i.recurring_plan_id = $1 order by l.description`, [r.body.id])).rows;
+    // Generation runs as if it were a later date (the HTTP calls above and below use the real clock).
+    const runAt = async (iso: string) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(iso));
+      try { await generateForCompany(db, cid); await generateForCompany(db, cid); } finally { vi.useRealTimers(); }
+    };
+    // 9 PM in Chicago on March 19 is already March 20 in UTC: the company's date decides. Periods cross
+    // the February month end and the March 10 daylight-saving change.
+    await runAt('2030-03-20T02:00:00.000Z');
+    expect(await lines()).toEqual([
+      { description: 'Unit rental 2030-01-23 to 2030-02-19', total_minor: 37500 },
+      { description: 'Unit rental 2030-02-20 to 2030-03-19', total_minor: 37500 },
+    ]);
+    await runAt('2030-03-20T04:30:00.000Z'); // 11:30 PM on March 19 in Chicago
+    expect(await lines()).toHaveLength(2);
+    await runAt('2030-03-20T06:00:00.000Z'); // March 20 in Chicago: the third period starts, exactly once
+    expect((await lines()).map((l: any) => l.description)).toEqual(['Unit rental 2030-01-23 to 2030-02-19', 'Unit rental 2030-02-20 to 2030-03-19', 'Unit rental 2030-03-20 to 2030-04-16']);
+    // A pause covering a whole period bills nothing for it; billing picks up after the pause.
+    expect((await owner.post(`/c/${cid}/recurring/${r.body.id}/pause`, { from: '2030-04-10', until: '2030-05-20' })).status).toBe(200);
+    await runAt('2030-04-20T15:00:00.000Z');
+    expect(await lines()).toHaveLength(3);
+    await runAt('2030-05-16T15:00:00.000Z');
+    expect((await lines()).map((l: any) => l.description).at(-1)).toBe('Unit rental 2030-05-15 to 2030-06-11');
+    expect(await lines()).toHaveLength(4);
+    // The plan form names it plainly.
+    const plan = (await owner.get(`/c/${cid}/recurring/${r.body.id}`)).body.plan;
+    expect(plan.billing_rule).toMatchObject({ frequency: 'every_n_days', everyDays: 28 });
   });
 });
 

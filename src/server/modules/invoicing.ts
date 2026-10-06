@@ -37,8 +37,9 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
   if (!job.service_id) throw conflict('The job has no service, so there is no pricing to use.');
   const fields = (job.fields ?? []) as FieldDef[];
   const labels = Object.fromEntries(fields.map((f) => [f.key, f.label]));
+  const types = Object.fromEntries(fields.map((f) => [f.key, f.type]));
   const values = { ...(job.details ?? {}), ...(job.completion?.values ?? {}) };
-  const built = buildLines((job.pricing ?? []) as PriceLine[], values, labels);
+  const built = buildLines((job.pricing ?? []) as PriceLine[], values, labels, types);
   const totals = computeTotals(built.lines, job.tax_rate_bp);
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
   if (job.status === 'partial') reasons.unshift('The visit was only partly completed. Review quantities before approving.');
@@ -84,8 +85,10 @@ export async function rebuildHeldInvoice(q: Q, invoiceId: string) {
       from rigo.invoices i join rigo.jobs j on j.id = i.job_id join rigo.services s on s.id = j.service_id where i.id = $1 for update of i`, [invoiceId]);
   const inv = rows[0];
   if (!inv || inv.status !== 'held') return;
-  const labels = Object.fromEntries(((inv.fields ?? []) as FieldDef[]).map((f) => [f.key, f.label]));
-  const built = buildLines(inv.pricing ?? [], { ...(inv.details ?? {}), ...(inv.completion?.values ?? {}) }, labels);
+  const fields = (inv.fields ?? []) as FieldDef[];
+  const labels = Object.fromEntries(fields.map((f) => [f.key, f.label]));
+  const types = Object.fromEntries(fields.map((f) => [f.key, f.type]));
+  const built = buildLines(inv.pricing ?? [], { ...(inv.details ?? {}), ...(inv.completion?.values ?? {}) }, labels, types);
   const discounts = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 and kind = 'discount' order by position`, [invoiceId])).rows
     .map((l) => ({ description: l.description, quantity: String(l.quantity), unit: l.unit, rateMinor: l.rate_minor, amountMinor: l.amount_minor, taxable: false, kind: 'discount' as const }));
   await persistLines(q, inv.company_id, invoiceId, [...built.lines, ...discounts]);
@@ -112,17 +115,46 @@ export async function issueInvoice(q: Q, companyId: string, invoiceId: string, a
   return { number, already: false };
 }
 
+/** Plain-text line for the customer email: "Gasoline: 187.4 gal × $3.89 = $728.99" or "Delivery fee: $45.00". */
+function emailLine(l: { description: string; quantity: string; unit: string; rate_minor: number | null; amount_minor: number | null; kind: string }, currency: string) {
+  if (l.kind === 'discount') return `${l.description}: -${formatMoney(Math.abs(l.amount_minor ?? 0), currency)}`;
+  const qty = String(l.quantity);
+  if (qty === '1' && !l.unit) return `${l.description}: ${formatMoney(l.amount_minor, currency)}`;
+  return `${l.description}: ${qty}${l.unit ? ` ${l.unit}` : ''} × ${formatMoney(l.rate_minor, currency)} = ${formatMoney(l.amount_minor, currency)}`;
+}
+
+/** Due date in the company's time zone, e.g. "November 5, 2026". */
+function dueDate(issuedAt: string | Date | null, dueDays: number | null, timeZone: string) {
+  if (!issuedAt || dueDays === null || dueDays === undefined) return null;
+  const d = new Date(new Date(issuedAt).getTime() + dueDays * 86400_000);
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone }).format(d);
+}
+
+const EMAIL_LINE_LIMIT = 10;
+
+/** The customer email for an invoice: its lines, total, due date and how to pay. Text only, prepared for review. */
 export async function invoiceEmail(q: Q, invoiceId: string) {
   const { rows } = await q.query<any>(
-    `select i.*, c.name as customer_name, c.email as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, j.number as job_number
+    `select i.*, c.name as customer_name, c.email as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id join rigo.companies co on co.id = i.company_id left join rigo.jobs j on j.id = i.job_id
       where i.id = $1`, [invoiceId]);
   const i = rows[0];
+  const lines = (await q.query<any>(`select description, quantity, unit, rate_minor, amount_minor, kind from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows;
+  const due = dueDate(i.issued_at, i.due_days, i.timezone);
+  const pay = String(i.company_settings?.paymentInstructions ?? '').trim();
   const subject = `${i.company_name} invoice ${i.number ?? '(draft)'}`;
   const body = [
     `Hello ${i.customer_name ?? ''},`.trim(),
     '',
-    `Thank you for your business. Your invoice ${i.number ?? '(draft)'}${i.job_number ? ` for job #${i.job_number}` : ''} totals ${formatMoney(i.total_minor, i.currency)}${i.due_days ? `, due within ${i.due_days} days` : ''}.`,
+    `Thank you for your business. Here is invoice ${i.number ?? '(draft)'}${i.job_number ? ` for job #${i.job_number}` : ''}.`,
+    '',
+    ...lines.slice(0, EMAIL_LINE_LIMIT).map((l) => emailLine(l, i.currency)),
+    ...(lines.length > EMAIL_LINE_LIMIT ? [`(and ${lines.length - EMAIL_LINE_LIMIT} more line${lines.length - EMAIL_LINE_LIMIT === 1 ? '' : 's'})`] : []),
+    ...(i.discount_minor ? [`Discount: -${formatMoney(i.discount_minor, i.currency)}`] : []),
+    ...(i.tax_minor ? [`Tax: ${formatMoney(i.tax_minor, i.currency)}`] : []),
+    `Total: ${formatMoney(i.total_minor, i.currency)}`,
+    due ? `Due: ${due}${i.due_days ? ` (within ${i.due_days} days)` : ''}` : i.due_days ? `Due within ${i.due_days} days of the invoice date.` : 'Due on receipt.',
+    ...(pay ? ['', `How to pay: ${pay}`] : []),
     '',
     `Questions? Reply to this message${i.company_phone ? ` or call ${i.company_phone}` : ''}.`,
     '',

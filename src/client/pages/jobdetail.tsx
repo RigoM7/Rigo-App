@@ -5,12 +5,14 @@ import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrenc
 import { useCompany } from '../lib/session';
 import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, PriorityPill, LatePill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
 import { fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
-import { BILLING_STATUSES, OUTCOMES } from '../../shared/jobs';
+import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
+import { tzLabel } from '../../shared/timezones';
 import { DynamicField } from './jobform';
 import { useDocumentTitle } from '../lib/title';
+import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
@@ -39,14 +41,18 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const [v, setV] = useState({ userId: j.assigned_user_id ?? '', resourceIds: data.resources.map((r: any) => r.id) as string[], start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone) });
   const toIso = (l: string) => (l ? zonedToUtc(l.slice(0, 10), l.slice(11, 16), c.company.timezone).toISOString() : null);
-  const s = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version }); toast('Assignment saved'); onDone(); });
+  const s = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version }); toast('Assignment saved'); onDone(); return true; });
   const drivers = c.members.filter((m) => ['driver', 'owner', 'dispatcher'].includes(m.role_key));
+  // Driver, trucks and times are saved together here, so leaving with changes asks first.
+  const saved = { userId: j.assigned_user_id ?? '', resourceIds: [...data.resources.map((r: any) => r.id)].sort().join(','), start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone) };
+  const dirty = v.userId !== saved.userId || [...v.resourceIds].sort().join(',') !== saved.resourceIds || v.start !== saved.start || v.end !== saved.end;
+  const guard = useUnsavedGuard(dirty && !s.busy, { message: 'You have unsaved driver changes. Save or discard?', onSave: async () => !!(await s.run()) });
   return (
     <Card id="assign" title={<h2 className="row"><UserCheck aria-hidden />Schedule and assignment</h2>}>
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <div className="stack">
-          <Field label="Start" id="f-scheduledStart" hint={c.company.timezone}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+          <Field label="Start" id="f-scheduledStart" hint={tzLabel(c.company.timezone)}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
           <Field label="End" id="f-scheduledEnd" error={s.fieldError('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
         </div>
         <Field label="Driver" id="f-userId" error={s.fieldError('userId')}>{(p) => <Select {...p} value={v.userId} onChange={(e) => setV({ ...v, userId: e.target.value })}><option value="">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>}</Field>
@@ -56,8 +62,9 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
           ))}</fieldset>
         ) : null}
         {j.status === 'in_progress' && v.userId !== (j.assigned_user_id ?? '') && <Banner tone="warning">This job is in progress. Reassigning tells the current driver it is no longer theirs; any unsynced draft on their device will be flagged as a conflict.</Banner>}
-        <div><Button type="submit" variant="primary" busy={s.busy}>Save assignment</Button></div>
+        <div className="row"><Button type="submit" variant="primary" busy={s.busy}>Save assignment</Button>{dirty ? <span className="small" role="status"><strong>Unsaved changes.</strong> Save to keep them.</span> : null}</div>
       </form>
+      {guard}
     </Card>
   );
 }
@@ -94,7 +101,7 @@ export function JobDetail() {
         <Link className="back-link" to={c.to('jobs')}><ChevronLeft aria-hidden />Jobs</Link>
         <div className="page-header">
           <div style={{ minWidth: 0 }} className="stack-sm">
-            <div className="ident"><span className="no">#{job.number}</span><h1>{service?.name ?? 'Job'}<span className="sr-only">, job #{job.number}</span></h1><JobStatus status={job.status} />{job.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</div>
+            <div className="ident"><span className="no">#{job.number}</span><h1>{service?.name ?? 'Job'}<span className="sr-only">, job #{job.number}</span></h1><JobStatus status={job.status} /><PriorityPill priority={job.priority} />{isLate(job) ? <LatePill /> : null}{job.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}</div>
             <div className="record-meta">
               <span><Contact aria-hidden />{customer?.name ?? 'No customer'}</span>
               <span><CalendarClock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDateTime(job.scheduled_start, c.company.timezone)}${job.scheduled_end ? ` – ${fmtTime(job.scheduled_end, c.company.timezone)}` : ''}` : 'Not scheduled'}</span></span>

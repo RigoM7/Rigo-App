@@ -86,7 +86,7 @@ export function Imports() {
           {result.customers ? `${result.customers} customer(s), ${result.locations} location(s). ` : ''}{result.resources ? `${result.resources} item(s). ` : ''}{result.skipped} row(s) skipped. {result.customers ? <Link to={c.to('customers')}>View customers</Link> : <Link to={c.to('resources')}>View equipment</Link>}
         </Banner>
       )}
-      <Card id="hist" title="Previous imports">{list.isLoading ? <LoadingBlock /> : list.data.imports.length === 0 ? <p className="muted">None yet.</p> : <ul className="list">{list.data.imports.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><span className="row"><FileSpreadsheet aria-hidden style={{ width: 18 }} />{i.file_name} · {i.kind}<span className="small muted">{fmtDateTime(i.created_at)}</span></span><Pill tone={i.status === 'committed' ? 'success' : i.status === 'failed' ? 'danger' : 'neutral'}>{i.status}</Pill></li>)}</ul>}</Card>
+      <Card id="hist" title="Previous imports">{list.isLoading ? <LoadingBlock /> : list.data.imports.length === 0 ? <p className="muted">None yet.</p> : <ul className="list">{list.data.imports.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><span className="row"><FileSpreadsheet aria-hidden style={{ width: 18 }} />{i.file_name} · {i.kind}<span className="small muted">{fmtDateTime(i.created_at, c.company.timezone)}</span></span><Pill tone={i.status === 'committed' ? 'success' : i.status === 'failed' ? 'danger' : 'neutral'}>{i.status}</Pill></li>)}</ul>}</Card>
     </div>
   );
 }

@@ -41,7 +41,7 @@ export function Templates() {
           <Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={async () => { if (await ask({ title: 'Delete template?', body: 'Companies that applied it keep their copies.', confirm: 'Delete', danger: true })) { await del(`/c/${c.cid}/templates/${t.id}`); refresh(); } }}>Delete</Button>
         </>}
       </div>
-      {mine && t.updated_at ? <span className="small muted">Version {t.version}, updated {fmtDate(t.updated_at)}</span> : null}
+      {mine && t.updated_at ? <span className="small muted">Version {t.version}, updated {fmtDate(t.updated_at, c.company.timezone)}</span> : null}
     </article>
   );
   const mine = q.data.templates.filter((t: any) => t.mine);
@@ -54,7 +54,7 @@ export function Templates() {
       <section className="stack-sm"><h2>Rigo starters</h2><div className="grid-2">{q.data.system.map((t: any) => tile(t))}</div></section>
       {mine.length > 0 && <section className="stack-sm"><h2>Your templates</h2><div className="grid-2">{mine.map((t: any) => tile(t, true))}</div></section>}
       {others.length > 0 && <section className="stack-sm"><h2>Shared with you and public</h2><div className="grid-2">{others.map((t: any) => tile(t))}</div></section>}
-      {q.data.applied.length > 0 && <Card id="applied" title="Applied to this company"><ul className="list">{q.data.applied.map((a: any, i: number) => <li key={i} style={{ padding: '6px 0' }}>{a.template_name} (version {a.template_version}) · {fmtDate(a.applied_at)}</li>)}</ul></Card>}
+      {q.data.applied.length > 0 && <Card id="applied" title="Applied to this company"><ul className="list">{q.data.applied.map((a: any, i: number) => <li key={i} style={{ padding: '6px 0' }}>{a.template_name} (version {a.template_version}) · {fmtDate(a.applied_at, c.company.timezone)}</li>)}</ul></Card>}
       <Dialog open={!!create} onClose={() => setCreate(null)} title={create?.id ? 'Template sharing' : 'Save as template'} footer={<><Button onClick={() => setCreate(null)}>Cancel</Button><Button variant="primary" busy={save.busy} onClick={() => save.run()}>Save</Button></>}>
         {create && <div className="stack">
           <Banner tone="info">Rates, approver names, customers and all records stay private. Only structure is shared.</Banner>

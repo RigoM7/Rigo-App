@@ -35,7 +35,7 @@ export async function factsFor(q: Q, subjectType: string, subjectId: string, ctx
     const { rows } = await q.query<any>(`select j.*, s.category, s.name as service_name, c.name as customer_name from rigo.jobs j
       left join rigo.services s on s.id = j.service_id left join rigo.customers c on c.id = j.customer_id where j.id = $1`, [jobId]);
     const j = rows[0];
-    if (j) Object.assign(facts, { 'job.service_category': j.category, 'job.service_name': j.service_name, 'job.problem_open': j.problem_open, 'job.has_assignee': !!j.assigned_user_id, 'customer.name': j.customer_name });
+    if (j) Object.assign(facts, { 'job.service_category': j.category, 'job.service_name': j.service_name, 'job.problem_open': j.problem_open, 'job.has_assignee': !!j.assigned_user_id, 'job.priority': j.priority ?? 'normal', 'customer.name': j.customer_name });
   }
   if (invoiceId) {
     const { rows } = await q.query<any>(`select i.*, c.name as customer_name from rigo.invoices i left join rigo.customers c on c.id = i.customer_id where i.id = $1`, [invoiceId]);

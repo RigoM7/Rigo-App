@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, GanttChartSquare, ListOrdered, AlertTriangle, CircleDot, Clock, CheckCircle2, XCircle, PlayCircle, UserX, Truck, MapPin, ArrowUpRight, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GanttChartSquare, ListOrdered, AlertTriangle, CircleDot, Clock, CheckCircle2, XCircle, PlayCircle, UserX, Truck, MapPin, ArrowUpRight, Pencil, Siren, ChevronsUp, Hourglass } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get } from '../lib/api';
 import { fmtTime } from '../lib/format';
 import { addDays, zonedToUtc, localDate } from '../../shared/schedule';
-import { Segmented, Button, Drawer, JobStatus, Pill, LoadingBlock, ErrorState, Empty, LinkButton, TickNumber, LiveDot } from './ui';
+import { Segmented, Button, Drawer, JobStatus, Pill, PriorityPill, LatePill, LoadingBlock, ErrorState, Empty, LinkButton, TickNumber, LiveDot } from './ui';
+import { isLate } from '../../shared/jobs';
+import { tzLabel } from '../../shared/timezones';
 import { QuickAssign } from './assign';
 
 // The live dispatch timeline: one lane per driver across the day in the company's time zone,
@@ -108,7 +110,7 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
 
   const scrollRef = useRef<HTMLDivElement>(null);
   useScrollToNow(scrollRef, nowMin === null ? null : pct(nowMin) / 100, `${day}-${view}-${q.isSuccess}`);
-  const label = (j: Job) => `#${j.number} ${j.service_name ?? 'Job'}, ${j.customer_name ?? 'no customer'}, ${fmtTime(j.scheduled_start, tz)}${j.scheduled_end ? ` to ${fmtTime(j.scheduled_end, tz)}` : ''}, ${STATUS_LABEL[j.status] ?? j.status}${j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}${j.problem_open ? ', problem reported' : ''}`;
+  const label = (j: Job) => `#${j.number} ${j.service_name ?? 'Job'}, ${j.customer_name ?? 'no customer'}, ${fmtTime(j.scheduled_start, tz)}${j.scheduled_end ? ` to ${fmtTime(j.scheduled_end, tz)}` : ''}, ${STATUS_LABEL[j.status] ?? j.status}${isLate(j, now) ? ', late' : ''}${j.priority && j.priority !== 'normal' ? `, ${j.priority}` : ''}${j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}${j.problem_open ? ', problem reported' : ''}`;
 
   return (
     <section className="card tl-card" aria-labelledby="tl-title">
@@ -139,7 +141,7 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
             <span><b><TickNumber value={summary.done} /></b>completed</span>
             <span><b><TickNumber value={summary.unassigned} /></b>without a driver</span>
             <span><b><TickNumber value={summary.exceptions} /></b>partial or unsuccessful</span>
-            {nowMin !== null && <span className="hide-mobile" style={{ marginLeft: 'auto' }}>Times in {tz.replace(/_/g, ' ')}</span>}
+            {nowMin !== null && <span className="hide-mobile" style={{ marginLeft: 'auto' }}>Times in {tzLabel(tz)}</span>}
           </div>
           {jobs.length === 0 ? (
             <Empty icon={<GanttChartSquare />} title={svc || drv ? 'No jobs match these filters' : isToday ? 'Nothing scheduled today' : 'Nothing scheduled this day'}
@@ -171,8 +173,9 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                                 title={label(j)} onClick={() => setOpenJob(j)}>
                                 <span className="t">{j.status === 'in_progress' ? <LiveDot /> : null}{fmtTime(j.scheduled_start, tz)}<span aria-hidden>·</span>#{j.number}</span>
                                 <span className="c">{j.customer_name ?? j.service_name ?? 'Job'}</span>
-                                <span className="s">{j.problem_open ? <AlertTriangle aria-hidden style={{ color: 'var(--danger)' }} /> : STATUS_ICON[j.status]}{j.problem_open ? 'Problem' : STATUS_LABEL[j.status]} · {j.service_name ?? ''}</span>
-                                <span className="sr-only">{j.scheduled_end ? `, until ${fmtTime(j.scheduled_end, tz)}` : ''}{j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}{j.problem_open ? `, ${STATUS_LABEL[j.status]}` : ''}</span>
+                                <span className="s">{j.problem_open ? <AlertTriangle aria-hidden style={{ color: 'var(--danger)' }} /> : isLate(j, now) ? <Hourglass aria-hidden style={{ color: 'var(--warning)' }} /> : STATUS_ICON[j.status]}{j.problem_open ? 'Problem' : isLate(j, now) ? 'Late' : STATUS_LABEL[j.status]} · {j.service_name ?? ''}</span>
+                                {j.priority === 'emergency' || j.priority === 'urgent' ? <span className={`tl-prio prio-${j.priority}`}>{j.priority === 'emergency' ? <Siren aria-hidden /> : <ChevronsUp aria-hidden />}{j.priority === 'emergency' ? 'Emergency' : 'Urgent'}</span> : null}
+                                <span className="sr-only">{j.scheduled_end ? `, until ${fmtTime(j.scheduled_end, tz)}` : ''}{j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}{j.problem_open ? `, ${STATUS_LABEL[j.status]}` : ''}{j.problem_open && isLate(j, now) ? ', late' : ''}</span>
                               </button>
                             </li>
                           ))}
@@ -217,7 +220,7 @@ function Feed({ jobs, nowMin, day, tz, now, onOpen }: { jobs: Job[]; nowMin: num
             <button type="button" className="linkish" onClick={() => onOpen(j)}>#{j.number} {j.service_name ?? 'Job'} · {j.customer_name ?? 'No customer'}</button>
             <div className="small muted">{j.address ?? 'No location'} · {j.assignee_name ?? 'No driver yet'}{j.scheduled_end ? ` · until ${fmtTime(j.scheduled_end, tz)}` : ''}</div>
           </div>
-          <span className="row" style={{ gap: 6 }}><JobStatus status={j.status} />{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}{!j.assigned_user_id && ['open', 'draft'].includes(j.status) ? <Pill tone="warning" icon={<UserX aria-hidden />}>No driver</Pill> : null}</span>
+          <span className="row" style={{ gap: 6 }}><JobStatus status={j.status} /><PriorityPill priority={j.priority} />{isLate(j, now) ? <LatePill /> : null}{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}{!j.assigned_user_id && ['open', 'draft'].includes(j.status) ? <Pill tone="warning" icon={<UserX aria-hidden />}>No driver</Pill> : null}</span>
         </div>
       </li>,
     );
@@ -237,7 +240,7 @@ export function JobPanel({ job, onClose, onChange }: { job: Job | null; onClose:
   const j = job;
   return (
     <Drawer open={!!j} onClose={onClose} title={j ? <span className="row" style={{ gap: 8 }}><span className="num muted">#{j.number}</span>{j.service_name ?? 'Job'}</span> : ''}
-      sub={j ? <span className="row" style={{ gap: 6 }}><JobStatus status={j.status} />{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem reported</Pill> : null}</span> : null}
+      sub={j ? <span className="row" style={{ gap: 6 }}><JobStatus status={j.status} /><PriorityPill priority={j.priority} />{isLate(j) ? <LatePill /> : null}{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem reported</Pill> : null}</span> : null}
       footer={j ? <><LinkButton variant="primary" to={c.to(`jobs/${j.id}`)} icon={<ArrowUpRight aria-hidden />}>Open job</LinkButton>{c.can('jobs.edit') && !['completed', 'partial', 'unsuccessful', 'cancelled'].includes(j.status) ? <LinkButton to={c.to(`jobs/${j.id}/edit`)} icon={<Pencil aria-hidden />}>Edit</LinkButton> : null}</> : null}>
       {j && <>
         <dl className="kv">
@@ -249,7 +252,7 @@ export function JobPanel({ job, onClose, onChange }: { job: Job | null; onClose:
         <div className="stack-sm">
           <span className="label">Driver</span>
           <QuickAssign job={j} onDone={onChange} />
-          {c.can('jobs.assign') ? <span className="hint">Choose a driver, then Save. Conflicting assignments are refused with an explanation.</span> : null}
+          {c.can('jobs.assign') ? <span className="hint">Choosing a driver saves it right away, with Undo in the message that appears. A conflicting assignment is refused with the reason.</span> : null}
         </div>
         {j.nextAction ? <div className="banner"><Clock aria-hidden /><span><strong>Next:</strong> {j.nextAction}</span></div> : null}
         <Link to={c.to(`jobs?view=board`)} className="small">See every job on the status board</Link>

@@ -12,6 +12,19 @@ export const JOB_STATUSES = {
 } as const;
 export type JobStatus = keyof typeof JOB_STATUSES;
 
+/** Job priority: how soon the job must be done. Urgent and emergency jobs sort first within a day. */
+export const PRIORITIES = {
+  normal: 'Normal',
+  urgent: 'Urgent',
+  emergency: 'Emergency',
+} as const;
+export type Priority = keyof typeof PRIORITIES;
+const PRIORITY_RANK: Record<string, number> = { emergency: 0, urgent: 1, normal: 2 };
+/** Sort helper: emergency before urgent before normal. */
+export function comparePriority(a: string | null | undefined, b: string | null | undefined) {
+  return (PRIORITY_RANK[a ?? 'normal'] ?? 2) - (PRIORITY_RANK[b ?? 'normal'] ?? 2);
+}
+
 export const BILLING_STATUSES = {
   not_ready: 'Not ready',
   not_billable: 'Not billable',
@@ -106,3 +119,17 @@ export function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
 }
 
 export const DEFAULT_JOB_MINUTES = 60;
+
+/** When a job's window ends: its scheduled end, or the default length after its start. */
+export function windowEnd(job: { scheduled_start?: string | null; scheduled_end?: string | null }) {
+  if (job.scheduled_end) return Date.parse(job.scheduled_end);
+  if (job.scheduled_start) return Date.parse(job.scheduled_start) + DEFAULT_JOB_MINUTES * 60_000;
+  return null;
+}
+
+/** Late: still open (not started) after its time window has ended. */
+export function isLate(job: { status: string; scheduled_start?: string | null; scheduled_end?: string | null }, now = Date.now()) {
+  if (job.status !== 'open') return false;
+  const end = windowEnd(job);
+  return end !== null && end < now;
+}
