@@ -46,9 +46,21 @@ export async function insertWorkflow(q: Q, companyId: string, userId: string | n
   return { workflowId: rows[0].id, versionId: v.rows[0].id };
 }
 
-export async function seedDefaultWorkflows(q: Q, companyId: string, userId: string | null) {
+/**
+ * The standard workflows. With `activate`, they start on, acting for the owner who created the
+ * company, so completed jobs are never left unbilled (R3-M3); issuing still needs approval.
+ */
+export async function seedDefaultWorkflows(q: Q, companyId: string, userId: string | null, opts: { activate?: boolean; note?: string } = {}) {
   const out = [];
-  for (const wf of defaultWorkflows()) out.push(await insertWorkflow(q, companyId, userId, wf, 'system'));
+  for (const wf of defaultWorkflows()) {
+    const w = await insertWorkflow(q, companyId, userId, wf, 'system');
+    if (opts.activate && userId) {
+      await q.query(`update rigo.workflow_versions set status = 'active', tested_hash = definition_hash, tested_at = now(), activated_at = now(), activated_by = $2, test_result = $3 where id = $1`,
+        [w.versionId, userId, JSON.stringify({ note: opts.note ?? 'Standard workflow, on from the start. Invoices still need approval before they are issued.' })]);
+      await q.query(`update rigo.workflows set active_version_id = $2 where id = $1`, [w.workflowId, w.versionId]);
+    }
+    out.push(w);
+  }
   return out;
 }
 

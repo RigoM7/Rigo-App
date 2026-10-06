@@ -198,6 +198,46 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await anon.close(); await v.c.close();
     return a;
   });
+  await step('WP3: changing the mode, deactivating a workflow and approving each ask first; a pause shows on every page (R14-m2, R18-m1, R14-m4)', async () => {
+    const v = await demoVisitor('wp3-confirm');
+    await v.p.goto(`${v.C}/automation`);
+    await v.p.getByText(/4 of 4 workflows on/).waitFor({ timeout: 8000 });
+    const before = (await v.api.get('/automation')).mode;
+    const target = before === 'automatic' ? 'Manual' : 'Automatic';
+    await v.p.locator('.radio-card', { hasText: target }).click();
+    const dlg = v.p.getByRole('dialog', { name: `Switch to ${target}?` });
+    await dlg.waitFor();
+    await dlg.getByRole('button', { name: 'Cancel' }).click();
+    if ((await v.api.get('/automation')).mode !== before) throw new Error('mode changed without confirmation');
+    // Deactivating the billing workflow says what stops.
+    const wf = (await v.api.get('/workflows')).workflows.find((w) => w.name === 'Completed job to invoice');
+    await v.p.goto(`${v.C}/workflows/${wf.id}`);
+    await v.p.getByRole('button', { name: 'Deactivate' }).click();
+    await v.p.getByRole('dialog', { name: 'Deactivate this workflow?' }).getByText(/Completed jobs will no longer be billed automatically/).waitFor();
+    await v.p.getByRole('dialog', { name: 'Deactivate this workflow?' }).getByRole('button', { name: 'Cancel' }).click();
+    // Approving from the inbox shows the total first.
+    await v.p.goto(`${v.C}/inbox`);
+    const approve = v.p.getByRole('button', { name: /^Approve and issue · \$/ }).first();
+    if (await approve.count()) {
+      const label = await approve.innerText();
+      await approve.click();
+      const total = /\$[\d,]+\.\d{2}/.exec(label)[0];
+      await v.p.getByRole('dialog', { name: `Approve ${total}?` }).waitFor();
+      await v.p.getByRole('dialog', { name: `Approve ${total}?` }).getByRole('button', { name: 'Cancel' }).click();
+    }
+    // Pause, then the banner is on another page with Resume.
+    await v.p.goto(`${v.C}/automation`);
+    await v.p.getByRole('button', { name: 'Pause all automation' }).click();
+    await v.p.getByRole('dialog', { name: 'Pause all automation?' }).getByRole('button', { name: 'Pause and hold' }).click();
+    await v.p.goto(`${v.C}/jobs`);
+    const banner = v.p.locator('.paused-banner');
+    await banner.waitFor({ timeout: 8000 });
+    await banner.getByRole('button', { name: 'Resume' }).click();
+    await banner.waitFor({ state: 'detached', timeout: 8000 });
+    const a = await axe(v.p, 'wp3-jobs');
+    await v.c.close();
+    return a;
+  });
 }
 if (process.env.E2E_ONLY === 'phase1') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

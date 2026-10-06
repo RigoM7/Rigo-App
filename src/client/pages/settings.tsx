@@ -6,7 +6,7 @@ import { Upload, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { patch, api } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast, useConfirm } from '../components/ui';
 import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding';
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
@@ -129,7 +129,35 @@ function InvoiceSettings() {
         </div>
         <div><Button type="submit" variant="primary" busy={s.busy}>Save invoice settings</Button></div>
       </form>
+      {c.role.isOwner && <ApprovalRule />}
     </Card>
+  );
+}
+
+/** "Every invoice needs approval before issuing" (R14-M1): visible, owner only, confirmed and audited. */
+function ApprovalRule() {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { ask, node } = useConfirm();
+  const on = c.company.invoiceApprovalRequired !== false;
+  const s = useSubmit(async () => {
+    const ok = await ask(on
+      ? { title: 'Stop requiring approval for every invoice?', body: 'Workflows and people with "Issue invoices" can then issue invoices without anyone approving them first. Steps that have their own approval still ask for it.', confirm: 'Stop requiring approval', danger: true }
+      : { title: 'Require approval for every invoice?', body: 'Every invoice will need an approval before it is issued, including invoices issued by workflows in Automatic mode. People who can approve invoices are asked.', confirm: 'Require approval' });
+    if (!ok) return;
+    await patch(`/c/${c.cid}/settings`, { invoiceApprovalRequired: !on });
+    qc.invalidateQueries({ queryKey: ['me'] }); qc.invalidateQueries({ queryKey: [c.cid] });
+    toast(on ? 'Invoices no longer need approval by default' : 'Every invoice now needs approval before it is issued');
+  });
+  return (
+    <div className="stack-sm" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+      <h3 style={{ margin: 0 }}>Approval before issuing</h3>
+      <ErrorSummary error={s.error} />
+      <p className="muted" style={{ margin: 0 }}>{on ? 'On: every invoice needs an approval before it is issued, whoever or whatever issues it. In Automatic mode, Rigo asks the people who can approve invoices.' : 'Off: invoices can be issued without an approval, unless a workflow step asks for one.'}</p>
+      <div><Button variant={on ? 'danger' : 'primary'} busy={s.busy} onClick={() => s.run()}>{on ? 'Stop requiring approval' : 'Require approval for every invoice'}</Button></div>
+      {node}
+    </div>
   );
 }
 

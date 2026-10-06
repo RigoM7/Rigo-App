@@ -40,7 +40,7 @@ export async function signOutAndForget(qc: QueryClient) {
 
 export interface Capability { state: 'available' | 'simulated' | 'disabled'; reason: string }
 export interface Boot {
-  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string; invoicePrefix?: string; remitTo?: string; taxId?: string; invoice_seq?: number };
+  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string; invoicePrefix?: string; remitTo?: string; taxId?: string; invoice_seq?: number; invoiceApprovalRequired?: boolean; paused_at?: string | null; paused_by?: string | null };
   role: { key: string; name: string; isOwner: boolean; simulated: string | null };
   permissions: Permission[];
   capabilities: Record<'email' | 'sms' | 'ai' | 'payments' | 'maps' | 'fileStorage', Capability>;
@@ -48,7 +48,7 @@ export interface Boot {
   setup: null | { items: { key: string; label: string; done: boolean; required: boolean; link: string; note?: string }[]; ready: boolean; done: number; total: number; step: string; dismissed: boolean };
   demo: null | { guide: { step: number; dismissed: boolean }; simRole: string; progress: GuideProgress };
   members: { id: string; name: string; role_key: string }[];
-  roles: { key: string; name: string }[];
+  roles: { key: string; name: string; canApprove?: boolean }[];
   me: { id: string; actingUserId: string };
 }
 

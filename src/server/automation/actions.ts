@@ -77,7 +77,14 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
 
   async notify(i) {
     const label = await subjectLabel(i.q, i.subject);
-    const n = { category: 'update' as const, title: i.params.text || 'Update from Rigo', body: label, link: i.subject.type === 'job' ? `jobs/${i.subject.id}` : i.subject.type === 'invoice' ? `invoices/${i.subject.id}` : undefined, dedupeKey: `notify:${i.actionId}` };
+    // The title names the record (and, for a job, when it is), so the bell is never vague (R14-m5).
+    let when = '';
+    if (i.subject.type === 'job') {
+      const j = (await i.q.query<any>(`select j.scheduled_start, c.timezone from rigo.jobs j join rigo.companies c on c.id = j.company_id where j.id = $1`, [i.subject.id])).rows[0];
+      if (j?.scheduled_start) when = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: j.timezone }).format(new Date(j.scheduled_start));
+    }
+    const text = (i.params.text || 'Update from Rigo').replace(/[.!]\s*$/, '');
+    const n = { category: 'update' as const, title: `${text}: ${label}${when ? `, ${when}` : ''}`.slice(0, 200), body: i.params.text && i.params.text !== text ? i.params.text : label, link: i.subject.type === 'job' ? `jobs/${i.subject.id}` : i.subject.type === 'invoice' ? `invoices/${i.subject.id}` : undefined, dedupeKey: `notify:${i.actionId}` };
     if (i.params.roles?.length) await notifyRoles(i.q, i.companyId, i.params.roles, n);
     if (i.params.assignee && i.subject.type === 'job') {
       const { rows } = await i.q.query<{ assigned_user_id: string | null }>(`select assigned_user_id from rigo.jobs where id = $1`, [i.subject.id]);

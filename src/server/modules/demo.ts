@@ -81,11 +81,7 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   }
 
   // Workflows: the standard set, active, acting on behalf of the demo visitor.
-  const wfs = await seedDefaultWorkflows(q, cid, userId);
-  for (const w of wfs) {
-    await q.query(`update rigo.workflow_versions set status = 'active', tested_hash = definition_hash, tested_at = now(), activated_at = now(), activated_by = $2, test_result = '{"note":"Pre-tested demo workflow"}' where id = $1`, [w.versionId, userId]);
-    await q.query(`update rigo.workflows set active_version_id = $2 where id = $1`, [w.workflowId, w.versionId]);
-  }
+  await seedDefaultWorkflows(q, cid, userId, { activate: true, note: 'Pre-tested demo workflow' });
 
   const today = localDate(new Date(), TZ);
   let n = 0;

@@ -33,6 +33,10 @@ overviewRoutes.get('/overview', async (c) => {
   if (can(cc, 'invoices.view')) {
     const h = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'held'`, [cid])).rows[0].n;
     if (h) attention.push({ key: 'held', label: 'Invoices on hold (missing rates or review)', count: h, link: 'invoices?status=held', tone: 'warning' });
+    // Completed work with no invoice, whatever the workflows are doing (R3-M3): nothing goes unbilled quietly.
+    const u = (await db.query<any>(`select count(*)::int n from rigo.jobs j where j.company_id = $1 and j.status in ('completed','partial') and coalesce(j.billing_status, '') <> 'not_billable'
+        and not exists (select 1 from rigo.invoices i where i.job_id = j.id and i.status <> 'void')`, [cid])).rows[0].n;
+    if (u) attention.push({ key: 'unbilled', label: 'Completed jobs not yet billed', count: u, link: 'jobs?status=unbilled', tone: 'action' });
     const o = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid' and due_date < $2`, [cid, today])).rows[0].n;
     if (o) attention.push({ key: 'overdue', label: 'Overdue invoices', count: o, link: 'invoices?status=overdue', tone: 'warning' });
   }

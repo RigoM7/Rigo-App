@@ -74,9 +74,9 @@ export const ROLE_PRESETS: RolePreset[] = [
   },
   {
     key: 'office', name: 'Office / billing',
-    description: 'Manages customers, invoices and payments.',
+    description: 'Manages customers, invoices, approvals and payments.',
     permissions: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'jobs.view_all', 'finance.view',
-      'invoices.view', 'invoices.edit', 'invoices.issue', 'payments.record', 'messages.view', 'messages.send',
+      'invoices.view', 'invoices.edit', 'invoices.approve', 'invoices.issue', 'payments.record', 'approvals.decide', 'messages.view', 'messages.send',
       'reports.view', 'imports.run', 'assistant.use'],
   },
 ];

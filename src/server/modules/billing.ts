@@ -7,7 +7,7 @@ import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
 import { balanceDue, paymentState, termsLabel, PAYMENT_METHODS } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
-import { emit, invalidateApprovalsFor, requestApproval } from '../automation/engine.js';
+import { emit, invalidateApprovalsFor, requestApproval, settleInvoiceSteps, advanceRun } from '../automation/engine.js';
 import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, applyCredit, refreshPayment, creditBalance, termsFor, prepareInvoiceForJob, invoiceViewLink } from './invoicing.js';
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
@@ -307,9 +307,12 @@ billingRoutes.post('/invoices/:id/issue', async (c) => {
     }
     const r = await issueInvoice(q, cc.company.id, inv.id, { userId: cc.user.id });
     await audit(q, cc, 'invoice.issued', { id: inv.id, number: r.number });
-    return r;
+    const runs = await settleInvoiceSteps(q, cc.company.id, inv.id, 'issued', cc.user.name);
+    return { ...r, runs };
   });
-  return c.json(out);
+  // A workflow that was waiting to issue it carries on with its next step (the customer email).
+  for (const run of out.runs) await advanceRun(cc.db, run);
+  return c.json({ number: out.number, already: out.already });
 });
 
 /**
@@ -337,6 +340,7 @@ billingRoutes.post('/invoices/:id/void', async (c) => {
     await q.query(`update rigo.invoice_links set revoked_at = now() where invoice_id = $1 and revoked_at is null`, [inv.id]);
     if (inv.job_id) await q.query(`update rigo.jobs set billing_status = 'ready' where id = $1`, [inv.job_id]);
     await audit(q, cc, 'invoice.voided', { id: inv.id, reason: input.reason });
+    await settleInvoiceSteps(q, cc.company.id, inv.id, 'voided', cc.user.name);
     await emit(q, cc.company.id, 'invoice.voided', { type: 'invoice', id: inv.id }, {}, { actorUserId: cc.user.id });
   });
   return c.json({ ok: true });

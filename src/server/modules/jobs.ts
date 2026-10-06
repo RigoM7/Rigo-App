@@ -87,6 +87,7 @@ jobRoutes.get('/jobs', async (c) => {
   const status = c.req.query('status');
   if (status === 'active') where.push(`j.status in ('draft','open','in_progress')`);
   else if (status === 'finished') where.push(`j.status in ('completed','partial','unsuccessful','cancelled')`);
+  else if (status === 'unbilled') where.push(`j.status in ('completed','partial') and coalesce(j.billing_status, '') <> 'not_billable' and not exists (select 1 from rigo.invoices i where i.job_id = j.id and i.status <> 'void')`);
   else if (status && status !== 'all') add('j.status = ?', status);
   const assignee = c.req.query('assignee');
   if (assignee === 'none') where.push('j.assigned_user_id is null');

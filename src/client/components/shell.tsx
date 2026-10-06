@@ -154,6 +154,44 @@ function AccountMenu() {
   );
 }
 
+/**
+ * The bell keeps what needs action apart from updates (R14-m5), and folds "X joined the company"
+ * into one line when several people joined.
+ */
+function bellGroups(list: any[]) {
+  const top = list.slice(0, 12);
+  const action = top.filter((n) => n.category === 'needs_action');
+  let updates = top.filter((n) => n.category !== 'needs_action');
+  const joins = updates.filter((n) => / joined /.test(n.title));
+  if (joins.length > 1) {
+    const names = joins.map((n) => n.title.split(' joined ')[0]);
+    updates = [{ ...joins[0], id: `joins-${joins[0].id}`, title: `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${names.length - 3} more` : ''} joined the company`, read_at: joins.every((n) => n.read_at) ? joins[0].read_at : null, link: 'team' },
+      ...updates.filter((n) => !joins.includes(n))];
+  }
+  return [{ key: 'action', label: 'Needs action', items: action }, { key: 'updates', label: 'Updates', items: updates }];
+}
+
+/** "Automation paused by Dana at 2:10 PM · Resume", on every page for people who see automation (R14-m4). */
+function PausedBanner() {
+  const c = useCompany();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  if (!c.company.paused || !(c.can('workflows.view') || c.can('automation.control'))) return null;
+  const who = c.members.find((m) => m.id === c.company.paused_by)?.name;
+  const when = c.company.paused_at ? new Intl.DateTimeFormat(undefined, { timeStyle: 'short', dateStyle: 'medium', timeZone: c.company.timezone }).format(new Date(c.company.paused_at)) : null;
+  const resume = async () => { setBusy(true); try { await patch(`/c/${c.cid}/automation`, { paused: false }); await refreshMe(qc); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Automation resumed. Held steps continue.'); } finally { setBusy(false); } };
+  return (
+    <div className="banner banner-warning paused-banner" role="status">
+      <PauseCircle aria-hidden />
+      <div className="row-between" style={{ flex: 1, gap: 12 }}>
+        <span><strong>Automation is paused</strong>{who || when ? ` by ${who ?? 'someone'}${when ? ` since ${when}` : ''}` : ''}. Nothing new runs; held steps wait.</span>
+        <span className="row">{c.can('automation.control') ? <Button size="sm" busy={busy} onClick={resume}>Resume</Button> : null}<Link className="small" to={c.to('automation')}>Automation</Link></span>
+      </div>
+    </div>
+  );
+}
+
 function NotificationBell() {
   const c = useCompany();
   const [open, setOpen] = useState(false);
@@ -168,17 +206,22 @@ function NotificationBell() {
       <IconButton label="Notifications" badge={unread} aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)}><BellIcon aria-hidden /></IconButton>
       {open && (
         <div className="menu" style={{ top: 'calc(100% + 8px)', right: 0, width: 360 }}>
-          <div className="row-between" style={{ padding: '4px 4px 4px 10px' }}><strong className="small">Updates</strong>{unread ? <Button size="sm" variant="ghost" onClick={() => markAll.mutate()}>Mark all read</Button> : null}</div>
+          <div className="row-between" style={{ padding: '4px 4px 4px 10px' }}><strong className="small">Notifications</strong>{unread ? <Button size="sm" variant="ghost" onClick={() => markAll.mutate()}>Mark all read</Button> : null}</div>
           {q.isLoading ? <div style={{ padding: 12 }} className="small muted">Loading…</div> : null}
-          {q.data?.notifications.slice(0, 8).map((n: any) => (
-            <Link key={n.id} to={n.link ? c.to(n.link) : c.to('inbox')} onClick={() => setOpen(false)} style={{ alignItems: 'flex-start', paddingTop: 8, paddingBottom: 8 }}>
-              <span aria-hidden style={{ width: 7, height: 7, borderRadius: 4, marginTop: 7, background: n.read_at ? 'transparent' : 'var(--primary)', flex: 'none' }} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontWeight: n.read_at ? 500 : 650 }}>{n.title}{n.read_at ? '' : <span className="sr-only"> (unread)</span>}</span>
-                <span className="xsmall muted">{n.category === 'needs_action' ? 'Needs action' : n.category === 'warning' ? 'Warning' : 'Update'} · {relTime(n.created_at)}</span>
-              </span>
-            </Link>
-          ))}
+          {q.data ? bellGroups(q.data.notifications).map((g) => g.items.length ? (
+            <div key={g.key} role="group" aria-label={g.label}>
+              <div className="bell-group xsmall muted">{g.label}</div>
+              {g.items.map((n: any) => (
+                <Link key={n.id} to={n.link ? c.to(n.link) : c.to('inbox')} onClick={() => setOpen(false)} style={{ alignItems: 'flex-start', paddingTop: 8, paddingBottom: 8 }}>
+                  <span aria-hidden style={{ width: 7, height: 7, borderRadius: 4, marginTop: 7, background: n.read_at ? 'transparent' : 'var(--primary)', flex: 'none' }} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: n.read_at ? 500 : 650 }}>{n.title}{n.read_at ? '' : <span className="sr-only"> (unread)</span>}</span>
+                    <span className="xsmall muted">{n.body ? `${n.body.slice(0, 80)}${n.body.length > 80 ? '…' : ''} · ` : ''}{relTime(n.created_at)}</span>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : null) : null}
           {q.data && !q.data.notifications.length ? <div style={{ padding: 12 }} className="small muted">No notifications yet.</div> : null}
           <hr />
           <Link to={c.to('inbox')} onClick={() => setOpen(false)}><Inbox aria-hidden />Open action inbox</Link>
@@ -414,7 +457,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
         </nav>
-        <main id="main" className="main" tabIndex={-1}>{c.demo && !c.demo.guide.dismissed && <DemoGuide />}{children}</main>
+        <main id="main" className="main" tabIndex={-1}><PausedBanner />{c.demo && !c.demo.guide.dismissed && <DemoGuide />}{children}</main>
       </div>
       <nav className="bottom-nav" aria-label="Main">
         {bottom.map((i) => (

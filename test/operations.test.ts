@@ -132,8 +132,8 @@ describe('invoices and automation', () => {
     const approvals = (await s.owner.get(`/c/${s.cid}/approvals`)).body.approvals;
     expect(approvals).toHaveLength(1);
     expect(approvals[0].canDecide).toBe(true);
-    // Office cannot decide (no approval authority by default).
-    expect((await s.office.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve' })).status).toBe(403);
+    // A driver has no approval authority; Office does (owner decision D7), tested separately.
+    expect((await s.driver.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve' })).status).toBe(403);
     const d = await s.owner.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve', note: '' });
     expect(d.body.status).toBe('approved');
     await processAll();

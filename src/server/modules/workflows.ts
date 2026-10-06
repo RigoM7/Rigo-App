@@ -3,9 +3,11 @@ import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, needAny, can, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
+import { factsFor } from '../automation/engine.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import {
   definitionSchema, validateDefinition, explainDefinition, simulate, stableHash, ACTIONS, TRIGGERS, CONDITION_FIELDS, OPERATORS, MODES, MODE_HELP, type Definition,
+  type ApproverCandidate,
 } from '../../shared/workflows.js';
 import { capabilities } from '../adapters/index.js';
 import { insertWorkflow } from './structure.js';
@@ -20,7 +22,11 @@ const actor = (cc: CompanyCtx): Actor => ({ db: cc.db, companyId: cc.company.id,
 
 async function env(q: Q, cc: CompanyCtx) {
   const roles = (await q.query<{ key: string; name: string }>(`select key, name from rigo.roles where company_id = $1`, [cc.company.id])).rows;
-  return { roles: roles.map((r) => r.key), roleNames: Object.fromEntries(roles.map((r) => [r.key, r.name])), emailAvailable: capabilities(cc.company).email.state === 'available', isDemo: cc.isDemo };
+  // Members and their permissions, so the validator can tell whether anyone chosen can actually approve.
+  const members = (await q.query<any>(`select m.user_id, coalesce(m.display_name, u.name) as name, m.role_key, r.is_owner, r.permissions from rigo.memberships m join rigo.users u on u.id = m.user_id
+      join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key where m.company_id = $1 and m.status = 'active' and not m.is_fictional`, [cc.company.id])).rows
+    .map((m): ApproverCandidate => ({ userId: m.user_id, name: m.name, roleKey: m.role_key, isOwner: m.is_owner, permissions: m.permissions }));
+  return { roles: roles.map((r) => r.key), roleNames: Object.fromEntries(roles.map((r) => [r.key, r.name])), emailAvailable: capabilities(cc.company).email.state === 'available', isDemo: cc.isDemo, members };
 }
 
 function versionView(v: any, e: Awaited<ReturnType<typeof env>>) {
@@ -112,17 +118,28 @@ workflowRoutes.put('/workflows/:id/draft', async (c) => {
   return c.json(out);
 });
 
+/**
+ * Sample data for the dry run (R14-m3): the company's most recent real job or invoice for this
+ * trigger when there is one, otherwise neutral sample values. Conditions are not bent to match, so a
+ * test can honestly say a workflow "would not start".
+ */
 async function sampleFacts(q: Q, cc: CompanyCtx, def: Definition) {
-  const cat = def.conditions.find((x) => x.field === 'job.service_category')?.value;
-  const { rows } = await q.query<any>(`select * from rigo.services where company_id = $1 and active ${cat ? 'and category = $2' : ''} order by created_at limit 1`, cat ? [cc.company.id, cat] : [cc.company.id]);
+  const subject = TRIGGERS[def.trigger.event].subject;
+  const recent = subject === 'invoice'
+    ? (await q.query<any>(`select id, job_id from rigo.invoices where company_id = $1 and status <> 'void' order by created_at desc limit 1`, [cc.company.id])).rows[0]
+    : (await q.query<any>(`select id from rigo.jobs where company_id = $1 and status <> 'draft' order by coalesce(completed_at, created_at) desc limit 1`, [cc.company.id])).rows[0];
+  const real = recent ? await factsFor(q, subject === 'invoice' ? 'invoice' : 'job', recent.id, recent.job_id ? { jobId: recent.job_id } : {}) : {};
+  const svcName = real['job.service_name'] as string | undefined;
+  const { rows } = await q.query<any>(`select * from rigo.services where company_id = $1 and active ${svcName ? 'and name = $2' : ''} order by created_at limit 1`, svcName ? [cc.company.id, svcName] : [cc.company.id]);
   const svc = rows[0];
   const hasRates = !!svc && (svc.pricing as any[]).length > 0 && readPricing(svc.pricing).every((p) => p.rateE4 !== null);
   const facts: Record<string, unknown> = {
-    'job.service_category': svc?.category ?? cat ?? 'other', 'job.service_name': svc?.name ?? 'Sample service', 'job.problem_open': false, 'job.has_assignee': true,
-    'customer.name': 'Sample Customer (test data)', 'invoice.total_minor': 25000, 'invoice.held': !hasRates,
+    'job.service_category': svc?.category ?? 'other', 'job.service_name': svc?.name ?? 'Sample service', 'job.problem_open': false, 'job.has_assignee': true, 'job.priority': 'normal',
+    'job.partial': false, 'job.quantity_over_capacity': false, 'customer.name': 'Sample Customer (test data)', 'customer.tax_exempt': false, 'customer.type': '',
+    'invoice.total_minor': 25000, 'invoice.held': !hasRates, 'invoice.price_changed': false,
+    ...real,
   };
-  for (const cnd of def.conditions) if (!(cnd.field in facts)) facts[cnd.field] = cnd.value;
-  return { facts, hasRates, serviceName: svc?.name ?? null };
+  return { facts, hasRates, serviceName: svc?.name ?? null, source: recent ? `your most recent ${subject === 'invoice' ? 'invoice' : 'job'}` : 'sample values' };
 }
 
 workflowRoutes.post('/workflows/:id/versions/:vid/test', async (c) => {
@@ -142,7 +159,7 @@ workflowRoutes.post('/workflows/:id/versions/:vid/test', async (c) => {
     const sample = await sampleFacts(q, cc, def);
     const facts = { ...sample.facts, ...(input.facts ?? {}) };
     const modes = (['manual', 'assisted', 'automatic'] as const).map((m) => ({ mode: m, ...simulate(def, { mode: m, overrideMode: v.mode_override, facts, emailAvailable: e.emailAvailable, isDemo: cc.isDemo, sampleHasRates: sample.hasRates }) }));
-    const result = { ranAt: new Date().toISOString(), sample: { ...facts, serviceName: sample.serviceName }, currentMode: v.mode_override ?? cc.company.automation_mode, modes, note: 'A dry run on sample data. Nothing was created, sent or changed.' };
+    const result = { ranAt: new Date().toISOString(), sample: { ...facts, serviceName: sample.serviceName }, sampleSource: sample.source, currentMode: v.mode_override ?? cc.company.automation_mode, modes, note: `A dry run using ${sample.source}. Nothing was created, sent or changed.` };
     const newStatus = v.status === 'draft' ? 'tested' : v.status;
     await q.query(`update rigo.workflow_versions set test_result = $2, validation = $3, tested_hash = definition_hash, tested_at = now(), status = $4 where id = $1`, [v.id, JSON.stringify(result), JSON.stringify(validation), newStatus]);
     return { ok: true, validation, result };
@@ -208,7 +225,8 @@ workflowRoutes.get('/automation', async (c) => {
     const { subjectLabel } = await import('../automation/engine.js');
     return Promise.all(rows.map(async (r) => ({ ...r, label: ACTIONS[r.type]?.label ?? r.type, subject_label: await subjectLabel(cc.db, { type: r.subject_type, id: r.subject_id }) })));
   };
-  return c.json({ mode: cc.company.automation_mode, paused: cc.company.paused, pausedAt: cc.company.paused_at, waiting: await withLabels(waiting.rows), history: await withLabels(history.rows), runs: await withLabels(runs.rows), capabilities: capabilities(cc.company) });
+  const wfCount = (await cc.db.query<any>(`select count(*)::int total, count(active_version_id)::int active from rigo.workflows where company_id = $1`, [cc.company.id])).rows[0];
+  return c.json({ mode: cc.company.automation_mode, paused: cc.company.paused, pausedAt: cc.company.paused_at, workflows: wfCount, waiting: await withLabels(waiting.rows), history: await withLabels(history.rows), runs: await withLabels(runs.rows), capabilities: capabilities(cc.company) });
 });
 
 workflowRoutes.post('/automation/actions/:id/run', async (c) => {

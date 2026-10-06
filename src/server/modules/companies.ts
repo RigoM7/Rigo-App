@@ -41,7 +41,7 @@ export async function createCompany(q: Q, userId: string, input: z.infer<typeof 
   if (opts.structureFrom) await applyStructure(q, id, userId, opts.structureFrom);
   else if (input.start === 'starter') {
     await seedStarterServices(q, id, input.categories as ServiceCategory[]);
-    await seedDefaultWorkflows(q, id, userId);
+    await seedDefaultWorkflows(q, id, userId, { activate: true });
   }
   await audit(q, { company: { id }, user: { id: userId } }, 'company.created', { name: input.name, start: input.start });
   return id;
@@ -95,12 +95,13 @@ companyRoutes.get('/', async (c) => {
   const members = can(cc, 'members.view') || can(cc, 'jobs.assign')
     ? (await db.query(`select m.user_id as id, coalesce(m.display_name, u.name) as name, m.role_key from rigo.memberships m join rigo.users u on u.id = m.user_id where m.company_id = $1 and m.status = 'active' order by name`, [cc.company.id])).rows
     : [];
-  const roles = (await db.query(`select key, name from rigo.roles where company_id = $1 order by is_owner desc, name`, [cc.company.id])).rows;
+  // canApprove: whether the role can approve invoices or decide approvals (the workflow editor marks the others).
+  const roles = (await db.query(`select key, name, (is_owner or 'invoices.approve' = any(permissions) or 'approvals.decide' = any(permissions)) as "canApprove" from rigo.roles where company_id = $1 order by is_owner desc, name`, [cc.company.id])).rows;
   const { settings, ...company } = cc.company;
   return c.json({
     company: { ...company, customFields: customFieldsSchema.parse(settings?.customFields ?? {}), accent: accentVariants(cc.company.branding?.accent),
       invoiceDueDays: settings?.invoiceDueDays ?? 30, paymentInstructions: settings?.paymentInstructions ?? '',
-      invoicePrefix: settings?.invoicePrefix ?? 'INV-', remitTo: settings?.remitTo ?? '', taxId: settings?.taxId ?? '' },
+      invoicePrefix: settings?.invoicePrefix ?? 'INV-', remitTo: settings?.remitTo ?? '', taxId: settings?.taxId ?? '', invoiceApprovalRequired: settings?.invoiceApprovalRequired !== false },
     role: { key: cc.roleKey, name: cc.roleName, isOwner: cc.isOwner, simulated: cc.simulatedRole },
     permissions: [...cc.perms],
     capabilities: caps,
@@ -130,7 +131,10 @@ companyRoutes.patch('/settings', async (c) => {
     nextInvoiceNumber: z.number().int().min(1).max(99_999_999).optional(),
     remitTo: z.string().trim().max(300).optional(),
     taxId: z.string().trim().max(40).optional(),
+    /** "Every invoice needs approval before issuing" (R14-M1): owner only. */
+    invoiceApprovalRequired: z.boolean().optional(),
   }));
+  if (input.invoiceApprovalRequired !== undefined && !cc.isOwner) throw forbidden('Only an owner can change whether invoices need approval.');
   await cc.db.tx(async (q) => {
     const sets: string[] = []; const vals: unknown[] = [cc.company.id];
     const add = (col: string, v: unknown) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
@@ -145,6 +149,10 @@ companyRoutes.patch('/settings', async (c) => {
     if (input.customFields) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{customFields}', $2::jsonb), config_version = config_version + 1 where id = $1`, [cc.company.id, JSON.stringify(input.customFields)]);
     if (input.invoiceDueDays !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{invoiceDueDays}', $2::jsonb) where id = $1`, [cc.company.id, JSON.stringify(input.invoiceDueDays)]);
     if (input.paymentInstructions !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{paymentInstructions}', to_jsonb($2::text)) where id = $1`, [cc.company.id, input.paymentInstructions]);
+    if (input.invoiceApprovalRequired !== undefined) {
+      await q.query(`update rigo.companies set settings = jsonb_set(settings, '{invoiceApprovalRequired}', to_jsonb($2::boolean)) where id = $1`, [cc.company.id, input.invoiceApprovalRequired]);
+      await audit(q, cc, 'company.invoice_approval_changed', { required: input.invoiceApprovalRequired });
+    }
     for (const k of ['invoicePrefix', 'remitTo', 'taxId'] as const) {
       if (input[k] !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, $3::text[], to_jsonb($2::text)) where id = $1`, [cc.company.id, input[k], [k]]);
     }

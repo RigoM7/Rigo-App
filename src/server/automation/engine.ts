@@ -2,7 +2,7 @@ import type { Db, Q } from '../db/index.js';
 import { getDb } from '../db/index.js';
 import { config } from '../config.js';
 import {
-  ACTIONS, approvalNeeded, effectiveMode, evaluate, stableHash, stepDisposition, TRIGGERS,
+  ACTIONS, approvalNeeded, effectiveMode, evaluate, stableHash, stepDisposition, TRIGGERS, canDecideFor,
   type Definition, type Mode, type Step,
 } from '../../shared/workflows.js';
 import { notifyRoles, notifyUsers, notifyPermission, resolveNotices } from '../modules/inbox.js';
@@ -35,14 +35,28 @@ export async function factsFor(q: Q, subjectType: string, subjectId: string, ctx
     const { rows } = await q.query<any>(`select j.*, s.category, s.name as service_name, c.name as customer_name from rigo.jobs j
       left join rigo.services s on s.id = j.service_id left join rigo.customers c on c.id = j.customer_id where j.id = $1`, [jobId]);
     const j = rows[0];
-    if (j) Object.assign(facts, { 'job.service_category': j.category, 'job.service_name': j.service_name, 'job.problem_open': j.problem_open, 'job.has_assignee': !!j.assigned_user_id, 'job.priority': j.priority ?? 'normal', 'customer.name': j.customer_name });
+    if (j) Object.assign(facts, { 'job.service_category': j.category, 'job.service_name': j.service_name, 'job.problem_open': j.problem_open, 'job.has_assignee': !!j.assigned_user_id, 'job.priority': j.priority ?? 'normal', 'customer.name': j.customer_name,
+      'job.partial': j.status === 'partial', 'job.quantity_over_capacity': !!j.completion?.quantityReview });
+    if (j?.customer_id) Object.assign(facts, await customerFacts(q, j.customer_id));
   }
   if (invoiceId) {
-    const { rows } = await q.query<any>(`select i.*, c.name as customer_name from rigo.invoices i left join rigo.customers c on c.id = i.customer_id where i.id = $1`, [invoiceId]);
+    const { rows } = await q.query<any>(`select i.*, c.name as customer_name,
+        exists (select 1 from rigo.invoice_lines l where l.invoice_id = i.id and l.booked_rate_e4 is not null) as price_changed
+      from rigo.invoices i left join rigo.customers c on c.id = i.customer_id where i.id = $1`, [invoiceId]);
     const i = rows[0];
-    if (i) Object.assign(facts, { 'invoice.total_minor': i.total_minor, 'invoice.held': i.status === 'held', 'customer.name': i.customer_name });
+    if (i) Object.assign(facts, { 'invoice.total_minor': i.total_minor, 'invoice.held': i.status === 'held', 'invoice.price_changed': !!i.price_changed, 'invoice.status': i.status, 'customer.name': i.customer_name });
+    if (i?.customer_id) Object.assign(facts, await customerFacts(q, i.customer_id));
   }
   return facts;
+}
+
+/** Customer facts for conditions: tax exemption and terms; "type" is the customer's Type custom field when the company has one. */
+async function customerFacts(q: Q, customerId: string) {
+  const c = (await q.query<any>(`select tax_exempt, custom, payment_terms_days from rigo.customers where id = $1`, [customerId])).rows[0];
+  if (!c) return {};
+  const custom = c.custom ?? {};
+  const type = custom.type ?? custom.customer_type ?? custom.tag ?? '';
+  return { 'customer.tax_exempt': !!c.tax_exempt, 'customer.type': String(type) };
 }
 
 // ---------------------------------------------------------------- event -> runs
@@ -83,11 +97,23 @@ async function processEvent(db: Db, eventId: string) {
 async function loadRun(q: Q, runId: string) {
   const { rows } = await q.query<any>(
     `select r.*, v.definition, v.status as version_status, w.paused as workflow_paused, w.mode_override, w.active_version_id,
-            c.automation_mode, c.paused as company_paused, c.kind as company_kind, v.activated_by
+            c.automation_mode, c.paused as company_paused, c.kind as company_kind, v.activated_by,
+            coalesce((c.settings->>'invoiceApprovalRequired')::boolean, true) as invoice_approval_required
        from rigo.automation_runs r join rigo.workflow_versions v on v.id = r.workflow_version_id
        join rigo.workflows w on w.id = r.workflow_id join rigo.companies c on c.id = r.company_id
       where r.id = $1`, [runId]);
   return rows[0];
+}
+
+/** The step as its approval is requested: one without approvers of its own asks everyone who can approve invoices. */
+async function approvalStep(q: Q, run: any, step: Step): Promise<Step> {
+  if (step.approval.approverRoles.length || step.approval.approverUserIds.length) return step;
+  return { ...step, approval: { ...step.approval, approverRoles: await invoiceApproverRoles(q, run.company_id) } };
+}
+
+/** Roles whose members can approve invoices (owner, and any role with "Approve invoices" or "Decide approvals"). */
+export async function invoiceApproverRoles(q: Q, companyId: string) {
+  return (await q.query<{ key: string }>(`select key from rigo.roles where company_id = $1 and (is_owner or 'invoices.approve' = any(permissions) or 'approvals.decide' = any(permissions))`, [companyId])).rows.map((r) => r.key);
 }
 
 function subjectForStep(step: Step, run: any): { type: string; id: string } | null {
@@ -106,13 +132,32 @@ export async function subjectVersion(q: Q, type: string, id: string) {
   return rows[0]?.version ?? 0;
 }
 
-async function approverIds(q: Q, companyId: string, rule: Step['approval']) {
+async function approverIds(q: Q, companyId: string, rule: Pick<Step['approval'], 'approverRoles' | 'approverUserIds'>, subjectType = 'invoice') {
   const { rows } = await q.query<{ user_id: string }>(
     `select m.user_id from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
       where m.company_id = $1 and m.status = 'active' and not m.is_fictional and (m.role_key = any($2) or m.user_id = any($3))
-        and (r.is_owner or 'approvals.decide' = any(r.permissions) or 'invoices.approve' = any(r.permissions))
-     union select c.demo_user_id from rigo.companies c where c.id = $1 and c.kind = 'demo'`, [companyId, rule.approverRoles, rule.approverUserIds]);
+        and (r.is_owner or 'approvals.decide' = any(r.permissions) or ($4 = 'invoice' and 'invoices.approve' = any(r.permissions)))
+     union select c.demo_user_id from rigo.companies c where c.id = $1 and c.kind = 'demo'`, [companyId, rule.approverRoles, rule.approverUserIds, subjectType]);
   return rows.map((r) => r.user_id).filter(Boolean);
+}
+
+/**
+ * Pending approvals that no current member except an owner override could decide (after a role
+ * change or a removal). Owners are told at once so nothing waits forever (R14-C1).
+ */
+export async function warnOrphanedApprovals(q: Q, companyId: string) {
+  const pending = (await q.query<any>(`select * from rigo.approvals where company_id = $1 and status = 'pending'`, [companyId])).rows;
+  let n = 0;
+  for (const ap of pending) {
+    const ids = (await approverIds(q, companyId, { approverRoles: ap.approver_roles, approverUserIds: ap.approver_user_ids }, ap.subject_type));
+    const named = await q.query(`select 1 from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+        where m.company_id = $1 and m.status = 'active' and m.user_id = any($2) and not r.is_owner`, [companyId, ids]);
+    const owners = await q.query(`select 1 from rigo.memberships m where m.company_id = $1 and m.status = 'active' and m.role_key = 'owner' and (m.role_key = any($2) or m.user_id = any($3))`, [companyId, ap.approver_roles, ap.approver_user_ids]);
+    if (named.rows.length || owners.rows.length) continue;
+    n++;
+    await notifyRoles(q, companyId, ['owner'], { category: 'needs_action', title: `Nobody can approve: ${ap.title}`, body: 'The people asked to approve this can no longer approve it. As the owner you can decide it, or change who approves in the workflow.', link: `inbox?approval=${ap.id}`, refType: 'approval', refId: ap.id, dedupeKey: `orphan:${ap.id}` });
+  }
+  return n;
 }
 
 async function createApproval(q: Q, run: any, action: any, step: Step, subject: { type: string; id: string }) {
@@ -126,8 +171,8 @@ async function createApproval(q: Q, run: any, action: any, step: Step, subject: 
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id`,
     [action.company_id, action.id, `${meta.label}: ${label}`, meta.consequence, subject.type, subject.id, version, run?.workflow_version_id ?? null,
       stableHash({ action: step.action, subject, version, facts }), step.approval.approverUserIds, step.approval.approverRoles, step.approval.backupUserIds, escalateAt]);
-  const ids = await approverIds(q, action.company_id, step.approval);
-  await notifyUsers(q, action.company_id, ids, { category: 'needs_action', title: `Approval needed: ${meta.label}`, body: `${label}. ${meta.consequence}`, link: `inbox?approval=${rows[0].id}`, refType: 'approval', refId: rows[0].id, dedupeKey: `approval:${rows[0].id}` });
+  const ids = await approverIds(q, action.company_id, step.approval, subject.type);
+  await notifyUsers(q, action.company_id, ids, { category: 'needs_action', title: `Approval needed: ${meta.label}, ${label}`, body: meta.consequence, link: `inbox?approval=${rows[0].id}`, refType: 'approval', refId: rows[0].id, dedupeKey: `approval:${rows[0].id}` });
   return rows[0].id;
 }
 
@@ -152,8 +197,8 @@ export async function requestApproval(q: Q, companyId: string, type: keyof typeo
     `insert into rigo.approvals (company_id, action_id, title, consequence, subject_type, subject_id, subject_version, input_hash, approver_roles)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
     [companyId, act.rows[0].id, `${meta.label}: ${label}`, meta.consequence, subject.type, subject.id, version, stableHash({ action: type, subject, version, facts }), roles]);
-  const ids = (await approverIds(q, companyId, { approverRoles: roles, approverUserIds: [], backupUserIds: [] } as any)).filter((u) => u !== requestedBy.userId);
-  await notifyUsers(q, companyId, ids, { category: 'needs_action', title: `Approval needed: ${meta.label}`, body: `${label}. Sent by ${requestedBy.name}. ${meta.consequence}`, link: `inbox?approval=${rows[0].id}`, refType: 'approval', refId: rows[0].id, dedupeKey: `approval:${rows[0].id}` });
+  const ids = (await approverIds(q, companyId, { approverRoles: roles, approverUserIds: [] }, subject.type)).filter((u) => u !== requestedBy.userId);
+  await notifyUsers(q, companyId, ids, { category: 'needs_action', title: `Approval needed: ${meta.label}, ${label}`, body: `Sent by ${requestedBy.name}. ${meta.consequence}`, link: `inbox?approval=${rows[0].id}`, refType: 'approval', refId: rows[0].id, dedupeKey: `approval:${rows[0].id}` });
   return rows[0].id;
 }
 
@@ -224,20 +269,23 @@ export async function advanceRun(db: Db, runId: string) {
       const label = await subjectLabel(q, subject);
       if (disp === 'suggest') {
         const a = await insert('suggested', 'Manual mode: a person starts this step.');
-        await notifyPermission(q, run.company_id, meta.permission, { category: 'needs_action', title: `Next step: ${meta.label}`, body: `${label}. Rigo is in Manual mode for this step, so it waits for you.`, link: `automation?action=${a.id}`, refType: 'action', refId: a.id, dedupeKey: `action:${a.id}` });
+        await notifyPermission(q, run.company_id, meta.permission, { category: 'needs_action', title: `Next step: ${meta.label}, ${label}`, body: 'Rigo is in Manual mode for this step, so it waits for you.', link: `automation?action=${a.id}`, refType: 'action', refId: a.id, dedupeKey: `action:${a.id}` });
         await q.query(`update rigo.automation_runs set status = 'waiting', summary = $2, updated_at = now() where id = $1`, [runId, `Waiting for a person: ${meta.label}`]);
         return null;
       }
       const facts = await factsFor(q, subject.type, subject.id, run.context ?? {});
-      if (approvalNeeded(step.approval, facts)) {
-        const a = await insert('waiting_approval', 'Waiting for approval.');
-        await createApproval(q, run, a, step, subject);
+      // The company rule "every invoice needs approval before issuing" (R14-M1) turns an issue step without
+      // its own approval into a normal approval request for everyone who can approve invoices, never a dead end.
+      const companyRule = step.action === 'invoice.issue' && run.invoice_approval_required !== false && facts['invoice.status'] !== 'approved' && !approvalNeeded(step.approval, facts);
+      if (approvalNeeded(step.approval, facts) || companyRule) {
+        const a = await insert('waiting_approval', companyRule ? 'Waiting for approval: company settings require it for every invoice.' : 'Waiting for approval.');
+        await createApproval(q, run, a, await approvalStep(q, run, step), subject);
         await q.query(`update rigo.automation_runs set status = 'waiting', summary = $2, updated_at = now() where id = $1`, [runId, `Waiting for approval: ${meta.label}`]);
         return null;
       }
       if (disp === 'propose') {
         const a = await insert('proposed', 'Assisted mode: prepared for a person to run.');
-        await notifyPermission(q, run.company_id, meta.permission, { category: 'needs_action', title: `Ready for you: ${meta.label}`, body: `${label}. ${meta.consequence}`, link: `automation?action=${a.id}`, refType: 'action', refId: a.id, dedupeKey: `action:${a.id}` });
+        await notifyPermission(q, run.company_id, meta.permission, { category: 'needs_action', title: `Ready for you: ${meta.label}, ${label}`, body: meta.consequence, link: `automation?action=${a.id}`, refType: 'action', refId: a.id, dedupeKey: `action:${a.id}` });
         await q.query(`update rigo.automation_runs set status = 'waiting', summary = $2, updated_at = now() where id = $1`, [runId, `Proposed: ${meta.label}`]);
         return null;
       }
@@ -380,8 +428,13 @@ export async function takeOver(actor: Actor, runId: string) {
 }
 
 // ---------------------------------------------------------------- approvals
+/** Owners can always decide a pending approval (R14-C1); when they aren't a named approver it is recorded as an owner override. */
 export async function isEligibleApprover(q: Q, ap: any, actor: Actor) {
-  if (!actor.isOwner && !actor.perms.has('approvals.decide') && !actor.perms.has('invoices.approve')) return false;
+  return actor.isOwner || isNamedApprover(q, ap, actor);
+}
+
+async function isNamedApprover(q: Q, ap: any, actor: Actor) {
+  if (!canDecideFor({ isOwner: actor.isOwner, permissions: [...actor.perms] }, ap.subject_type)) return false;
   const direct = async (uid: string) => {
     if (ap.approver_user_ids.includes(uid)) return true;
     const { rows } = await q.query(`select 1 from rigo.memberships where company_id = $1 and user_id = $2 and status = 'active' and role_key = any($3)`, [ap.company_id, uid, ap.approver_roles]);
@@ -404,6 +457,7 @@ export async function decideApproval(actor: Actor, approvalId: string, decision:
     if (!ap) throw notFound('Approval');
     if (ap.status !== 'pending') throw conflict(`This approval was already ${ap.status}.`);
     if (!(await isEligibleApprover(q, ap, actor))) throw forbidden('You are not an approver for this item.');
+    if (!(await isNamedApprover(q, ap, actor))) note = `Owner override${note ? `: ${note}` : ''}`;
     const action = (await q.query<any>(`select * from rigo.actions where id = $1 for update`, [ap.action_id])).rows[0];
     if (decision === 'reject') {
       await q.query(`update rigo.approvals set status = 'rejected', decided_by = $2, decided_at = now(), decision_note = $3 where id = $1`, [ap.id, actor.userId, note]);
@@ -458,8 +512,32 @@ export async function renewApproval(db: Db, actionId: string) {
       await q.query(`update rigo.actions set status = 'blocked', explanation = 'The workflow changed; this step was not run.', updated_at = now() where id = $1`, [a.id]);
       return;
     }
-    await createApproval(q, run, a, step, { type: a.subject_type, id: a.subject_id });
+    await createApproval(q, run, a, await approvalStep(q, run, step), { type: a.subject_type, id: a.subject_id });
   });
+}
+
+/**
+ * An invoice was issued or voided directly by a person (R14 linked approvals): a workflow step still
+ * waiting to issue it is settled instead of left behind. Issued: the step counts as done and its run
+ * continues (the email step). Voided: the step and its run stop. Returns runs to continue.
+ */
+export async function settleInvoiceSteps(q: Q, companyId: string, invoiceId: string, outcome: 'issued' | 'voided', actorName: string) {
+  const what = outcome === 'issued' ? `Issued directly by ${actorName}.` : `Invoice voided by ${actorName}.`;
+  const aps = await q.query<{ id: string }>(`update rigo.approvals set status = 'cancelled', decision_note = $3 where company_id = $1 and subject_type = 'invoice' and subject_id = $2 and status = 'pending' returning id`, [companyId, invoiceId, what]);
+  for (const a of aps.rows) await resolveNotices(q, companyId, 'approval', a.id);
+  const acts = await q.query<{ id: string; run_id: string | null }>(
+    `update rigo.actions set status = $3, explanation = $4, updated_at = now()
+      where company_id = $1 and subject_type = 'invoice' and subject_id = $2 and type = 'invoice.issue' and status in ('waiting_approval','proposed','suggested','queued') returning id, run_id`,
+    [companyId, invoiceId, outcome === 'issued' ? 'completed' : 'cancelled', what]);
+  for (const a of acts.rows) await resolveNotices(q, companyId, 'action', a.id);
+  const runs = [...new Set(acts.rows.map((a) => a.run_id).filter(Boolean))] as string[];
+  if (outcome === 'voided') {
+    // Later steps (the invoice email) must not run for a voided invoice.
+    await q.query(`update rigo.automation_runs set status = 'cancelled', summary = $3, updated_at = now() where company_id = $1 and status in ('running','waiting')
+        and (context->>'invoiceId' = $2 or id = any($4))`, [companyId, invoiceId, what, runs]);
+    return [];
+  }
+  return runs;
 }
 
 /** Called when a record is edited: any pending approval bound to an older version becomes stale and is re-requested. */

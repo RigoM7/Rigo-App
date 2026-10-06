@@ -109,13 +109,15 @@ editor, recurring plan form, job form) in light and dark themes; `npm run typech
 | "Ask Rigo" chips (held invoices, blocked or failed steps) open the Assistant with a prefilled question | Implemented | |
 | Branding live preview (switcher chip, invoice header, message) | Implemented | |
 | Automation modes Manual/Assisted/Automatic | Verified | `operations.test.ts` |
-| Automatic never bypasses approvals | Verified | Company-wide invoice approval rule also enforced |
+| Automatic never bypasses approvals | Verified | The company rule "Every invoice needs approval before issuing" is in Settings → Invoices (owner only, confirmed, audited). When it applies to an issue step without its own approval, Rigo creates a normal approval request for everyone who can approve invoices instead of a blocked step (R14-M1). Turned off, Automatic issues on its own. `approvals-automation.test.ts` |
 | Approvals bound to record + workflow version; stale on edit | Verified | `operations.test.ts` |
 | Company pause (hold/cancel), resume, takeover | Verified | `operations.test.ts` |
 | Escalation never approves; backups/owners notified | Implemented | Worker tick |
-| Delegated approval authority | Implemented | |
+| Who can approve (R14-C1, D7, R4-M3) | Verified | The validator refuses a step whose chosen approvers can't approve (Approve invoices covers invoice steps; Decide approvals covers all) and warns about roles and backups that can't; the editor marks roles "can't approve" and only offers people who can. Owners can always decide, recorded as "Owner override". The Office / billing preset approves invoices and decides approvals (migration `008` for unchanged Office roles). Owners are told at once when a role or member change leaves a pending approval with nobody who can decide it |
+| Linked approvals | Verified | Approving on the invoice page decides the workflow's waiting approval; issuing directly settles the waiting issue step and the run continues to the email; voiding stops the run |
+| Delegated approval authority | Verified | Only people whose role can approve are offered (with an explanation when nobody is); the delegate is told in their bell and the delegator's approvals appear in their inbox. `approvals-automation.test.ts` |
 | Bounded retries, idempotent actions, loop/fan-out limits | Implemented | Depth ≤3, ≤10 runs/event, ≤300 actions/hour/company |
-| Notifications: bell, inbox (needs action / warnings / updates), unread ≠ resolved | Implemented | Browser approves from inbox |
+| Notifications: bell, inbox (needs action / warnings / updates), unread ≠ resolved | Verified | The bell separates Needs action from Updates and folds several "joined the company" into one line; titles name the job, customer or invoice, and assignment notices say when ("You have a new assignment: Job #12 for Grace Okafor, Tue, Oct 7, 9:00 AM") (R14-m5). Approving from an approval card asks first, with the total |
 
 ## C. Configurability
 
@@ -126,7 +128,10 @@ editor, recurring plan form, job form) in light and dark themes; `npm run typech
 | Sample-data testing per mode | Verified | Browser check |
 | Visual builder + form view on the same draft | Verified | Browser check (both views) |
 | Conversational proposals (rule-based guided builder) | Verified | Proposal stays separate until accepted |
-| Per-workflow and per-step mode overrides; per-workflow pause | Implemented | |
+| Per-workflow and per-step mode overrides; per-workflow pause | Implemented | Pausing or deactivating a workflow asks first and says what stops ("Completed jobs will no longer be billed automatically"); switching the company mode asks first with a plain summary (R14-m2, R18-m1). Clearing the assistant conversation and revoking an invitation ask first |
+| Standard workflows on from the start (R3-M3) | Verified | New companies get the standard workflows active, acting for the owner who created the company; the invoice issue step needs approval by Owner or Office. Home shows "Completed jobs not yet billed (N)" whatever the workflows do (Jobs filter "Completed, not yet billed"); Automation shows "N of M workflows on". Setup's Continue saves the chosen mode (R3-M5) |
+| Pause visible everywhere (R14-m4) | Verified | "Automation is paused by Dana since …" banner on every page for people who see automation, with Resume. Browser check |
+| Workflow conditions and dry run (R14-m1, R14-m3) | Verified | Invoice amounts typed in dollars, stored in cents; new conditions: price changed since booking, customer tax exempt, customer type (a "Type" custom field), partial visit, quantity over the truck's capacity. The validator rejects conditions that can never all be true; the dry run uses the company's most recent job or invoice and can say "Would not start: in this sample, job priority is emergency is not true." |
 | Service definitions: fields, stages, pricing, tax, photo/signature | Implemented | Price change rebuilds held invoices (verified) |
 | Custom fields for customers/locations/jobs | Implemented | Job custom fields captured at creation |
 | Role permission matrix (owner-editable) | Implemented | |

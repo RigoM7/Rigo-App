@@ -73,15 +73,17 @@ function Delegations({ members }: { members: any[] }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: [c.cid, 'delegations'], queryFn: () => get(`/c/${c.cid}/delegations`) });
+  const canDelegate = c.can('approvals.decide') || c.can('invoices.approve');
+  const cand = useQuery({ queryKey: [c.cid, 'delegations', 'candidates'], queryFn: () => get(`/c/${c.cid}/delegations/candidates`), enabled: canDelegate });
   const [v, setV] = useState({ toUserId: '', endsAt: '' });
   const s = useSubmit(async () => { await post(`/c/${c.cid}/delegations`, { toUserId: v.toUserId, endsAt: v.endsAt ? new Date(`${v.endsAt}T23:59:00`).toISOString() : null }); toast('Approval authority delegated'); qc.invalidateQueries({ queryKey: [c.cid, 'delegations'] }); });
   const end = async (id: string) => { await del(`/c/${c.cid}/delegations/${id}`); qc.invalidateQueries({ queryKey: [c.cid, 'delegations'] }); };
   return (
     <Card id="deleg" title="Delegated approval authority">
       <p className="muted">While you are away, someone else can decide the approvals assigned to you. Only people whose role can approve are eligible.</p>
-      {c.can('approvals.decide') && (
+      {canDelegate && (
         <form className="grid-2" style={{ alignItems: 'end' }} noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
-          <Field label="Delegate to" id="f-toUserId" error={s.fieldError('toUserId')}>{(p) => <Select {...p} value={v.toUserId} onChange={(e) => setV({ ...v, toUserId: e.target.value })}><option value="">Choose…</option>{members.filter((m) => m.user_id !== c.me.id && !m.is_fictional).map((m) => <option key={m.user_id} value={m.user_id}>{m.name} ({m.role_name})</option>)}</Select>}</Field>
+          <Field label="Delegate to" id="f-toUserId" error={s.fieldError('toUserId')} hint={cand.data && cand.data.candidates.length === 0 ? 'Nobody else can approve yet. Give a role "Approve invoices" in Roles first.' : 'Only people whose role can approve are listed.'}>{(p) => <Select {...p} value={v.toUserId} onChange={(e) => setV({ ...v, toUserId: e.target.value })}><option value="">Choose…</option>{(cand.data?.candidates ?? []).map((m: any) => <option key={m.user_id} value={m.user_id}>{m.name} ({m.role_name})</option>)}</Select>}</Field>
           <Field label="Until" optionalText id="f-endsAt">{(p) => <Input {...p} type="date" value={v.endsAt} onChange={(e) => setV({ ...v, endsAt: e.target.value })} />}</Field>
           <div><Button type="submit" busy={s.busy}>Delegate</Button></div>
           <div style={{ gridColumn: '1 / -1' }}><ErrorSummary error={s.error} /></div>
@@ -140,6 +142,7 @@ export function Team() {
     try { await del(`/c/${c.cid}/members/${m.id}`); toast(`${m.name} was removed`); refresh(); } catch (e) { setErr(e); }
   };
   const invAction = async (id: string, what: 'resend' | 'revoke') => {
+    if (what === 'revoke' && !(await ask({ title: 'Revoke this invitation?', body: 'The link stops working at once. You can send a new invitation later.', confirm: 'Revoke invitation', danger: true }))) return;
     setErr(null);
     try {
       const r = await post(`/c/${c.cid}/invitations/${id}/${what}`);

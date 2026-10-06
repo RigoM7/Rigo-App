@@ -176,11 +176,13 @@ describe('imports', () => {
     const rv = await owner.post(`/c/${cid}/imports/${up.body.id}/review`, { mapping: up.body.mapping });
     expect(rv.body.summary).toMatchObject({ total: 5, create: 2, addLocation: 1, errors: 1 });
     expect(rv.body.rows[2].warnings.join(' ')).toMatch(/Ambiguous/);
+    const activeBefore = (await owner.get(`/c/${cid}/workflows`)).body.workflows.map((w: any) => [w.id, w.active_version_id]);
     const commit = await owner.post(`/c/${cid}/imports/${up.body.id}/commit`, { confirm: true });
     expect(commit.body.result).toMatchObject({ customers: 2, locations: 3 });
     expect((await owner.post(`/c/${cid}/imports/${up.body.id}/commit`, { confirm: true })).body.already).toBe(true);
+    // Importing never activates or changes automation.
     const wfs = (await owner.get(`/c/${cid}/workflows`)).body.workflows;
-    expect(wfs.every((w: any) => w.active_version_id === null)).toBe(true);
+    expect(wfs.map((w: any) => [w.id, w.active_version_id])).toEqual(activeBefore);
     const xl = await owner.post(`/c/${cid}/imports`, { kind: 'customers', fileName: 'c.xlsx', text: 'x' });
     expect(xl.status).toBe(400);
   });
@@ -199,10 +201,13 @@ describe('templates', () => {
     expect(visible.map((x: any) => x.name)).toContain('Author fuel');
     const detail = (await b.get(`/c/${cb}/templates/${t.body.id}`)).body.template;
     expect(JSON.stringify(detail.content)).not.toContain('Private customer');
+    const before = new Set((await b.get(`/c/${cb}/workflows`)).body.workflows.map((w: any) => w.id));
     const applied = await b.post(`/c/${cb}/templates/${t.body.id}/apply`, { confirm: true });
     expect(applied.body.summary.services).toBe(1);
-    const wfs = (await b.get(`/c/${cb}/workflows`)).body.workflows;
-    expect(wfs.every((w: any) => w.active_version_id === null)).toBe(true);
+    // Workflows that arrive with a template are drafts: nothing activates without the receiver testing it.
+    const added = (await b.get(`/c/${cb}/workflows`)).body.workflows.filter((w: any) => !before.has(w.id));
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.every((w: any) => w.active_version_id === null)).toBe(true);
     await a.patch(`/c/${ca}/templates/${t.body.id}`, { name: 'Renamed', refreshFromCompany: true });
     expect((await b.get(`/c/${cb}/services`)).body.services).toHaveLength(1);
     const stranger = await signup();

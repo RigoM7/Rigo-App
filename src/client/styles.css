@@ -971,3 +971,6 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 /* The customer's invoice link */
 .public-invoice { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
 @media (max-width: 640px) { .doc { padding: 20px; } .doc .doc-head-right { text-align: left; margin-left: 0; } .doc .doc-dates { justify-content: start; } }
+/* Shell: automation paused banner, notification groups */
+.paused-banner { margin-bottom: 16px; }
+.bell-group { padding: 8px 10px 2px; font-weight: 600; text-transform: none; }
