@@ -9,14 +9,17 @@ Deployment: the Vercel preview of this branch connects to Supabase through the t
 (`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
 public API roles cannot access.
 
-Latest results (local, Round 2 demo fixes): `npm test` 80/80 passed on embedded PostgreSQL
-(PGlite) and 80/80 on PostgreSQL 16; `e2e/run.mjs` 64/64 browser checks passed against a local
-copy with the simulated mailbox plus a production-like copy with no email service
-(`NOEMAIL_URL`), including the 13 new Round 2 checks (walkthrough from the driver view, assignment,
-approval cards, demo content, phone demo bar, overflow in every simulated role at 375/768/1024/1440
-and at 200% text); axe found no violations on the 18 app pages, the landing and account pages, and
-the Round 2 screens (demo home with the walkthrough, jobs table, inbox with approval cards, service
-editor, recurring plan form, job form) in light and dark themes; `npm run typecheck` clean.
+Latest results (local, Phase 1 of the critique fixes: money, approvals and lost work): `npm test`
+158/158 passed on embedded PostgreSQL (PGlite) and 158/158 on PostgreSQL 16; `e2e/run.mjs` 79/79
+browser checks passed against a local build with the simulated mailbox (the copy without email,
+`NOEMAIL_URL`, was not run this time), including the 18 Phase 1 checks (example bills, void and
+re-bill, collections at 1366 and 390 px, a manual invoice and its view link, approval
+confirmations, rental plan forms, the driver's phone at 360×640, 375×667 and 390×844 and at 200%
+text, an offline save that survives closing the app and sends once on reconnect, a removed
+driver's late record and the phone wipe, reassignment mid-job, Switch driver and the installed-app
+start page); axe found no violations on the 19 screens scanned in these checks; `npm run typecheck`
+clean. Reviews before shipping: isolation and field filtering, money, and security; every finding
+is fixed with a test except self-approval, which is an owner decision (see Known limitations).
 
 ## A. Foundation
 
