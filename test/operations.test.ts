@@ -54,7 +54,8 @@ describe('jobs', () => {
     expect(list.body.jobs[0].billing_status).toBeUndefined();
     expect((await s.driver.get(`/c/${s.cid}/jobs/${other.body.id}`)).status).toBe(404);
     const svc = await s.driver.get(`/c/${s.cid}/services`);
-    expect(JSON.stringify(svc.body)).not.toContain('389');
+    // Record ids are random and can contain any digits; look for the rate everywhere else.
+    expect(JSON.stringify(svc.body).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '')).not.toContain('389');
     expect(svc.body.services[0].pricing[0].rateE4).toBeUndefined();
     expect((await s.driver.get(`/c/${s.cid}/invoices`)).status).toBe(403);
     expect((await s.driver.get(`/c/${s.cid}/customers`)).status).toBe(403);

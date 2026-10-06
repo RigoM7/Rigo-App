@@ -1126,6 +1126,9 @@ async function scenarioS1(base, label) {
   await p.getByRole('button', { name: 'Sign out' }).click();
   await p.waitForURL(/\/signin/);
   await p.getByRole('link', { name: 'Forgot your password?' }).click();
+  // Wait for the reset page itself: the sign-in page also has an "Email" field.
+  await p.waitForURL(/\/forgot$/);
+  await p.getByRole('heading', { name: 'Reset your password' }).waitFor();
   let resetLink;
   if (label === 'local') {
     await p.getByLabel('Email').fill(fixed);
