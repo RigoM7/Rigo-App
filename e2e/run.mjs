@@ -574,6 +574,8 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p2.close();
     if (pageTotal !== '$773.99') throw new Error(`invoice page total ${pageTotal}`);
     await approve.click();
+    // Approving asks first, with the total (R14-m4).
+    await p.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
     await p.getByText(/Approved\. Rigo will continue/).waitFor();
     await guide.getByText(/Done\. The invoice for job #3 is approved and issued/).waitFor();
     await guide.getByRole('button', { name: 'Next step' }).click();
@@ -722,7 +724,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     const inv = (await v.api.get(`/jobs/${em.id}`)).invoice;
     await p.goto(`${v.C}/invoices/${inv.id}`);
     await p.getByRole('cell', { name: 'After-hours visit' }).waitFor();
-    await p.getByRole('cell', { name: 'Pump-out' }).waitFor();
+    await p.getByRole('cell', { name: 'Pump-out (includes 1,000 gal)' }).waitFor();
     // A job whose window ended without a start is flagged, and counted on Home.
     const job1 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 1);
     await v.api.post(`/jobs/${job1.id}/assign`, { userId: job1.assigned_user_id, resourceIds: [], scheduledStart: new Date(Date.now() - 3 * 3600_000).toISOString(), scheduledEnd: new Date(Date.now() - 2 * 3600_000).toISOString(), version: job1.version });
