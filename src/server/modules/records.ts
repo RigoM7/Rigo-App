@@ -203,7 +203,8 @@ const resourceInput = z.object({
 recordRoutes.get('/resources', async (c) => {
   const cc = c.get('cc');
   need(cc, 'resources.view');
-  const { rows } = await cc.db.query(`select r.*, (select count(*)::int from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.resource_id = r.id and j.status in ('open','in_progress')) as open_jobs from rigo.resources r where company_id = $1 order by kind, name`, [cc.company.id]);
+  const { rows } = await cc.db.query(`select r.*, p.name as plan_name, (select count(*)::int from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id where jr.resource_id = r.id and j.status in ('open','in_progress')) as open_jobs
+      from rigo.resources r left join rigo.recurring_plans p on p.id = r.plan_id where r.company_id = $1 order by r.kind, r.name`, [cc.company.id]);
   return c.json({ resources: rows });
 });
 

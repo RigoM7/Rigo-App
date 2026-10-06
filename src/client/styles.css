@@ -974,3 +974,6 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 /* Shell: automation paused banner, notification groups */
 .paused-banner { margin-bottom: 16px; }
 .bell-group { padding: 8px 10px 2px; font-weight: 600; text-transform: none; }
+/* Rental plan unit lines: type, quantity, rate, remove */
+.unit-line { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+@media (max-width: 640px) { .unit-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }

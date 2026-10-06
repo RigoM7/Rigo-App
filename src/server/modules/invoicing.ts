@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Q } from '../db/index.js';
 import { config } from '../config.js';
-import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, type DraftLine } from '../../shared/billing.js';
+import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, lineAmount, type DraftLine } from '../../shared/billing.js';
+import { readBillingRule, isPeriodic, PLAN_VISIT_LABEL, type PlanVisit } from '../../shared/rentals.js';
 import { balanceDue, dueDateFor, termsLabel } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
 import { readPricing, type FieldDef } from '../../shared/services.js';
@@ -11,7 +12,7 @@ import { emit } from '../automation/engine.js';
 // Invoice preparation and issuing. One invoice per billable event (billable_key), deterministic
 // totals, explicit holds for missing configuration, and separate draft/approval/delivery/payment states.
 
-export interface PrepareResult { invoiceId: string; created: boolean; held: boolean; reasons: string[] }
+export interface PrepareResult { invoiceId: string | null; created: boolean; held: boolean; reasons: string[]; covered?: string }
 
 export async function persistLines(q: Q, companyId: string, invoiceId: string, lines: DraftLine[]) {
   await q.query(`delete from rigo.invoice_lines where invoice_id = $1`, [invoiceId]);
@@ -67,9 +68,28 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
   if (!['completed', 'partial'].includes(job.status)) {
     throw conflict(job.status === 'unsuccessful' ? 'Unsuccessful visits are not billed automatically. Create an invoice manually if a charge applies.' : 'Only completed or partially completed jobs can be invoiced.');
   }
-  if (!job.service_id) throw conflict('The job has no service, so there is no pricing to use.');
+  // A visit from a rental plan is paid for by the rent (R8-C1): routine service isn't billed again.
+  // Delivery, pickup and extra visits bill at the plan's price when it has one.
+  let planLines: DraftLine[] | null = null;
+  if (job.recurring_plan_id) {
+    const plan = (await q.query<any>(`select name, billing_rule from rigo.recurring_plans where id = $1`, [job.recurring_plan_id])).rows[0];
+    const rule = plan ? readBillingRule(plan.billing_rule) : null;
+    if (plan && rule && isPeriodic(rule.frequency)) {
+      const visit = (job.details?._visit ?? 'service') as PlanVisit;
+      const price = visit === 'service' ? undefined : rule.visitPrices[visit];
+      if (visit === 'service' || ((price === null || price === undefined) && visit !== 'extra')) {
+        const why = `Covered by the plan "${plan.name}"; not billed separately.`;
+        await q.query(`update rigo.jobs set billing_status = 'not_billable', updated_at = now() where id = $1`, [job.id]);
+        await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, actor_label, data) values ($1,$2,'not_billed',$3,$4,$5)`,
+          [companyId, job.id, actor.userId, actor.depth ? 'Rigo automation' : '', JSON.stringify({ reason: why })]);
+        return { invoiceId: null, created: false, held: false, reasons: [], covered: why };
+      }
+      if (price !== null && price !== undefined) planLines = [{ description: `${PLAN_VISIT_LABEL[visit]}: ${plan.name}`, quantity: '1', unit: '', rateE4: price, amountMinor: lineAmount('1', price), taxable: rule.taxable, kind: 'charge' }];
+    }
+  }
+  if (!job.service_id && !planLines) throw conflict('The job has no service, so there is no pricing to use.');
   const ctx = await pricingContext(q, job);
-  const built = buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
+  const built = planLines ? { lines: planLines, holdReasons: [] as string[] } : buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
   const totals = computeTotals(built.lines, job.tax_rate_bp, [], { taxExempt: ctx.taxExempt });
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
   if (ctx.quantityHold) reasons.unshift(ctx.quantityHold);

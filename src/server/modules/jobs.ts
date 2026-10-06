@@ -206,6 +206,20 @@ async function reviewQuantities(q: Q, job: any, fields: FieldDef[], values: Reco
   return notes.length ? notes.join(' ') : null;
 }
 
+/**
+ * Moving a job's start keeps its length (R8-M4, R6-m7): when the start changes and the end was left
+ * as it was (or not sent), the end moves by the same amount. Returns the new end, or null to use
+ * whatever was sent.
+ */
+export function keepDuration(job: { scheduled_start: string | Date | null; scheduled_end: string | Date | null }, start: string | null | undefined, end: string | null | undefined) {
+  if (!start || !job.scheduled_start || !job.scheduled_end) return null;
+  const oldStart = new Date(job.scheduled_start).getTime(); const oldEnd = new Date(job.scheduled_end).getTime();
+  const newStart = new Date(start).getTime();
+  if (newStart === oldStart) return null;
+  if (end !== undefined && end !== null && new Date(end).getTime() !== oldEnd) return null;
+  return new Date(newStart + (oldEnd - oldStart)).toISOString();
+}
+
 // ---------------------------------------------------------------- create & edit
 const jobInput = z.object({
   customerId: z.string().uuid().nullable().optional(),
@@ -275,6 +289,7 @@ jobRoutes.patch('/jobs/:id', async (c) => {
     const job = await loadJob(cc, q, c.req.param('id'), true);
     if (job.version !== input.version) throw conflict('This job was changed by someone else while you were editing. Reload to see the latest version.', { serverVersion: job.version });
     if (isFinished(job.status)) throw conflict('Finished jobs cannot be edited. Use "Correct record" to change completed information with history.');
+    input.scheduledEnd = keepDuration(job, input.scheduledStart, input.scheduledEnd) ?? input.scheduledEnd;
     const merged = { customerId: input.customerId !== undefined ? input.customerId : job.customer_id, locationId: input.locationId !== undefined ? input.locationId : job.location_id, serviceId: input.serviceId !== undefined ? input.serviceId : job.service_id };
     const svc = await validateRefs(q, cc, { ...input, ...merged });
     const fields = (svc?.fields ?? []) as FieldDef[];
@@ -289,11 +304,14 @@ jobRoutes.patch('/jobs/:id', async (c) => {
     const before = { customer_id: job.customer_id, location_id: job.location_id, service_id: job.service_id, scheduled_start: job.scheduled_start, details: publicDetails(job.details), notes: job.notes, priority: job.priority };
     // A different service or customer means different prices: the booking price snapshot is taken again.
     const rebook = merged.serviceId !== job.service_id || merged.customerId !== job.customer_id || !job.booked_rates;
+    const movedEnd = keepDuration(job, input.scheduledStart, input.scheduledEnd);
+    const newStart = input.scheduledStart ?? job.scheduled_start; const newEnd = movedEnd ?? input.scheduledEnd ?? job.scheduled_end;
+    if (newStart && newEnd && new Date(newEnd) <= new Date(newStart)) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
     await q.query(`update rigo.jobs set customer_id = $3, location_id = $4, service_id = $5, scheduled_start = coalesce($6, scheduled_start), scheduled_end = coalesce($7, scheduled_end),
         contact_name = coalesce($8, contact_name), contact_phone = coalesce($9, contact_phone), access_instructions = coalesce($10, access_instructions), notes = coalesce($11, notes),
         details = $12, priority = coalesce($13, priority), booked_rates = case when $14 then $15::jsonb else booked_rates end,
         version = version + 1, updated_at = now() where id = $1 and company_id = $2`,
-      [job.id, cc.company.id, merged.customerId, merged.locationId, merged.serviceId, input.scheduledStart ?? null, input.scheduledEnd ?? null,
+      [job.id, cc.company.id, merged.customerId, merged.locationId, merged.serviceId, input.scheduledStart ?? null, movedEnd ?? input.scheduledEnd ?? null,
         input.contactName ?? null, input.contactPhone ?? null, input.accessInstructions ?? null, input.notes ?? null, JSON.stringify(details), input.priority ?? null,
         rebook, rebook ? JSON.stringify(await bookedRates(q, svc, merged.customerId)) : null]);
     await event(q, cc, job.id, 'edited', { before });
@@ -349,7 +367,7 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
     const unavailable = resources.filter((r) => r.status === 'out_of_service' || r.status === 'retired');
     if (unavailable.length) throw conflict(`${unavailable.map((r) => r.name).join(', ')} is out of service.`, { fields: { resourceIds: 'Out of service' } });
     const start = input.scheduledStart !== undefined ? input.scheduledStart : job.scheduled_start;
-    let end = input.scheduledEnd !== undefined ? input.scheduledEnd : job.scheduled_end;
+    let end = keepDuration(job, input.scheduledStart, input.scheduledEnd) ?? (input.scheduledEnd !== undefined ? input.scheduledEnd : job.scheduled_end);
     if (start && !end) end = new Date(new Date(start).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString();
     if (start && end && new Date(end) <= new Date(start)) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
     if (start && end) {

@@ -8,7 +8,7 @@ import { useSubmit } from '../lib/form';
 import { PaymentPill } from './invoices';
 import { PAYMENT_METHODS } from '../../shared/invoices';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, PriorityPill, LatePill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
-import { fmtDate, fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
+import { fmtDate, fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase, shiftEnd } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
 import { tzLabel } from '../../shared/timezones';
@@ -18,7 +18,7 @@ import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', payment_collected: 'Payment collected at the stop',
+  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
 };
 
 function eventText(e: any, members: Record<string, string>) {
@@ -31,6 +31,7 @@ function eventText(e: any, members: Record<string, string>) {
     case 'problem_resolved': return d.note || '';
     case 'correction': return `Reason: ${d.reason}`;
     case 'invoice_prepared': return d.held ? `On hold: ${(d.reasons ?? []).join(' ')}` : 'Draft ready';
+    case 'not_billed': return d.reason ?? '';
     case 'created': return d.followupOf ? `Follow-up to job #${d.followupOf}` : d.plan ? `From plan ${d.plan}` : '';
     default: return '';
   }
@@ -54,7 +55,7 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <div className="stack">
-          <Field label="Start" id="f-scheduledStart" hint={tzLabel(c.company.timezone)}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+          <Field label="Start" id="f-scheduledStart" hint={tzLabel(c.company.timezone)}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value, end: shiftEnd(v.start, v.end, e.target.value) })} />}</Field>
           <Field label="End" id="f-scheduledEnd" error={s.fieldError('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
         </div>
         <Field label="Driver" id="f-userId" error={s.fieldError('userId')}>{(p) => <Select {...p} value={v.userId} onChange={(e) => setV({ ...v, userId: e.target.value })}><option value="">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>}</Field>
@@ -88,7 +89,7 @@ export function JobDetail() {
   const status = useSubmit(async (to: string, r?: string) => { await post(`/c/${c.cid}/jobs/${id}/status`, { to, version: q.data.job.version, reason: r }); setCancelOpen(false); toast(to === 'open' ? 'Job opened for scheduling' : to === 'cancelled' ? 'Job cancelled' : 'Moved back to draft'); refresh(); });
   const report = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem`, { text: problem }); setProblemOpen(false); setProblem(''); toast('Problem reported to dispatch'); refresh(); });
   const resolve = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem/resolve`, { note: '' }); toast('Problem marked resolved'); refresh(); });
-  const prep = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/invoice`); toast(r.held ? 'Invoice prepared on hold. See the reasons on the invoice.' : 'Invoice draft prepared'); refresh(); });
+  const prep = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/invoice`); toast(r.covered ? r.covered : r.held ? 'Invoice prepared on hold. See the reasons on the invoice.' : 'Invoice draft prepared'); refresh(); });
   const correct = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/correct`, { ...corr, version: q.data.job.version }); setCorrectOpen(false); toast(r.invoiceNote || 'Correction saved with history'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock rows={8} /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;

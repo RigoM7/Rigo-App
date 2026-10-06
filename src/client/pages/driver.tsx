@@ -166,9 +166,11 @@ export function DriverJob() {
 
   useEffect(() => { (async () => { if (job) setDraft((await getDraft(uid, c.cid, jobId)) ?? null); })(); }, [job?.id, uid, c.cid, jobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fields dispatch already filled and the driver confirms (like Units) start from the booked value (R8-m2).
+  const prefill = () => Object.fromEntries((job?.fields ?? []).filter((f: any) => f.stage === 'both' && job.details?.[f.key] !== undefined && job.details[f.key] !== '').map((f: any) => [f.key, String(job.details[f.key])]));
   const ensureDraft = (): Draft => draft ?? {
     userId: uid, companyId: c.cid, jobId, jobNumber: job.number, baseVersion: job.version, submissionId: newId('sub'),
-    outcome: 'completed', values: {}, notes: '', reason: '', problem: '', photos: [], signature: null, signerName: '', state: 'local', updatedAt: new Date().toISOString(),
+    outcome: 'completed', values: prefill(), notes: '', reason: '', problem: '', photos: [], signature: null, signerName: '', state: 'local', updatedAt: new Date().toISOString(),
   };
   const update = (patch: Partial<Draft>) => {
     const next = { ...ensureDraft(), ...patch, state: (draft?.state === 'accepted' ? 'accepted' : 'local') as DraftState, message: undefined };

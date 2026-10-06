@@ -6,7 +6,7 @@ import { useCompany } from '../lib/session';
 import { get, post, patch, newId, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, PageHeader, Dialog, Checkbox, Banner, useToast } from '../components/ui';
-import { toLocalInput } from '../lib/format';
+import { toLocalInput, shiftEnd } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
 import { tzLabel } from '../../shared/timezones';
 import type { FieldDef } from '../../shared/services';
@@ -138,7 +138,7 @@ export function JobForm() {
           <div className="stack">
           <Field label="Priority" id="f-priority" hint="Urgent and emergency jobs are listed first for their day and marked on the timeline, the job list and the driver's phone." error={fe('priority')}>{(p) => <Select {...p} value={v.priority} onChange={(e) => setV({ ...v, priority: e.target.value })}><option value="normal">Normal</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option></Select>}</Field>
           <div className="grid-2">
-            <Field label="Requested start" optionalText id="f-scheduledStart" hint={`In ${tzLabel(c.company.timezone)}`} error={fe('scheduledStart')}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+            <Field label="Requested start" optionalText id="f-scheduledStart" hint={`In ${tzLabel(c.company.timezone)}`} error={fe('scheduledStart')}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value, end: shiftEnd(v.start, v.end, e.target.value) })} />}</Field>
             <Field label="Window ends" optionalText id="f-scheduledEnd" hint="Defaults to one hour after the start. Jobs not started by then are marked Late." error={fe('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
           </div>
           </div>

@@ -130,7 +130,7 @@ describe('rentals billed every 28 days', () => {
       billingRule: { frequency: 'every_n_days', everyDays: 28, rateMinor: 12500, description: 'Unit rental' }, startsOn: '2030-01-23', details: { visit_type: 'Service' },
     });
     expect(r.status).toBe(200);
-    const lines = async () => (await db.query<any>(`select l.description, i.total_minor from rigo.invoice_lines l join rigo.invoices i on i.id = l.invoice_id where i.recurring_plan_id = $1 order by l.description`, [r.body.id])).rows;
+    const lines = async () => (await db.query<any>(`select l.description, i.total_minor from rigo.invoice_lines l join rigo.invoices i on i.id = l.invoice_id where i.recurring_plan_id = $1 order by i.period_start, l.position`, [r.body.id])).rows;
     // Generation runs as if it were a later date (the HTTP calls above and below use the real clock).
     const runAt = async (iso: string) => {
       vi.useFakeTimers({ toFake: ['Date'] });
@@ -141,20 +141,22 @@ describe('rentals billed every 28 days', () => {
     // the February month end and the March 10 daylight-saving change.
     await runAt('2030-03-20T02:00:00.000Z');
     expect(await lines()).toEqual([
-      { description: 'Unit rental 2030-01-23 to 2030-02-19', total_minor: 37500 },
-      { description: 'Unit rental 2030-02-20 to 2030-03-19', total_minor: 37500 },
+      { description: 'Unit rental, Jan 23 – Feb 19, 2030', total_minor: 37500 },
+      { description: 'Unit rental, Feb 20 – Mar 19, 2030', total_minor: 37500 },
     ]);
     await runAt('2030-03-20T04:30:00.000Z'); // 11:30 PM on March 19 in Chicago
     expect(await lines()).toHaveLength(2);
     await runAt('2030-03-20T06:00:00.000Z'); // March 20 in Chicago: the third period starts, exactly once
-    expect((await lines()).map((l: any) => l.description)).toEqual(['Unit rental 2030-01-23 to 2030-02-19', 'Unit rental 2030-02-20 to 2030-03-19', 'Unit rental 2030-03-20 to 2030-04-16']);
-    // A pause covering a whole period bills nothing for it; billing picks up after the pause.
+    expect((await lines()).map((l: any) => l.description)).toEqual(['Unit rental, Jan 23 – Feb 19, 2030', 'Unit rental, Feb 20 – Mar 19, 2030', 'Unit rental, Mar 20 – Apr 16, 2030']);
+    // A pause is prorated by the day (D5): the draft for Mar 20 – Apr 16 is rebuilt for 21 of 28 days,
+    // a period inside the pause bills nothing, and the period the pause ends in bills 22 of 28 days.
     expect((await owner.post(`/c/${cid}/recurring/${r.body.id}/pause`, { from: '2030-04-10', until: '2030-05-20' })).status).toBe(200);
+    expect((await lines()).find((l: any) => l.description.startsWith('Unit rental, Mar 20')).total_minor).toBe(28125);
     await runAt('2030-04-20T15:00:00.000Z');
     expect(await lines()).toHaveLength(3);
     await runAt('2030-05-16T15:00:00.000Z');
-    expect((await lines()).map((l: any) => l.description).at(-1)).toBe('Unit rental 2030-05-15 to 2030-06-11');
     expect(await lines()).toHaveLength(4);
+    expect((await lines()).find((l: any) => l.description.startsWith('Unit rental, May 15'))).toEqual({ description: 'Unit rental, May 15 – Jun 11, 2030', total_minor: 29464 });
     // The plan form names it plainly.
     const plan = (await owner.get(`/c/${cid}/recurring/${r.body.id}`)).body.plan;
     expect(plan.billing_rule).toMatchObject({ frequency: 'every_n_days', everyDays: 28 });

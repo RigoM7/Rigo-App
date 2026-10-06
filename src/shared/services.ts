@@ -159,9 +159,9 @@ export function starterService(category: ServiceCategory): ServiceInput {
         name: 'Portable toilet service', category, description: 'Delivery, servicing and pickup of portable toilet units.',
         fields: [
           { key: 'visit_type', label: 'Visit type', type: 'select', unit: '', options: ['Delivery', 'Service', 'Pickup'], stage: 'request', required: true, help: '' },
-          { key: 'units', label: 'Units', type: 'number', unit: 'units', options: [], stage: 'both', required: true, help: '' },
+          // One units field: dispatch sets it, the driver's form starts from it and confirms what was serviced (R8-m2).
+          { key: 'units', label: 'Units', type: 'number', unit: 'units', options: [], stage: 'both', required: true, help: 'Booked units; the driver confirms how many were serviced.' },
           { key: 'placement', label: 'Placement on site', type: 'text', unit: '', options: [], stage: 'request', required: false, help: '' },
-          { key: 'units_serviced', label: 'Units serviced', type: 'number', unit: 'units', options: [], stage: 'completion', required: false, help: '' },
         ],
         pricing: [priceLine({ id: 'visit', label: 'Visit', basis: 'per_quantity', quantityField: 'units', unit: 'units' })],
         taxRateBp: null, requiresPhoto: true, requiresSignature: false, active: true, invoiceShowsNotes: false,

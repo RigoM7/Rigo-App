@@ -238,6 +238,34 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await v.c.close();
     return a;
   });
+  await step('WP4: moving a job later in the form keeps its length; the plan form starts with no day ticked and asks billing for rates (R8-M4, R7-m2, R8-m1)', async () => {
+    const v = await demoVisitor('wp4');
+    const jobs = (await v.api.get('/jobs?status=active')).jobs.filter((j) => j.status === 'open' && j.scheduled_start && j.scheduled_end);
+    const j = jobs[0];
+    await v.p.goto(`${v.C}/jobs/${j.id}`);
+    const start = v.p.locator('#f-scheduledStart');
+    await start.waitFor({ timeout: 8000 });
+    const s0 = await start.inputValue(); const e0 = await v.p.locator('#f-scheduledEnd').inputValue();
+    const later = new Date(Date.parse(`${s0}:00Z`) + 3 * 3600_000).toISOString().slice(0, 16);
+    await start.fill(later);
+    const e1 = await v.p.locator('#f-scheduledEnd').inputValue();
+    const len = (a, b) => Date.parse(`${b}:00Z`) - Date.parse(`${a}:00Z`);
+    if (len(later, e1) !== len(s0, e0)) throw new Error(`end did not move with the start: ${s0}–${e0} became ${later}–${e1}`);
+    await v.p.getByRole('button', { name: 'Save assignment' }).click();
+    await v.p.getByText('Assignment saved').waitFor({ timeout: 8000 });
+    const after = (await v.api.get(`/jobs/${j.id}`)).job;
+    if (Date.parse(after.scheduled_end) - Date.parse(after.scheduled_start) !== Date.parse(j.scheduled_end) - Date.parse(j.scheduled_start)) throw new Error('saved length changed');
+    // The new plan form: no weekday pre-ticked, unit lines for rentals.
+    await v.p.goto(`${v.C}/recurring/new`);
+    const days = v.p.locator('#f-visitRule-weekdays input[type=checkbox]');
+    await days.first().waitFor({ timeout: 8000 });
+    if ((await days.evaluateAll((els) => els.filter((e) => e.checked).length)) !== 0) throw new Error('a weekday was pre-ticked');
+    await v.p.getByLabel('Unit type').first().waitFor();
+    await noOverflow(v.p, 'wp4-plan-form');
+    const a = await axe(v.p, 'wp4-plan-form');
+    await v.c.close();
+    return a;
+  });
 }
 if (process.env.E2E_ONLY === 'phase1') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

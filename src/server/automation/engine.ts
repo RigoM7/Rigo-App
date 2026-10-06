@@ -234,6 +234,10 @@ export async function advanceRun(db: Db, runId: string) {
       const existing = (await q.query<any>(`select * from rigo.actions where company_id = $1 and idempotency_key = $2`, [run.company_id, key])).rows[0];
       if (existing) {
         if (existing.status === 'completed' || existing.status === 'simulated') {
+          if (run.context?.stopRun) {
+            await q.query(`update rigo.automation_runs set status = 'completed', summary = $2, updated_at = now() where id = $1`, [runId, existing.explanation]);
+            return null;
+          }
           await q.query(`update rigo.automation_runs set current_step = current_step + 1, status = 'running', updated_at = now() where id = $1`, [runId]);
           return 'continue';
         }

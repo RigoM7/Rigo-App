@@ -123,7 +123,7 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   const paid = await job({ cust: 2, svc: sFuel, status: 'completed', day: addDays(today, -6), time: '08:30', driver: dana, resources: ['Tanker 12'], details: { product: 'Heating oil', requested_qty: '300' } });
   await complete(paid, 'Dana Driver (fictional)', 140, { delivered_qty: '300' });
   for (const [id, payNow] of [[emergency, false], [paid, true]] as const) {
-    const inv = await prepareInvoiceForJob(q, cid, id, { userId });
+    const inv = await prepareInvoiceForJob(q, cid, id, { userId }) as { invoiceId: string };
     await q.query(`update rigo.invoices set approved_by = $2, approved_at = now() where id = $1`, [inv.invoiceId, userId]);
     await issueInvoice(q, cid, inv.invoiceId, { userId });
     if (payNow) {
@@ -136,10 +136,12 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
 
   // A rental plan: weekly servicing, billed every 28 days from the start date. The first period's
   // invoice is prepared right after seeding (see generateForCompany in the routes below).
-  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through)
-      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8)`,
+  // Two unit types; routine visits are covered by the rent and arrive assigned to the plan's driver.
+  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through, default_user_id)
+      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8,$9)`,
     [cid, custs[2].id, custs[2].loc, sToilet, JSON.stringify({ frequency: 'weekly', interval: 1, weekdays: [5], time: '07:00', durationMinutes: 60 }),
-      JSON.stringify({ frequency: 'every_n_days', everyDays: 28, rateMinor: 12500, description: 'Unit rental' }), addDays(today, -10), addDays(today, 14)]);
+      JSON.stringify({ frequency: 'every_n_days', everyDays: 28, description: 'Unit rental', lines: [{ id: 'std', label: 'Standard unit', quantity: 5, rateE4: 1_250_000 }, { id: 'ada', label: 'ADA unit', quantity: 1, rateE4: 1_600_000 }], visitPrices: { extra: 650_000 } }),
+      addDays(today, -10), addDays(today, 14), dana]);
   return cid;
 }
 

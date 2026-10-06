@@ -24,12 +24,15 @@ async function prepareMessage(q: Q, companyId: string, actionId: string, m: { ch
 }
 
 export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult>> = {
-  async 'invoice.prepare'(i) {
+  async 'invoice.prepare'(i): Promise<HandlerResult> {
     const r = await prepareInvoiceForJob(i.q, i.companyId, i.subject.id, { userId: i.actorUserId, depth: i.depth });
+    // A rental visit covered by the rent has nothing to bill: the run ends here, quietly.
+    if (!r.invoiceId) return { status: 'completed', explanation: r.covered ?? 'Nothing to bill.', result: r, context: { stopRun: 'covered' } };
+    const invoiceId: string = r.invoiceId;
     if (r.held) {
-      return { status: 'blocked', explanation: `Invoice prepared but on hold: ${r.reasons.join(' ') || 'it needs review.'}`, result: r, context: { invoiceId: r.invoiceId }, link: `invoices/${r.invoiceId}` };
+      return { status: 'blocked', explanation: `Invoice prepared but on hold: ${r.reasons.join(' ') || 'it needs review.'}`, result: r, context: { invoiceId }, link: `invoices/${invoiceId}` };
     }
-    return { status: 'completed', explanation: r.created ? 'Invoice draft prepared.' : 'An invoice already existed for this job; reused it.', result: r, context: { invoiceId: r.invoiceId } };
+    return { status: 'completed', explanation: r.created ? 'Invoice draft prepared.' : 'An invoice already existed for this job; reused it.', result: r, context: { invoiceId } };
   },
 
   async 'invoice.issue'(i) {
