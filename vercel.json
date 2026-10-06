@@ -3,5 +3,10 @@
   "framework": null,
   "buildCommand": "npm run build",
   "outputDirectory": "public",
-  "functions": { "api/rigo.js": { "maxDuration": 30 } }
+  "functions": {
+    "api/rigo.js": {
+      "maxDuration": 30
+    }
+  },
+  "ignoreCommand": "git log -1 --format=%B | grep -qF '[checkpoint]' || git diff HEAD^ HEAD --quiet -- . ':(exclude).claude' ':(exclude)CLAUDE.md'"
 }

@@ -73,3 +73,182 @@ table tr > td:last-child, table tr > th:last-child { position:sticky; right:0; z
 .dispatch-table th { padding-left:8px; padding-right:8px; }
 .dispatch-table .choice { min-width:96px !important; }
 .rigo-step-move { justify-content:flex-start !important; }
+/* Companies: entry, picker, onboarding and switcher (Milestone A). */
+.rigo-actions { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-top:16px; }
+.rigo-actions button { margin-top:0; }
+.rigo-company-list { list-style:none; margin:16px 0 0; padding:0; display:grid; gap:8px; }
+.rigo-company { display:flex; width:100%; min-height:48px; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; color:#182b33; text-align:left; cursor:pointer; font:inherit; touch-action:manipulation; transition:border-color .15s, background-color .15s; }
+.rigo-company:hover { border-color:var(--primary, #b51f36); background:var(--brand-soft, #fcf0f2); }
+.rigo-company.is-current { border-color:var(--primary, #b51f36); border-width:2px; background:var(--brand-soft, #fcf0f2); }
+.rigo-company-name { font-weight:600; overflow-wrap:anywhere; min-width:0; }
+.rigo-company-role { flex:none; color:#4d5d64; font-size:14px; }
+.rigo-invite { display:grid; gap:8px; padding:12px 16px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; }
+.rigo-invite strong { display:block; overflow-wrap:anywhere; }
+.rigo-invite small { color:#4d5d64; }
+.rigo-invite .rigo-actions { margin-top:0; }
+.rigo-choices { display:grid; gap:12px; margin-top:20px; }
+.rigo-choice { display:grid; gap:4px; width:100%; padding:16px; border:1px solid #ccd5d9; border-radius:12px; background:#fff; color:#182b33; text-align:left; font:inherit; }
+button.rigo-choice { cursor:pointer; border-color:var(--primary, #b51f36); border-width:2px; touch-action:manipulation; }
+button.rigo-choice:hover { background:var(--brand-soft, #fcf0f2); }
+.rigo-choice strong { font-size:17px; }
+.rigo-choice span { color:#4d5d64; line-height:1.5; }
+.rigo-choice.is-disabled { background:#f5f7f8; color:#5b6b72; }
+.rigo-hint { padding:12px 14px; border-radius:8px; background:#f5f7f8; border:1px solid #e3e8ea; overflow-wrap:anywhere; }
+.rigo-help { display:block; color:#4d5d64; }
+#company-name-help { margin-top:-8px; }
+.rigo-auth input[aria-invalid="true"] { border-color:#b42318; }
+.rigo-danger { color:#b42318 !important; }
+#rigo-switcher { position:fixed; inset:0; margin:auto; height:fit-content; width:min(480px, calc(100vw - 32px)); max-height:min(80dvh, 640px); padding:20px; border:1px solid #ccd5d9; border-radius:14px; box-shadow:0 16px 40px rgba(0,0,0,.2); color:#182b33; }
+#rigo-switcher::backdrop { background:rgba(15,25,30,.45); }
+.rigo-dialog-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.rigo-dialog-head h2 { font-size:20px; margin:0; }
+.rigo-company:focus-visible, .rigo-choice:focus-visible, #rigo-switcher button:focus-visible, .rigo-auth button:focus-visible, .rigo-auth input:focus-visible { outline:3px solid var(--primary, #b51f36); outline-offset:2px; }
+@media (max-width: 480px) {
+  .rigo-auth { padding:16px; place-items:start center; }
+  .rigo-auth .panel { padding:20px; }
+  .rigo-company { flex-direction:column; align-items:flex-start; gap:2px; }
+}
+@media (prefers-reduced-motion: reduce) { .rigo-company { transition:none; } }
+/* Phones: keep the account menu (switch company, sign out) reachable as a compact button. */
+@media (max-width: 800px) {
+  .operations-header .header-tools { max-width:none; flex-wrap:nowrap; }
+  .operations-header .company-brand { min-width:0; flex:1 1 auto; }
+  .header-tools .user-menu { display:flex !important; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; justify-content:center; border-radius:8px; background:#f6f7f9; color:#545b68; }
+  .header-tools .user-menu > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+}
+/* Demo workspace (Milestone B). */
+button.rigo-choice.is-secondary { border-width:1px; border-color:#ccd5d9; }
+button.rigo-choice.is-secondary:hover { border-color:var(--primary, #b51f36); }
+.rigo-demo-mode body { padding-bottom:var(--rigo-demo-bar, 96px); }
+#rigo-demo-bar { position:fixed; left:0; right:0; bottom:0; z-index:40; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:10px 16px; background:#fff8e6; border-top:2px solid #d9a400; color:#3d2e00; box-shadow:0 -4px 16px rgba(0,0,0,.08); }
+.rigo-demo-mode .operations-header { bottom:var(--rigo-demo-bar, 96px); height:auto; }
+.rigo-demo-text { display:grid; gap:2px; min-width:0; }
+.rigo-demo-text strong { font-size:15px; }
+.rigo-demo-text span { font-size:13px; color:#5c4500; }
+.rigo-demo-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.rigo-demo-controls button { min-height:40px; margin:0; }
+.rigo-demo-role { display:flex; align-items:center; gap:6px; font-size:14px; }
+.rigo-demo-role select { min-height:40px; padding:6px 8px; border:1px solid #c9b16b; border-radius:8px; background:#fff; }
+.rigo-demo-message { flex-basis:100%; margin:0; font-size:13px; }
+.rigo-demo-message:empty { display:none; }
+.rigo-demo-mode .html-toolbar { display:none !important; }
+#rigo-demo-bar .rigo-demo-toggle { display:none; }
+.rigo-demo-mode iframe[src^="about:blank"] { background:#eef2f3 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='40'%3E%3Ctext x='0' y='25' font-family='Arial' font-size='14' fill='%235b6b72'%3EMap preview is off in the demo%3C/text%3E%3C/svg%3E") center no-repeat; }
+.rigo-structures { display:grid; gap:8px; margin:0; padding:0; border:0; }
+.rigo-structures legend { font-weight:600; margin-bottom:8px; }
+.rigo-structure { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid #ccd5d9; border-radius:10px; background:#fff; cursor:pointer; }
+.rigo-structure:has(input:checked) { border-color:var(--primary, #b51f36); background:var(--brand-soft, #fcf0f2); }
+.rigo-structure input { width:auto; margin-top:4px; accent-color:var(--primary, #b51f36); }
+.rigo-structure span { display:grid; gap:2px; }
+.rigo-structure small { color:#4d5d64; }
+.rigo-review { padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#f5f7f8; }
+.rigo-review summary { cursor:pointer; font-weight:600; }
+.rigo-review p { margin:8px 0 0; font-size:14px; }
+.rigo-dialog { position:fixed; inset:0; margin:auto; height:fit-content; width:min(640px, calc(100vw - 32px)); max-height:min(85dvh, 760px); overflow:auto; padding:20px; border:1px solid #ccd5d9; border-radius:14px; box-shadow:0 16px 40px rgba(0,0,0,.2); color:#182b33; }
+.rigo-dialog::backdrop { background:rgba(15,25,30,.45); }
+.rigo-dialog p { line-height:1.55; }
+.rigo-mode-example { margin-top:14px; padding-top:12px; border-top:1px solid #e3e8ea; }
+.rigo-mode-example h3 { font-size:16px; margin:0 0 8px; }
+.rigo-mode-example dl { display:grid; gap:8px; margin:0; }
+.rigo-mode-example dl > div { display:grid; grid-template-columns:96px 1fr; gap:8px; }
+.rigo-mode-example dt { font-weight:600; }
+.rigo-mode-example dd { margin:0; color:#33434a; }
+.rigo-dialog button:focus-visible, #rigo-demo-bar button:focus-visible, #rigo-demo-bar select:focus-visible, .rigo-structure:has(input:focus-visible) { outline:3px solid var(--primary, #b51f36); outline-offset:2px; }
+@media (max-width: 800px) {
+  #rigo-demo-bar { padding:8px 12px; }
+  .rigo-demo-text span { display:none; }
+  #rigo-demo-bar .rigo-demo-toggle { display:inline-flex; min-height:40px; margin:0; }
+  #rigo-demo-bar:not(.is-open) .rigo-demo-controls { display:none; }
+  #rigo-demo-bar.is-open .rigo-demo-text span { display:block; }
+  .rigo-demo-mode .operations-header { bottom:auto; }
+  .rigo-mode-example dl > div { grid-template-columns:1fr; gap:2px; }
+}
+/* Paid services switch and Team-link hint (Milestone A follow-ups). */
+.rigo-integrations:not(:empty) { margin:0 0 16px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-integrations h3 { margin:0 0 4px; font-size:16px; }
+.rigo-integration-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
+.rigo-integration-row small { display:block; color:#4d5d64; margin-top:2px; }
+.rigo-integration-row button { min-height:44px; }
+.rigo-link-hint { display:block; margin-top:4px; color:#8a4b00 !important; white-space:normal; }
+.rigo-billable { margin:4px 0 16px; padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#fafbfc; }
+.rigo-billable summary { cursor:pointer; font-weight:600; min-height:24px; }
+.rigo-billable .field { margin-top:10px; }
+#rigo-price .field { display:grid; gap:6px; margin-top:12px; }
+#rigo-price input { min-height:44px; padding:10px; border:1px solid #ccd5d9; border-radius:8px; }
+.rigo-demo-mode [role="dialog"] { padding-bottom:calc(var(--rigo-demo-bar, 96px) + 16px); }
+/* Today, My work today, automation settings (Milestone D). */
+.rigo-today:not(:empty) { margin:0 0 20px; }
+.rigo-today-panel { padding:20px; }
+.rigo-today-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+.rigo-today-head h2 { margin:0; }
+.rigo-today-head p { margin:2px 0 0; }
+.rigo-mode-chip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px; border:1px solid #e3e8ea; border-radius:999px; background:#fafbfc; font-size:13px; }
+.rigo-today-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; }
+.rigo-card { padding:14px 16px; border:1px solid #e3e8ea; border-radius:10px; background:#fff; min-width:0; }
+.rigo-card h3 { display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:16px; }
+.rigo-attention { grid-column:1 / -1; }
+.rigo-count { display:inline-grid; place-items:center; min-width:24px; height:24px; padding:0 6px; border-radius:12px; background:var(--brand-soft, #fcf0f2); color:var(--primary, #b51f36); font-size:13px; }
+.rigo-items { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.rigo-items > li { padding:8px 0; border-top:1px solid #eef2f3; overflow-wrap:anywhere; }
+.rigo-items > li:first-child { border-top:0; }
+.rigo-items small { display:block; color:#4d5d64; margin-top:2px; }
+.rigo-empty { color:#5b6b72; }
+.rigo-tag { display:inline-block; margin-right:4px; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; background:#eef2f3; color:#33434a; }
+.rigo-tag-unassigned, .rigo-tag-declined, .rigo-tag-issue { background:#fff1e0; color:#8a4b00; }
+.rigo-tag-approval, .rigo-tag-price { background:#eef3ff; color:#2c4a8a; }
+.rigo-tag-overdue { background:#fde8e8; color:#9b1c1c; }
+.rigo-open { padding:0; min-height:24px; font-weight:600; text-align:left; }
+.rigo-row-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-top:6px; }
+.rigo-row-actions button { margin:0; }
+button.small, .small { min-height:36px; padding:6px 12px; font-size:13px; }
+.rigo-status-list { list-style:none; margin:0 0 8px; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.rigo-status-list li { display:flex; gap:6px; padding:4px 10px; border-radius:999px; background:#f5f7f8; font-size:13px; }
+.rigo-money { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin:0 0 10px; line-height:1.4; }
+.rigo-money dt { font-size:12px; color:#4d5d64; }
+.rigo-money dd { margin:0; font-weight:700; font-variant-numeric:tabular-nums; }
+.rigo-work { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+.rigo-work-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+.rigo-work-facts { display:grid; gap:6px; margin:10px 0; }
+.rigo-work-facts > div { display:grid; grid-template-columns:96px 1fr; gap:8px; }
+.rigo-work-facts dt { color:#4d5d64; font-size:13px; }
+.rigo-work-facts dd { margin:0; overflow-wrap:anywhere; }
+.rigo-automation:not(:empty) { margin:0 0 20px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-settings h3 { margin:16px 0 6px; font-size:16px; }
+.rigo-settings h3:first-child { margin-top:0; }
+.rigo-grid2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px 12px; }
+.rigo-field { display:grid; gap:4px; margin:8px 0; }
+.rigo-field select, .rigo-field input, .rigo-field textarea { min-height:44px; padding:8px 10px; border:1px solid #ccd5d9; border-radius:8px; background:#fff; font:inherit; }
+.rigo-check { display:flex; align-items:center; gap:8px; margin:8px 0; min-height:44px; }
+.rigo-check input { width:20px; height:20px; accent-color:var(--primary, #b51f36); }
+.rigo-rule-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px 12px; }
+.rigo-rule-form .rigo-field { min-width:150px; }
+.rigo-rule-form button { min-height:44px; margin:8px 0; }
+.rigo-dialog-message:empty { display:none; }
+#rigo-issue textarea { width:100%; }
+@media (max-width: 600px) {
+  .rigo-today-panel { padding:14px; }
+  .rigo-money { grid-template-columns:1fr; }
+  .rigo-work-facts > div { grid-template-columns:1fr; gap:0; }
+}
+/* Setup changes, templates, assistant and messages (Milestone E). */
+.rigo-config:not(:empty) { margin:0 0 20px; padding:16px; border:1px solid #e3e8ea; border-radius:10px; background:#fafbfc; }
+.rigo-settings h4 { margin:12px 0 4px; font-size:14px; }
+.rigo-preview { margin:6px 0 0; padding-left:20px; display:grid; gap:2px; font-size:14px; }
+.rigo-muted { background:#f5f7f8; }
+.rigo-muted p { margin:6px 0 0; }
+.rigo-msg-tpl { margin:10px 0 0; padding:10px 12px; border:1px solid #e3e8ea; border-radius:8px; background:#fff; }
+.rigo-msg-tpl legend { font-weight:600; padding:0 4px; }
+.rigo-msg-body { margin:6px 0 0; padding:8px 10px; border-radius:8px; background:#f5f7f8; white-space:pre-wrap; font-size:14px; }
+.rigo-settings code { padding:1px 4px; border-radius:4px; background:#eef2f3; font-size:13px; }
+/* Sharing and all-companies overview (Milestone F). */
+.rigo-share-form { display:grid; gap:8px; margin:8px 0; }
+.rigo-share-lists { display:flex; flex-wrap:wrap; gap:0 16px; margin:0; padding:0; border:0; }
+.rigo-share-lists legend { font-weight:600; margin-bottom:4px; }
+.rigo-shared-table, .rigo-overview-table { overflow-x:auto; margin:8px 0; }
+.rigo-shared-table table, .rigo-overview-table table { width:100%; border-collapse:collapse; font-size:14px; }
+.rigo-shared-table th, .rigo-shared-table td, .rigo-overview-table th, .rigo-overview-table td { padding:8px; border-bottom:1px solid #eef2f3; text-align:left; vertical-align:top; }
+.rigo-overview-table td { font-variant-numeric:tabular-nums; }
+.rigo-overview-table th small { display:block; font-weight:400; color:#4d5d64; }
+.rigo-shared-table input { width:20px; height:20px; }
+.rigo-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.rigo-plan-title { margin:20px 0 4px; font-size:16px; }
