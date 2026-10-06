@@ -150,7 +150,7 @@ export function useApplyUserTheme(pref: ThemePref | undefined) {
   useEffect(() => { if (pref) applyTheme(pref); }, [pref]);
 }
 
-/** Where to go after signing in: a same-site path from ?next=, otherwise the workspace list. */
+/** Where to go after signing in: a same-site path from ?next=, otherwise home (the only company, or the list). */
 export function safeNext(n: string | null | undefined) {
-  return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/workspaces';
+  return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/open';
 }

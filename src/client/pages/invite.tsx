@@ -1,4 +1,5 @@
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MailOpen } from 'lucide-react';
 import { get, post } from '../lib/api';
@@ -17,6 +18,12 @@ export function InvitePage() {
   const signOut = async () => { await signOutAndForget(qc); nav(`/signin?next=/invite/${token}`); };
   const d = q.data;
   useDocumentTitle(d?.companyName ? `Join ${d.companyName}` : 'Invitation');
+  // Straight after signing up from the invitation, it is accepted without another click (R4-m6).
+  const [sp] = useSearchParams();
+  const auto = useRef(false);
+  useEffect(() => {
+    if (sp.get('go') === '1' && d?.state === 'pending' && d.signedIn && d.emailMatches && !auto.current) { auto.current = true; void accept.run(); }
+  }, [d, sp]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="auth-wrap">
       <main className="auth-card" id="main">
@@ -36,8 +43,8 @@ export function InvitePage() {
               {d.state === 'pending' && !d.signedIn && (
                 <div className="stack-sm">
                   <p className="muted">Sign in or create an account with the invited email address. You don't need to create a company or try the demo first.</p>
-                  <LinkButton variant="primary" to={`/signup?next=/invite/${token}`}>Create an account</LinkButton>
-                  <LinkButton to={`/signin?next=/invite/${token}`}>I already have an account</LinkButton>
+                  <LinkButton variant="primary" to={`/signup?next=${encodeURIComponent(`/invite/${token}?go=1`)}`}>Create an account</LinkButton>
+                  <LinkButton to={`/signin?next=${encodeURIComponent(`/invite/${token}?go=1`)}`}>I already have an account</LinkButton>
                 </div>
               )}
               {d.state === 'pending' && d.signedIn && d.emailMatches === false && (

@@ -300,7 +300,7 @@ describe('C2: recovery without email', () => {
 
     // (a) A non-owner's link stops working once its target becomes an owner.
     const forDriver = (await dispatcher.post(`/c/${cid}/members/${mid('Luis Driver')}/reset-link`)).body.link;
-    await owner.patch(`/c/${cid}/members/${mid('Luis Driver')}`, { role: 'owner' });
+    await owner.patch(`/c/${cid}/members/${mid('Luis Driver')}`, { role: 'owner', confirmOwner: true });
     expect((await new Client('x').get(`/auth/reset/${tokenOf(forDriver)}`)).body.valid).toBe(false);
     expect((await reuse(forDriver)).status).toBe(400);
 

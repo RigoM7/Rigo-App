@@ -66,6 +66,24 @@ export function SyncState({ state, message }: { state: DraftState | null; messag
   return <span className="sync-state" style={{ color }} role="status">{icon}{label}{message && state !== 'accepted' && message !== WAITING_FOR_SIGNAL ? <span className="sr-only">: {message}</span> : null}</span>;
 }
 
+/** A driver's first visit: three short cards on how a job works, dismissed for good once read (R9-m3). */
+function FirstDayGuide({ uid }: { uid: string }) {
+  const key = `rigo-driver-guide:${uid}`;
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) !== 'done'; } catch { return false; } });
+  if (!open) return null;
+  const close = () => { try { localStorage.setItem(key, 'done'); } catch { /* ignore */ } setOpen(false); };
+  return (
+    <section className="first-day" aria-labelledby="fd-h">
+      <div className="row-between"><h2 id="fd-h">How a job works</h2><Button size="sm" variant="ghost" onClick={close}>Got it, hide this</Button></div>
+      <ol className="first-day-cards">
+        <li><strong>1. Open it and start</strong><span>Tap a job below, check the address and access notes, then tap <b>Start job</b> when you begin.</span></li>
+        <li><strong>2. Record what you did</strong><span>Choose how it went, enter quantities, and add photos or a signature if the job asks for them.</span></li>
+        <li><strong>3. Submit to the office</strong><span>Tap <b>Submit to office</b>. No signal? It's saved on this phone and sends by itself later.</span></li>
+      </ol>
+    </section>
+  );
+}
+
 export function Today() {
   const c = useCompany();
   useDocumentTitle('My jobs');
@@ -127,6 +145,7 @@ export function Today() {
         </Banner>
       )}
       {waiting.length > 0 && <Banner tone="info" title={`${waiting.length} record${waiting.length === 1 ? '' : 's'} waiting to send`} action={<Button size="sm" busy={syncing} onClick={sendNow}>{syncing ? 'Sending…' : 'Send now'}</Button>}>{WAITING_FOR_SIGNAL} Jobs are only completed once the office's system accepts them.</Banner>}
+      <FirstDayGuide uid={uid} />
       {changed.length > 0 && (
         <section className="banner banner-warning changes-banner" aria-labelledby="h-changes">
           <BellRing aria-hidden />

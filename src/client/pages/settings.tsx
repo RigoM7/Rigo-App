@@ -1,12 +1,16 @@
 import { TimezoneSelect } from './workspaces';
 import { useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
+import { get } from '../lib/api';
+import { fmtDateTime } from '../lib/format';
+import { activityText } from '../../shared/activity';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { patch, api } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast, useConfirm } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, LoadingBlock, useToast, useConfirm } from '../components/ui';
 import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding';
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
@@ -167,12 +171,43 @@ function ApprovalRule() {
   );
 }
 
+const ACTIVITY_GROUPS: [string, string][] = [['', 'Everything'], ['people', 'People and roles'], ['money', 'Invoices and payments'], ['settings', 'Settings and services'], ['automation', 'Automation'], ['jobs', 'Jobs, customers and trucks']];
+
+/** Who did what, newest first (R12-m2). Owners only; the server enforces it. */
+function ActivityLog() {
+  const c = useCompany();
+  const [group, setGroup] = useState('');
+  const [pages, setPages] = useState<string[]>(['']);
+  const results = useQueries({ queries: pages.map((before) => ({ queryKey: [c.cid, 'activity', group, before], queryFn: () => get<{ entries: any[]; more: boolean }>(`/c/${c.cid}/activity?${new URLSearchParams({ ...(group ? { group } : {}), ...(before ? { before } : {}) })}`) })) });
+  const entries = results.flatMap((r) => r.data?.entries ?? []);
+  const last = results[results.length - 1];
+  return (
+    <Card id="activity" title="Activity">
+      <div className="stack">
+        <p className="muted" style={{ margin: 0 }}>Who changed what, and when: roles and removals, voids and payments, settings and automation. Only owners see this.</p>
+        <Field label="Show" id="f-activity-group">{(p) => <Select {...p} value={group} onChange={(e) => { setGroup(e.target.value); setPages(['']); }}>{ACTIVITY_GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>}</Field>
+        {results[0]?.isLoading ? <LoadingBlock rows={4} /> : entries.length === 0 ? <p className="muted">Nothing recorded yet.</p> : (
+          <ol className="activity-list">
+            {entries.map((e) => (
+              <li key={e.id}>
+                <span className="small muted num">{fmtDateTime(e.created_at, c.company.timezone)}</span>
+                <span><strong>{e.actor}</strong> {activityText(e.action, e.detail)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {last?.data?.more && <div><Button busy={last.isFetching} onClick={() => setPages([...pages, entries[entries.length - 1].created_at])}>Show older</Button></div>}
+      </div>
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [sp, setSp] = useSearchParams();
-  const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services';
+  const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services' | 'activity';
   const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories,
     invoiceDueDays: c.company.invoiceDueDays ?? 30, paymentInstructions: c.company.paymentInstructions ?? '' });
   const [savedDetails, setSavedDetails] = useState(() => JSON.stringify(v));
@@ -187,7 +222,7 @@ export function SettingsPage() {
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" sub={c.company.name} />
-      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'invoices', label: 'Invoices' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }]} />
+      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'invoices', label: 'Invoices' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }, ...(c.role.isOwner ? [{ key: 'activity' as const, label: 'Activity' }] : [])]} />
       {tab === 'company' && (
         <Card id="co" title="Company details">
           <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
@@ -211,6 +246,7 @@ export function SettingsPage() {
       {tab === 'branding' && <Branding onDirty={dirt.report} />}
       {tab === 'fields' && <CustomFieldsEditor onDirty={dirt.report} />}
       {guard}
+      {tab === 'activity' && c.role.isOwner && <ActivityLog />}
       {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}
     </div>
   );

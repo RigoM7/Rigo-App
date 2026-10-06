@@ -77,7 +77,7 @@ export function Workspaces() {
                   <li key={c.id} style={{ minWidth: 0 }}>
                     <Link to={`/c/${c.id}`} className="workspace">
                       <CompanyChip cid={c.id} name={c.name} logo={c.branding?.logoFileId} accent={c.branding?.accent} />
-                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at ? '' : ' · setup in progress'}</span></span>
+                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at || !c.is_owner ? '' : ' · setup in progress'}</span></span>
                       <ChevronRight aria-hidden />
                     </Link>
                   </li>

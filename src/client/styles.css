@@ -1022,3 +1022,14 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 .merge-field { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .merge-field legend { font-weight: 600; padding: 0 4px; }
 .merge-field label { display: flex; gap: 8px; align-items: flex-start; min-height: 32px; }
+
+/* A driver's first visit (R9-m3). */
+.first-day { border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); padding: 12px 14px; display: grid; gap: 8px; }
+.first-day h2 { font-size: var(--fs-16); margin: 0; }
+.first-day-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.first-day-cards li { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); }
+.first-day-cards span { color: var(--text-2); font-size: var(--fs-14); }
+
+.activity-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.activity-list li { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+@media (max-width: 600px) { .activity-list li { grid-template-columns: 1fr; gap: 2px; } }

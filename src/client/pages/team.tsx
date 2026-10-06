@@ -1,41 +1,76 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { UserPlus, Copy, RotateCw, Ban, Trash2, Mail, ShieldCheck, Save, KeyRound } from 'lucide-react';
+import { UserPlus, Copy, RotateCw, Ban, Trash2, Mail, ShieldCheck, Save, KeyRound, MessageSquare } from 'lucide-react';
 import { useCompany } from '../lib/session';
-import { get, post, patch, del } from '../lib/api';
+import { get, post, patch, del, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Tabs, Pill, Banner, Dialog, useToast, useConfirm, Checkbox } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Tabs, Pill, Banner, Dialog, Segmented, Textarea, useToast, useConfirm, Checkbox } from '../components/ui';
 import { EMAIL_MAX } from '../../shared/email';
 import { fmtDate } from '../lib/format';
 import { PERMISSIONS, PERMISSION_GROUPS, type Permission } from '../../shared/permissions';
 
+/** How an invitation went out, in plain words (R4-m2). */
+export function deliveryLabel(how: string) {
+  return how === 'emailed' ? 'Emailed' : how === 'mailbox' ? 'In the test mailbox (not emailed)' : how === 'demo' ? 'Demo: previewed only' : 'Link created — not emailed (email not set up)';
+}
+
 function InviteCard({ roles, onDone }: { roles: any[]; onDone: () => void }) {
   const c = useCompany();
   const toast = useToast();
-  const [v, setV] = useState({ email: '', role: 'driver' });
+  const { ask, node } = useConfirm();
+  const [many, setMany] = useState(false);
+  const [v, setV] = useState({ email: '', emails: '', role: 'driver' });
   const [result, setResult] = useState<any>(null);
-  const s = useSubmit(async () => { const r = await post(`/c/${c.cid}/invitations`, v); setResult(r); setV({ ...v, email: '' }); onDone(); });
+  const [bulk, setBulk] = useState<any[] | null>(null);
+  const s = useSubmit(async () => {
+    if (many) {
+      const r = await post(`/c/${c.cid}/invitations/bulk`, { emails: v.emails, role: v.role });
+      setBulk(r.results); setResult(null); setV({ ...v, emails: '' }); onDone(); return;
+    }
+    let r;
+    try { r = await post(`/c/${c.cid}/invitations`, { email: v.email, role: v.role }); }
+    catch (e) {
+      // Re-inviting someone with a pending invitation asks before replacing it (R4-M1).
+      if (!(e instanceof ApiError) || e.details?.needsConfirm !== 'replace') throw e;
+      const d = e.details;
+      if (!(await ask({ title: e.message, body: <p>{d.sameRole ? 'A new link replaces the old one, which stops working.' : `They would join as ${d.newRole} instead of ${d.currentRole}. The old link stops working.`}</p>, confirm: d.sameRole ? 'Send a new link' : `Replace with ${d.newRole}` }))) return;
+      r = await post(`/c/${c.cid}/invitations`, { email: v.email, role: v.role, replace: true });
+    }
+    setResult(r); setBulk(null); setV({ ...v, email: '' }); onDone();
+  });
   const grantable = roles.filter((r) => c.role.isOwner || !r.is_owner);
+  const copy = (link: string) => navigator.clipboard?.writeText(link).then(() => toast('Link copied'), () => toast('Copy failed; select the link and copy it', 'error'));
+  const textBody = (link: string) => `sms:?&body=${encodeURIComponent(`You're invited to join ${c.company.name} on Rigo: ${link}`)}`;
   return (
-    <Card id="invite" title={<h2 className="row"><UserPlus aria-hidden />Invite someone</h2>}>
+    <Card id="invite" title={<h2 className="row"><UserPlus aria-hidden />Invite people</h2>} actions={<Segmented label="How many" value={many ? 'many' : 'one'} onChange={(k) => setMany(k === 'many')} options={[{ key: 'one', label: 'One person' }, { key: 'many', label: 'Several' }]} />}>
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <div className="grid-2">
-          <Field label="Their email" id="f-email" error={s.fieldError('email')} hint="They sign in or create an account with this exact address.">{(p) => <Input {...p} type="email" autoComplete="off" maxLength={EMAIL_MAX} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+          {many
+            ? <Field label="Their emails" id="f-emails" error={s.fieldError('emails')} hint="Paste up to 25, separated by commas, spaces or new lines. Everyone gets the same role.">{(p) => <Textarea {...p} rows={3} maxLength={5000} value={v.emails} onChange={(e) => setV({ ...v, emails: e.target.value })} />}</Field>
+            : <Field label="Their email" id="f-email" error={s.fieldError('email')} hint="They sign in or create an account with this exact address.">{(p) => <Input {...p} type="email" autoComplete="off" maxLength={EMAIL_MAX} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>}
           <Field label="Role" id="f-role" error={s.fieldError('role')}>{(p) => <Select {...p} value={v.role} onChange={(e) => setV({ ...v, role: e.target.value })}>{grantable.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}</Select>}</Field>
         </div>
-        <div><Button type="submit" variant="primary" busy={s.busy} icon={<Mail aria-hidden />}>Create invitation</Button></div>
+        <div><Button type="submit" variant="primary" busy={s.busy} icon={<Mail aria-hidden />}>{many ? 'Create invitations' : 'Create invitation'}</Button></div>
       </form>
       {result && (
         <div className="stack-sm" style={{ marginTop: 16 }}>
-          <Banner tone="success" title="Invitation created">
-            {result.delivery?.simulated ? 'Email is simulated here: ' : 'No email service is configured: '}share this single-use link with them. It expires in 7 days.
+          <Banner tone={result.delivery?.how === 'emailed' ? 'success' : 'info'} title={result.delivery?.how === 'emailed' ? `Invitation emailed to ${result.preview.to}` : 'Invitation link created — not emailed'}>
+            {result.delivery?.how === 'emailed' ? 'They can also use this link. ' : result.delivery?.how === 'mailbox' ? 'On this test copy it went to the simulated mailbox. ' : result.delivery?.how === 'demo' ? 'Demo workspace: nothing is sent. ' : 'Email is not set up yet, so nothing was sent. '}Share the link with them yourself; it works only for {result.preview.to} and expires in 7 days.
           </Banner>
-          <div className="row" style={{ flexWrap: 'nowrap' }}><Input readOnly value={result.link} aria-label="Invitation link" onFocus={(e) => e.target.select()} /><Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(result.link).then(() => toast('Link copied'), () => toast('Copy failed; select the link and copy it', 'error'))}>Copy</Button></div>
-          <details><summary>Email preview (not sent)</summary><div className="card" style={{ marginTop: 8 }}><div className="small muted">To: {result.preview.to}</div><strong>{result.preview.subject}</strong><p className="pre small">{result.preview.body}</p></div></details>
+          <div className="row" style={{ flexWrap: 'nowrap' }}><Input readOnly value={result.link} aria-label="Invitation link" onFocus={(e) => e.target.select()} /><Button icon={<Copy aria-hidden />} onClick={() => copy(result.link)}>Copy</Button></div>
+          <div><a className="btn btn-sm" href={textBody(result.link)}><MessageSquare aria-hidden />Text the link from this phone</a></div>
+          <details><summary>Email preview{result.delivery?.how === 'emailed' ? '' : ' (not sent)'}</summary><div className="card" style={{ marginTop: 8 }}><div className="small muted">To: {result.preview.to}</div><strong>{result.preview.subject}</strong><p className="pre small">{result.preview.body}</p></div></details>
         </div>
       )}
+      {bulk && (
+        <div className="stack-sm" style={{ marginTop: 16 }}>
+          <Banner tone={bulk.every((b) => b.ok) ? 'success' : 'warning'} title={`${bulk.filter((b) => b.ok).length} of ${bulk.length} invitation${bulk.length === 1 ? '' : 's'} created`}>Copy each link to share it, or find them under Invitations.</Banner>
+          <ul className="list">{bulk.map((b) => <li key={b.email} className="row-between" style={{ padding: '6px 0' }}><span className="wrap-anywhere"><strong>{b.email}</strong><div className="small muted">{b.message}</div></span>{b.link ? <Button size="sm" icon={<Copy aria-hidden />} onClick={() => copy(b.link)} aria-label={`Copy link for ${b.email}`}>Copy link</Button> : <Pill tone="warning">Not invited</Pill>}</li>)}</ul>
+        </div>
+      )}
+      {node}
     </Card>
   );
 }
@@ -59,7 +94,7 @@ function PermissionMatrix({ roles, onSaved }: { roles: any[]; onSaved: () => voi
         {PERMISSION_GROUPS.map((g) => (
           <fieldset key={g.label} className="card" style={{ padding: 12 }} disabled={!canEdit}>
             <legend style={{ padding: '0 4px' }}>{g.label}</legend>
-            {g.keys.map((k) => <Checkbox key={k} label={PERMISSIONS[k]} hint={k} checked={perms.includes(k)} onChange={(e) => setPerms(e.target.checked ? [...perms, k] : perms.filter((x) => x !== k))} />)}
+            {g.keys.map((k) => <Checkbox key={k} label={PERMISSIONS[k]} checked={perms.includes(k)} onChange={(e) => setPerms(e.target.checked ? [...perms, k] : perms.filter((x) => x !== k))} />)}
           </fieldset>
         ))}
       </div>
@@ -132,9 +167,21 @@ export function Team() {
     setErr(null);
     try { setResetLink(await post(`/c/${c.cid}/members/${m.id}/reset-link`)); } catch (e) { setErr(e); }
   };
-  const changeRole = async (m: any, role: string) => {
+  const [ownerChange, setOwnerChange] = useState<null | { m: any; role: string; typed: string }>(null);
+  const changeRole = async (m: any, role: string, confirmed = false) => {
     setErr(null);
-    try { await patch(`/c/${c.cid}/members/${m.id}`, { role }); toast(`${m.name} is now ${roles.data.roles.find((r: any) => r.key === role)?.name}`); refresh(); } catch (e) { setErr(e); }
+    const from = roles.data.roles.find((r: any) => r.key === m.role_key);
+    const to = roles.data.roles.find((r: any) => r.key === role);
+    if (!to || role === m.role_key) return;
+    // Owner changes are typed to confirm; any other change says what changes first (R4-M2).
+    if ((from?.is_owner || to.is_owner) && !confirmed) { setOwnerChange({ m, role, typed: '' }); return; }
+    if (!confirmed) {
+      const gains = (to.permissions as string[]).filter((p) => !(from?.permissions ?? []).includes(p));
+      const loses = ((from?.permissions ?? []) as string[]).filter((p) => !to.permissions.includes(p));
+      const list = (ks: string[]) => <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{ks.slice(0, 6).map((k) => <li key={k}>{PERMISSIONS[k as Permission] ?? k}</li>)}{ks.length > 6 ? <li>and {ks.length - 6} more</li> : null}</ul>;
+      if (!(await ask({ title: `Make ${m.name} ${to.name}?`, body: <div className="stack-sm">{gains.length ? <div><strong>They will be able to:</strong>{list(gains)}</div> : null}{loses.length ? <div><strong>They will no longer be able to:</strong>{list(loses)}</div> : null}{!gains.length && !loses.length ? <p style={{ margin: 0 }}>Their permissions stay the same.</p> : null}</div>, confirm: `Make ${to.name}` }))) return;
+    }
+    try { await patch(`/c/${c.cid}/members/${m.id}`, { role, confirmOwner: confirmed && (from?.is_owner || to.is_owner) }); toast(`${m.name} is now ${to.name}`); setOwnerChange(null); refresh(); } catch (e) { setErr(e); setOwnerChange(null); }
   };
   const remove = async (m: any) => {
     if (!(await ask({ title: `Remove ${m.name}?`, body: <div className="stack">
@@ -145,6 +192,7 @@ export function Team() {
     try { await del(`/c/${c.cid}/members/${m.id}`); toast(`${m.name} was removed`); refresh(); } catch (e) { setErr(e); }
   };
   const invAction = async (id: string, what: 'resend' | 'revoke') => {
+    if (what === 'resend' && !(await ask({ title: 'Make a new link?', body: 'The current link stops working. Use "Copy link" to share the same link again instead.', confirm: 'Make a new link' }))) return;
     if (what === 'revoke' && !(await ask({ title: 'Revoke this invitation?', body: 'The link stops working at once. You can send a new invitation later.', confirm: 'Revoke invitation', danger: true }))) return;
     setErr(null);
     try {
@@ -195,8 +243,8 @@ export function Team() {
                 <tr key={i.id}>
                   <td data-primary className="wrap-anywhere">{i.email}<div className="small muted">Sent {fmtDate(i.created_at, c.company.timezone)}</div></td>
                   <td data-label="Role">{i.role_name}</td>
-                  <td data-label="Status"><Pill tone={i.status === 'accepted' ? 'success' : i.status === 'pending' ? 'info' : 'neutral'}>{i.status === 'pending' ? `Pending until ${fmtDate(i.expires_at, c.company.timezone)}` : i.status === 'accepted' ? 'Accepted' : i.status === 'expired' ? 'Expired' : 'Revoked'}</Pill></td>
-                  <td data-label="">{['pending', 'expired', 'revoked'].includes(i.status) && <span className="row"><Button size="sm" icon={<RotateCw aria-hidden />} onClick={() => invAction(i.id, 'resend')}>New link</Button>{i.status === 'pending' && <Button size="sm" variant="ghost" icon={<Ban aria-hidden />} onClick={() => invAction(i.id, 'revoke')}>Revoke</Button>}</span>}</td>
+                  <td data-label="Status"><Pill tone={i.status === 'accepted' ? 'success' : i.status === 'pending' ? 'info' : 'neutral'}>{i.status === 'pending' ? `Pending until ${fmtDate(i.expires_at, c.company.timezone)}` : i.status === 'accepted' ? 'Accepted' : i.status === 'expired' ? 'Expired' : 'Revoked'}</Pill>{i.status === 'pending' && i.delivery ? <div className="xsmall muted">{deliveryLabel(i.delivery)}</div> : null}</td>
+                  <td data-label="">{['pending', 'expired', 'revoked'].includes(i.status) && <span className="row">{i.link ? <Button size="sm" icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(i.link).then(() => toast('Link copied. It still works.'), () => toast('Copy failed', 'error'))} aria-label={`Copy link for ${i.email}`}>Copy link</Button> : null}<Button size="sm" icon={<RotateCw aria-hidden />} onClick={() => invAction(i.id, 'resend')}>New link</Button>{i.status === 'pending' && <Button size="sm" variant="ghost" icon={<Ban aria-hidden />} onClick={() => invAction(i.id, 'revoke')}>Revoke</Button>}</span>}</td>
                 </tr>
               ))}</tbody>
             </table></div>
@@ -206,6 +254,13 @@ export function Team() {
       {tab === 'roles' && <PermissionMatrix roles={roles.data.roles} onSaved={refresh} />}
       {tab === 'approvals' && <Delegations members={q.data.members} />}
       <ResetLinkDialog result={resetLink} onClose={() => setResetLink(null)} />
+      <Dialog open={!!ownerChange} onClose={() => setOwnerChange(null)} title={ownerChange ? (roles.data.roles.find((r: any) => r.key === ownerChange.role)?.is_owner ? `Make ${ownerChange.m.name} an owner?` : `Remove ${ownerChange.m.name} as owner?`) : ''}
+        footer={<><Button onClick={() => setOwnerChange(null)}>Cancel</Button><Button variant="danger" disabled={ownerChange?.typed.trim().toUpperCase() !== 'OWNER'} onClick={() => ownerChange && changeRole(ownerChange.m, ownerChange.role, true)}>Confirm</Button></>}>
+        {ownerChange && <div className="stack">
+          <p style={{ margin: 0 }}>{roles.data.roles.find((r: any) => r.key === ownerChange.role)?.is_owner ? 'Owners can do everything: change roles, see all money, remove people, including you.' : 'They lose full control of the company and keep only what the new role allows.'}</p>
+          <Field label='Type OWNER to confirm' id="f-owner-confirm">{(p) => <Input {...p} autoComplete="off" value={ownerChange.typed} onChange={(e) => setOwnerChange({ ...ownerChange, typed: e.target.value })} />}</Field>
+        </div>}
+      </Dialog>
       {node}
     </div>
   );

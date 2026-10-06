@@ -649,6 +649,43 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     await c.close(); await f.owner.dispose();
     return `${a1}; ${a2}`;
   });
+
+  await step('WP7: an invited driver signs up with the address filled in, lands on My jobs without another click; pages their role lacks say so (R4-m6, R4-m4, R4-m2)', async () => {
+    const f = await fieldCompany('invite');
+    const mail = `sam-${Date.now()}@example.test`;
+    const inv = await f.o.post('/invitations', { email: mail, role: 'driver' });
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp7-invite');
+    await p.goto(inv.body.link.replace(/^https?:\/\/[^/]+/, BASE));
+    await p.getByRole('link', { name: 'Create an account' }).click();
+    const email = p.getByLabel('Email');
+    await p.waitForFunction((el) => el && el.value.length > 0, await email.elementHandle(), { timeout: 8000 });
+    if ((await email.inputValue()) !== mail || !(await email.getAttribute('readonly') !== null)) throw new Error('the invited email is not filled in and fixed');
+    await p.getByText(/From your invitation to Field invite/).waitFor();
+    await p.getByLabel('Your name').fill('Sam Driver');
+    await p.getByLabel('Password', { exact: true }).fill(STRONG);
+    await p.getByRole('button', { name: 'Create account' }).click();
+    await p.waitForURL(/\/today$/, { timeout: 10000 });
+    await p.getByRole('heading', { name: 'My jobs' }).waitFor();
+    await p.getByRole('heading', { name: 'How a job works' }).waitFor();
+    const a = await axe(p, 'wp7-driver-first-day');
+    await p.goto(`${f.C}/invoices`);
+    await p.getByText("Your role doesn't include this page").waitFor({ timeout: 8000 });
+    await c.close();
+    // The owner sees who joined in the activity log, and invitation status is honest.
+    const { c: oc, p: op } = await ownerContext(f); watch(op, 'wp7-owner');
+    await op.goto(`${f.C}/settings?tab=activity`);
+    await op.getByText(/joined as driver/).first().waitFor({ timeout: 8000 });
+    const a2 = await axe(op, 'wp7-activity');
+    await op.goto(`${f.C}/team`);
+    await op.getByLabel('Their email').fill(`late-${Date.now()}@example.test`);
+    await op.getByRole('button', { name: 'Create invitation' }).click();
+    await op.getByText(/Invitation link created — not emailed|Invitation emailed/).waitFor();
+    await op.getByRole('button', { name: /Copy link for late-/ }).waitFor();
+    const a3 = await axe(op, 'wp7-team');
+    await oc.close(); await f.owner.dispose();
+    return `${a}; ${a2}; ${a3}`;
+  });
 }
 if (process.env.E2E_ONLY === 'phase2') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
@@ -1626,10 +1663,10 @@ await step('invitation link flow for an employee (no company or demo required)',
   await p.getByRole('heading', { name: /Join Acme/ }).waitFor();
   await p.getByRole('link', { name: 'Create an account' }).click();
   await p.getByLabel('Your name').fill('Dana Employee');
-  await p.getByLabel('Email').fill(empEmail);
+  // The invited address is filled in from the invitation, and joining needs no extra click (R4-m6).
+  await p.waitForFunction((em) => (document.querySelector('#f-email'))?.value === em, empEmail);
   await p.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
   await p.getByRole('button', { name: 'Create account' }).click();
-  await p.getByRole('button', { name: 'Accept invitation' }).click();
   await p.waitForURL(/\/today$/);
   await p.getByRole('heading', { name: 'My jobs' }).waitFor();
   await c3.close();

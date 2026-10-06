@@ -408,6 +408,7 @@ jobRoutes.post('/jobs/:id/status', async (c) => {
     if (input.to === 'cancelled' && !input.reason?.trim()) throw badRequest('Give a reason for cancelling.', { fields: { reason: 'Enter a reason' } });
     await q.query(`update rigo.jobs set status = $2, billing_status = case when $2 = 'cancelled' then 'not_billable' else billing_status end, version = version + 1, updated_at = now() where id = $1`, [job.id, input.to]);
     await event(q, cc, job.id, 'status', { from: job.status, to: input.to, reason: input.reason ?? '' });
+    if (input.to === 'cancelled') await audit(q, cc, 'job.cancelled', { id: job.id, number: job.number, wasStatus: job.status, reason: input.reason ?? '' });
     if (input.to === 'cancelled' && job.assigned_user_id) {
       const { notifyUsers } = await import('./inbox.js');
       await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: soon(job, cc.company.timezone) ? 'needs_action' : 'update', title: `Job #${job.number} was cancelled: don't go`, body: input.reason ?? '', link: `today`, refType: 'job_change', refId: job.id });
