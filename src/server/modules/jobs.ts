@@ -111,7 +111,8 @@ jobRoutes.get('/my/jobs', async (c) => {
       where j.company_id = $1 and j.assigned_user_id = $2 and j.status <> 'draft'
         and (j.status in ('open','in_progress') or j.completed_at > now() - interval '2 days' or j.updated_at > now() - interval '2 days')
       order by j.scheduled_start asc nulls last, j.number`, [cc.company.id, cc.actingUserId]);
-  return c.json({ jobs: rows.map((j) => ({ ...j, details: publicDetails(j.details), nextAction: nextAction(j) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
+  const driverNext = (j: any) => (j.status === 'open' ? 'Start the job' : j.status === 'in_progress' ? 'Record the outcome' : '');
+  return c.json({ jobs: rows.map((j) => ({ ...j, details: publicDetails(j.details), nextAction: driverNext(j) })), userId: cc.actingUserId, companyId: cc.company.id, fetchedAt: new Date().toISOString() });
 });
 
 function publicDetails(d: Record<string, unknown> | null) {

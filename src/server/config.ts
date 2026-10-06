@@ -20,7 +20,10 @@ export const config = {
   isProd,
   isServerless: !!env.VERCEL,
   port: Number(env.PORT || 8787),
-  appUrl: (env.APP_URL || (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:5173')).replace(/\/$/, ''),
+  // Base for invitation and reset links. Preview deployments link to their own branch URL.
+  appUrl: (env.APP_URL
+    || (env.VERCEL_ENV === 'preview' && env.VERCEL_BRANCH_URL ? `https://${env.VERCEL_BRANCH_URL}` : '')
+    || (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:5173')).replace(/\/$/, ''),
   databaseUrl: env.DATABASE_URL || undefined,
   dataDir: env.RIGO_DATA_DIR === 'memory' ? null : resolve(rootDir, env.RIGO_DATA_DIR || 'data/db'),
   uploadsDir: resolve(rootDir, 'data/uploads'),

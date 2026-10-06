@@ -14,10 +14,10 @@ export interface HandlerInput {
 export interface HandlerResult { status: 'completed' | 'simulated' | 'blocked'; explanation: string; result?: unknown; context?: Record<string, string>; link?: string }
 
 async function prepareMessage(q: Q, companyId: string, actionId: string, m: { channel: 'email'; recipient: string; subject: string; body: string; customerId: string | null; jobId: string | null; invoiceId: string | null; userId: string | null }) {
-  const existing = await q.query<{ id: string }>(`select id from rigo.messages where company_id = $1 and status_detail = $2`, [companyId, `action:${actionId}`]);
+  const existing = await q.query<{ id: string }>(`select id from rigo.messages where company_id = $1 and source_key = $2`, [companyId, `action:${actionId}`]);
   if (existing.rows[0]) return existing.rows[0].id;
   const { rows } = await q.query<{ id: string }>(
-    `insert into rigo.messages (company_id, customer_id, job_id, invoice_id, channel, recipient, subject, body, status, status_detail, created_by)
+    `insert into rigo.messages (company_id, customer_id, job_id, invoice_id, channel, recipient, subject, body, status, source_key, created_by)
      values ($1,$2,$3,$4,$5,$6,$7,$8,'prepared',$9,$10) returning id`,
     [companyId, m.customerId, m.jobId, m.invoiceId, m.channel, m.recipient, m.subject, m.body, `action:${actionId}`, m.userId]);
   return rows[0].id;

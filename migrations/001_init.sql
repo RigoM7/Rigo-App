@@ -308,10 +308,13 @@ create table rigo.messages (
     check (status in ('prepared','simulated','queued','sent','delivered','failed','replied')),
   status_detail text not null default '',
   provider text not null default 'none',
+  source_key text,                                 -- idempotency key of the action that prepared it
   created_by uuid references rigo.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create unique index messages_source_key on rigo.messages (company_id, source_key) where source_key is not null;
 
 create table rigo.dev_mailbox (
   id uuid primary key default gen_random_uuid(),

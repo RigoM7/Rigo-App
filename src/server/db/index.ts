@@ -28,10 +28,16 @@ export async function connect(databaseUrl: string | undefined, dataDir?: string 
     // numeric/bigint come back as strings; parse bigint (int8) into numbers within safe range.
     pg.types.setTypeParser(20, (v: string) => Number(v));
     pg.types.setTypeParser(1082, (v: string) => v); // date stays 'YYYY-MM-DD' (no time-zone shifting)
+    // TLS is set here rather than through sslmode in the URL (which would override it): hosted
+    // poolers such as Supabase's present a certificate from their own CA, so the channel is
+    // encrypted without CA verification. Local servers and sslmode=disable connect without TLS.
+    const url = new URL(databaseUrl);
+    const noTls = url.searchParams.get('sslmode') === 'disable' || ['localhost', '127.0.0.1'].includes(url.hostname);
+    url.searchParams.delete('sslmode');
     const pool = new pg.Pool({
-      connectionString: databaseUrl,
+      connectionString: url.toString(),
       max: config.isServerless ? 2 : 10,
-      ssl: /sslmode=disable|localhost|127\.0\.0\.1/.test(databaseUrl) ? undefined : { rejectUnauthorized: false },
+      ssl: noTls ? undefined : { rejectUnauthorized: false },
     });
     return {
       kind: 'pg',
