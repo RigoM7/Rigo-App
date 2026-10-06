@@ -76,6 +76,12 @@ Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
   checking pages by hand; `e2e/run.mjs` stays the automated browser check. Point it at
   a local build or a preview, and never sign in to or change data on the live site
   without the owner's go-ahead.
+- `design-md`: Google Labs' DESIGN.md format (google-labs-code/design.md at 9bf8eae,
+  Apache-2.0). That repository ships a spec and a CLI, not a skill, so this skill wraps
+  them: its spec, philosophy and an example, plus how to `lint`, `diff` and `export` with
+  `npx -y @google/design.md@0.4.0`. Rigo has no root `DESIGN.md`; create one only when the
+  owner asks, generated from `src/client/styles.css` and `docs/DESIGN-SYSTEM.md` and kept
+  in sync with them.
 
 Rigo's confirmed palette and `docs/DESIGN-SYSTEM.md` always take precedence over
 any skill's suggestions.
