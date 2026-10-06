@@ -28,7 +28,7 @@
 - Checks: `npm run typecheck`, `npm test` (PGlite; set `DATABASE_URL` to run on
   PostgreSQL), and browser checks: `npm run build && npm start &` then
   `NODE_PATH=$(npm root -g) npm run test:browser` (uses `/opt/pw-browsers`).
-- Commits that only touch `.claude/`, `vault/` or this file skip Vercel builds
+- Commits that only touch `.claude/` or this file skip Vercel builds
   (`ignoreCommand`). On branches other than `main`, a commit whose first line
   contains `[checkpoint]` is also skipped; use it for work-in-progress pushes.
   `main` always builds (squash merges carry checkpoint lines in their body).
@@ -41,14 +41,6 @@
   `claude --permission-mode bypassPermissions` (or sets it in their own
   `~/.claude/settings.json`); cloud sessions use the mode dropdown. Only the owner
   changes the permission mode.
-
-## Knowledge vault
-`vault/` is an Obsidian vault that keeps context between sessions: `Raw/` (unorganized dumps),
-`Wiki/` (linked notes built from `Raw`) and `Output/` (results of past sessions). Rules are in
-`vault/CLAUDE.md`. Read `vault/Wiki/Index.md` first when a task needs product context or
-history, and save plans and answers worth keeping to `vault/Output/`. The repository is public:
-folders named `private/` in the vault are git-ignored, and nothing private goes in committed
-notes. `docs/` and the code win over the wiki when they disagree.
 
 ## Prompts
 The owner's reusable prompts for building Rigo live in `.claude/commands/`; each file runs as

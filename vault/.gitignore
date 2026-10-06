@@ -1,0 +1,6 @@
+# Private material stays on this machine (the repository is public).
+private/
+# Obsidian's per-device state.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.trash/
