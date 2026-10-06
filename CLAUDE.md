@@ -34,5 +34,13 @@
   `main` always builds (squash merges carry checkpoint lines in their body).
 
 ## Skills
-- `.claude/skills/ui-ux-pro-max`: third-party UI/UX design skill (MIT, from
-  nextlevelbuilder/ui-ux-pro-max-skill v2.13.0). Use it for UI design work.
+Third-party design skills from nextlevelbuilder/ui-ux-pro-max-skill v2.13.0
+(MIT; `ui-styling` is Apache-2.0), in `.claude/skills/`:
+- `ui-ux-pro-max`: UI/UX design intelligence. Use it for UI design work.
+- `design-system`, `brand`, `design`, `banner-design`, `slides`, `ui-styling`:
+  tokens/components, brand voice and identity, logos and design assets, banners,
+  HTML presentations, and shadcn/Tailwind styling. Rigo's UI is plain CSS with its
+  own tokens, so `ui-styling` advice applies only to separate projects. Scripts that
+  call outside services (logo generation, stock backgrounds) need their own API
+  keys and are never run automatically. Rigo's confirmed palette and
+  `docs/DESIGN-SYSTEM.md` always take precedence over skill suggestions.
