@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, List, Columns3, GanttChartSquare, Search, AlertTriangle, X, ClipboardList } from 'lucide-react';
+import { Plus, List, Columns3, GanttChartSquare, Search, AlertTriangle, X, ClipboardList, Truck, ArrowRightLeft } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
 import { LinkButton, Segmented, Field, Input, Select, LoadingBlock, ErrorState, Empty, JobStatus, Pill, Button, PriorityPill, LatePill, useToast } from '../components/ui';
@@ -30,11 +30,15 @@ export function Jobs() {
   const set = (k: string, v: string) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); setSp(n, { replace: true }); };
   const priority = sp.get('priority') ?? '';
   const late = sp.get('late') === '1';
-  const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}), ...(priority ? { priority } : {}), ...(late ? { late: '1' } : {}) });
+  const resource = sp.get('resource') ?? '';
+  const oos = sp.get('oos') === '1';
+  const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}), ...(priority ? { priority } : {}), ...(late ? { late: '1' } : {}), ...(resource ? { resource } : {}), ...(oos ? { oos: '1' } : {}) });
+  const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
+  const resourceName = resources.data?.resources.find((r: any) => r.id === resource)?.name;
   const q = useQuery({ queryKey: [c.cid, 'jobs', params.toString()], queryFn: () => get(`/c/${c.cid}/jobs?${params}`), refetchInterval: 30_000, enabled: view !== 'schedule' });
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
   const jobs: any[] = q.data?.jobs ?? [];
-  const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem') || priority || late);
+  const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem') || priority || late || resource || oos);
   return (
     <div className={`page${view === 'schedule' ? ' page-wide' : ''}`}>
       <div className="page-header">
@@ -56,16 +60,17 @@ export function Jobs() {
         </form>
         {sp.get('problem') && <div className="row"><Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Showing jobs with problems</Pill><Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => set('problem', '')}>Clear</Button></div>}
         {late && <div className="row"><LatePill /><span className="small">Showing open jobs whose time window has ended without a start</span><Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => set('late', '')}>Clear</Button></div>}
+        {(resource || oos) && <div className="row"><Pill tone="warning" icon={<Truck aria-hidden />}>{oos ? 'Jobs on an out-of-service truck' : `Jobs using ${resourceName ?? 'this truck'}`}</Pill><span className="small">Select jobs, then use "Swap truck".</span><Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => { const n = new URLSearchParams(sp); n.delete('resource'); n.delete('oos'); setSp(n, { replace: true }); }}>Clear</Button></div>}
         {q.isLoading ? <LoadingBlock rows={6} /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} /> : jobs.length === 0 ? (
           <div className="card"><Empty icon={<ClipboardList />} title={filtered ? 'No jobs match' : 'No active jobs'} action={c.can('jobs.create') ? <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton> : undefined}>{filtered ? 'Try a different filter or search.' : 'Create a job when a customer contacts you.'}</Empty></div>
-        ) : view === 'list' ? <JobTable jobs={jobs} onChange={refresh} /> : <Board jobs={jobs} />}
+        ) : view === 'list' ? <JobTable jobs={jobs} onChange={refresh} resources={resources.data?.resources ?? []} preferFrom={resource} /> : <Board jobs={jobs} />}
         {q.data && <p className="xsmall muted" aria-live="polite">{jobs.length} job{jobs.length === 1 ? '' : 's'} · updated {fmtTime(q.data.serverTime, c.company.timezone)}</p>}
       </>}
     </div>
   );
 }
 
-function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
+function JobTable({ jobs, onChange, resources, preferFrom }: { jobs: any[]; onChange: () => void; resources: any[]; preferFrom: string }) {
   const c = useCompany();
   const toast = useToast();
   const canBulk = c.can('jobs.assign');
@@ -73,22 +78,39 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDriver, setBulkDriver] = useState('');
   const [busy, setBusy] = useState(false);
+  const [notMoved, setNotMoved] = useState<{ number: number; reason: string; overlap: boolean }[] | null>(null);
   const drivers = c.members.filter((m) => m.role_key === 'driver' || m.role_key === 'owner' || m.role_key === 'dispatcher');
   const sel = assignable.filter((j) => selected.has(j.id));
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allOn = assignable.length > 0 && sel.length === assignable.length;
   const guard = useUnsavedGuard(!!bulkDriver && sel.length > 0 && !busy, { message: 'You have unsaved driver changes. Save or discard?', onSave: async () => { await applyBulk(); return true; } });
   const now = Date.now();
+  // Swap a truck on the selected jobs (R11-M1): from one of their trucks to one that is available.
+  const onSelected = [...new Map(sel.flatMap((j) => j.resources ?? []).filter((r: any) => r.kind !== 'unit').map((r: any) => [r.id, r])).values()] as any[];
+  const [swapFrom, setSwapFrom] = useState('');
+  const [swapTo, setSwapTo] = useState('');
+  const from = swapFrom || (onSelected.some((r) => r.id === preferFrom) ? preferFrom : onSelected.find((r) => r.status === 'out_of_service' || r.status === 'retired')?.id ?? '');
+  const swapTargets = resources.filter((r) => r.kind !== 'unit' && r.id !== from && !['out_of_service', 'retired'].includes(r.status));
+  const swap = async () => {
+    setBusy(true);
+    try {
+      const r = await post<{ moved: number[]; failed: { number: number; reason: string }[]; to: string }>(`/c/${c.cid}/jobs/swap-resource`, { fromId: from, toId: swapTo, jobIds: sel.map((j) => j.id) });
+      if (r.moved.length) toast(`${r.to} is now on job${r.moved.length === 1 ? '' : 's'} #${r.moved.join(', #')}`);
+      if (r.failed.length) toast(`${r.failed.length} job${r.failed.length === 1 ? '' : 's'} not changed: ${r.failed.map((f) => `#${f.number}, ${f.reason}`).join('; ')}`, 'error');
+      setSelected(new Set()); setSwapTo(''); setSwapFrom(''); onChange();
+    } catch (e) { toast((e as ApiError).message, 'error'); } finally { setBusy(false); }
+  };
   const applyBulk = async () => {
     setBusy(true);
-    let ok = 0; const failed: string[] = [];
+    let ok = 0; const failed: { number: number; reason: string; overlap: boolean }[] = [];
     for (const j of sel) {
       try { await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: bulkDriver === 'none' ? null : bulkDriver, resourceIds: (j.resources ?? []).map((r: any) => r.id), version: j.version }); ok++; }
-      catch (e) { failed.push(`#${j.number}: ${(e as ApiError).message}`); }
+      catch (e) { failed.push({ number: j.number, reason: (e as ApiError).message, overlap: !!(e as ApiError).details?.canOverride }); }
     }
     setBusy(false);
     if (ok) toast(`${ok} job${ok === 1 ? '' : 's'} ${bulkDriver === 'none' ? 'unassigned' : 'assigned'}`);
-    if (failed.length) toast(`Not changed — ${failed.join(' ')}`, 'error');
+    // One short summary instead of a wall of messages (R11-m4); the details are in the list.
+    if (failed.length) setNotMoved(failed);
     setSelected(new Set()); setBulkDriver('');
     onChange();
   };
@@ -104,7 +126,7 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
             {jobs.map((j) => (
               <tr key={j.id} aria-selected={selected.has(j.id) || undefined}>
                 {canBulk && <td className="check-col">{FINISHED.includes(j.status) ? null : <input type="checkbox" aria-label={`Select job #${j.number}`} checked={selected.has(j.id)} onChange={() => toggle(j.id)} />}</td>}
-                <td data-primary><Link className="row-link" to={c.to(`jobs/${j.id}`)}><span className="job-no">#{j.number}</span>{j.service_name ?? 'No service yet'}</Link>{j.resources?.length ? <div className="xsmall muted">{j.resources.map((r: any) => r.name).join(', ')}</div> : null}</td>
+                <td data-primary><Link className="row-link" to={c.to(`jobs/${j.id}`)}><span className="job-no">#{j.number}</span>{j.service_name ?? 'No service yet'}</Link>{j.resources?.length ? <div className="xsmall muted">{j.resources.map((r: any) => <span key={r.id} className={r.status === 'out_of_service' || r.status === 'retired' ? 'oos-name' : undefined}>{r.name}{r.status === 'out_of_service' ? ' (out of service)' : r.status === 'retired' ? ' (retired)' : ''}</span>).reduce((a: any[], x: any, i: number) => (i ? [...a, ', ', x] : [x]), [])}</div> : null}</td>
                 <td data-label="Scheduled" className="num nowrap">{j.scheduled_start ? fmtDateTime(j.scheduled_start, c.company.timezone) : <span className="muted" style={{ fontFamily: 'var(--font-sans)' }}>Not scheduled</span>}</td>
                 <td data-label="Customer">{j.customer_name ?? <span className="muted">No customer</span>}<div className="xsmall muted">{j.address}</div></td>
                 <td data-label="Driver"><QuickAssign job={j} onDone={onChange} /></td>
@@ -124,8 +146,31 @@ function JobTable({ jobs, onChange }: { jobs: any[]; onChange: () => void }) {
           </select>
           <Button size="sm" variant="primary" busy={busy} disabled={!bulkDriver} onClick={applyBulk}>Assign {sel.length} job{sel.length === 1 ? '' : 's'}</Button>
           {bulkDriver ? <span className="small">Not assigned yet</span> : null}
+          {onSelected.length > 0 && <>
+            <span className="bulk-sep" aria-hidden />
+            <label className="sr-only" htmlFor="swap-from">Truck to replace</label>
+            <select id="swap-from" className="select" value={from} onChange={(e) => setSwapFrom(e.target.value)}>
+              <option value="">Swap which truck…</option>{onSelected.map((r) => <option key={r.id} value={r.id}>{r.name}{r.status === 'out_of_service' ? ' (out of service)' : ''}</option>)}
+            </select>
+            <label className="sr-only" htmlFor="swap-to">Replacement truck</label>
+            <select id="swap-to" className="select" value={swapTo} onChange={(e) => setSwapTo(e.target.value)}>
+              <option value="">For…</option>{swapTargets.map((r) => <option key={r.id} value={r.id}>{r.name}{r.capacity ? ` (${r.capacity})` : ''}</option>)}
+            </select>
+            <Button size="sm" icon={<ArrowRightLeft aria-hidden />} busy={busy} disabled={!from || !swapTo} onClick={swap}>Swap truck</Button>
+          </>}
           <span className="spacer" />
           <Button size="sm" icon={<X aria-hidden />} onClick={() => setSelected(new Set())}>Clear selection</Button>
+        </div>
+      )}
+      {notMoved && (
+        <div className="banner banner-warning" role="alert">
+          <AlertTriangle aria-hidden />
+          <div className="stack-sm" style={{ flex: 1 }}>
+            <strong>{notMoved.length} job{notMoved.length === 1 ? '' : 's'} not changed{notMoved.every((f) => f.overlap) ? ': they overlap other work at those times' : ''}.</strong>
+            <details><summary>View list</summary><ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{notMoved.map((f) => <li key={f.number}>#{f.number}: {f.reason}</li>)}</ul></details>
+            <span className="small">Open a job to assign it anyway if the overlap is deliberate.</span>
+          </div>
+          <Button size="sm" variant="ghost" icon={<X aria-hidden />} aria-label="Dismiss" onClick={() => setNotMoved(null)} />
         </div>
       )}
       {guard}

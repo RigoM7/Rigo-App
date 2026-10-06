@@ -5,6 +5,7 @@ import { Plus, Repeat, PauseCircle, PlayCircle, CalendarX, AlertTriangle, Trash2
 import { useCompany } from '../lib/session';
 import { get, post, put, newId } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { BILLING_FREQUENCIES, localDate, addDays } from '../../shared/schedule';
 import { tzLabel } from '../../shared/timezones';
 import { parseRate, rateToInput } from '../../shared/billing';
@@ -131,9 +132,12 @@ export function RecurringNew() {
       startsOn: v.startsOn, endsOn: v.endsOn || null, details: v.details, visitRule: rule, billingRule, defaultUserId: v.defaultUserId || null, defaultResourceIds: v.truckId ? [v.truckId] : [], createDelivery: rental && v.createDelivery });
     nav(c.to(`recurring/${r.id}`));
   });
+  // Leaving a half-filled plan asks first (R11-m2).
+  const guard = useUnsavedGuard(!!(v.name || v.customerId || v.serviceId) && !s.busy, { message: 'This plan is not saved yet. Leave without saving?' });
   return (
     <div className="page page-narrow">
       <PageHeader back={{ to: c.to('recurring'), label: 'Recurring' }} title="New recurring plan" />
+      {guard}
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <Card id="b" title="What and where"><div className="stack">

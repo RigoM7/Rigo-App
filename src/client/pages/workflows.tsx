@@ -5,6 +5,7 @@ import { Plus, Zap, Filter, FileText, Mail, Bell, Send, Copy, ShieldCheck, Trash
 import { useCompany } from '../lib/session';
 import { get, post, put, patch } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, Banner, Checkbox, Segmented, Dialog, LinkButton, useToast, useConfirm } from '../components/ui';
 import { relTime, fmtDateTime, minorToInput, parseMoney } from '../lib/format';
 import { ACTIONS, TRIGGERS, CONDITION_FIELDS, OPERATORS, type Definition, type Step, type Condition } from '../../shared/workflows';
@@ -150,6 +151,8 @@ export function WorkflowEditor() {
     toast(r.newVersion ? `Saved as new draft v${r.version}. Test it before activating.` : 'Draft saved. Test it before activating.');
     setDirty(false); refresh();
   });
+  // Switching between the visual and form views keeps the edits; leaving the page asks first (R11-m2).
+  const guard = useUnsavedGuard(dirty && !save.busy, { message: 'This workflow has changes that are not saved. Save the draft or discard?', onSave: async () => { await save.run(); return true; }, ignoreSearch: true });
   const test = useSubmit(async () => { const r = await post(`/c/${c.cid}/workflows/${id}/versions/${working.id}/test`, {}); toast(r.ok ? 'Test finished. Review the results.' : 'Validation failed. Fix the errors and test again.', r.ok ? 'success' : 'error'); refresh(); });
   const activate = useSubmit(async () => {
     const runs = q.data.runs.filter((r: any) => ['running', 'waiting'].includes(r.status)).length;
@@ -292,7 +295,7 @@ export function WorkflowEditor() {
           )}
         </div>
       </div>
-      {node}
+      {node}{guard}
     </div>
   );
 }

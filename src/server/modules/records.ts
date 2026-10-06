@@ -203,6 +203,8 @@ const resourceInput = z.object({
   outOfServiceUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   /** The person confirmed taking a truck with open jobs out of service. */
   confirmJobs: z.boolean().optional(),
+  /** The kinds of work it is for (fuel, septic, portable_toilet); empty means any (R11-m5). */
+  categories: z.array(z.enum(['fuel', 'portable_toilet', 'septic', 'other'])).max(4).optional(),
 });
 
 /** Two trucks or units with the same name make assignment ambiguous (R11-m5). */
@@ -233,8 +235,8 @@ recordRoutes.post('/resources', async (c) => {
   const cap = input.capacityQuantity !== undefined ? { quantity: input.capacityQuantity, unit: input.capacityUnit ?? '' } : parseCapacity(input.capacity ?? '');
   const out = await cc.db.tx(async (q) => {
     await uniqueName(q, cc.company.id, input.name, null);
-    const { rows } = await q.query<{ id: string }>(`insert into rigo.resources (company_id, kind, name, identifier, capacity, status, notes, capacity_quantity, capacity_unit, out_of_service_until) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-      [cc.company.id, input.kind, input.name, input.identifier ?? '', input.capacity ?? '', input.status ?? 'available', input.notes ?? '', cap.quantity, cap.unit, input.status === 'out_of_service' ? input.outOfServiceUntil ?? null : null]);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.resources (company_id, kind, name, identifier, capacity, status, notes, capacity_quantity, capacity_unit, out_of_service_until, categories) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+      [cc.company.id, input.kind, input.name, input.identifier ?? '', input.capacity ?? '', input.status ?? 'available', input.notes ?? '', cap.quantity, cap.unit, input.status === 'out_of_service' ? input.outOfServiceUntil ?? null : null, input.categories ?? []]);
     return { id: rows[0].id };
   });
   return c.json(out);
@@ -261,8 +263,8 @@ recordRoutes.patch('/resources/:id', async (c) => {
     const status = input.status ?? r.status;
     const until = status === 'out_of_service' ? (input.outOfServiceUntil !== undefined ? input.outOfServiceUntil : r.out_of_service_until) : null;
     await q.query(`update rigo.resources set kind = coalesce($3,kind), name = coalesce($4,name), identifier = coalesce($5,identifier), capacity = coalesce($6,capacity), status = $7, notes = coalesce($8,notes),
-        capacity_quantity = case when $9 then $10 else capacity_quantity end, capacity_unit = case when $9 then $11 else capacity_unit end, out_of_service_until = $12 where id = $1 and company_id = $2`,
-      [r.id, cc.company.id, input.kind ?? null, input.name ?? null, input.identifier ?? null, input.capacity ?? null, status, input.notes ?? null, !!cap, cap?.quantity ?? null, cap?.unit ?? '', until]);
+        capacity_quantity = case when $9 then $10 else capacity_quantity end, capacity_unit = case when $9 then $11 else capacity_unit end, out_of_service_until = $12, categories = coalesce($13, categories) where id = $1 and company_id = $2`,
+      [r.id, cc.company.id, input.kind ?? null, input.name ?? null, input.identifier ?? null, input.capacity ?? null, status, input.notes ?? null, !!cap, cap?.quantity ?? null, cap?.unit ?? '', until, input.categories ?? null]);
     if (goingOut) {
       await audit(q, cc, 'resource.out_of_service', { id: r.id, name: r.name, status, until, openJobs: jobs.length });
       if (jobs.length) {

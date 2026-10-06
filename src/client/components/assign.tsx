@@ -38,15 +38,25 @@ export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     setBusy(true); setError('');
     try {
-      const send = (confirmStarted: boolean) => post(`/c/${c.cid}/jobs/${job.id}/assign`, { userId: to || null, resourceIds: (job.resources ?? []).map((x: any) => x.id), version: version.current, confirmStarted });
+      const flags = { confirmStarted: false, allowOverlap: false };
+      const send = () => post(`/c/${c.cid}/jobs/${job.id}/assign`, { userId: to || null, resourceIds: (job.resources ?? []).map((x: any) => x.id), version: version.current, ...flags });
       let r;
-      try { r = await send(false); }
-      catch (e) {
-        // A driver who already started the job is only replaced after a deliberate yes (R9-M2).
-        if (!(e instanceof ApiError) || e.details?.needsConfirm !== 'started') throw e;
-        const yes = await confirm.ask({ title: e.message, body: <p>{e.details.driverName} is no longer assigned once you continue. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' });
-        if (!yes) { setVal(current.current); return; }
-        r = await send(true);
+      for (;;) {
+        try { r = await send(); break; }
+        catch (e) {
+          if (!(e instanceof ApiError)) throw e;
+          let yes = false;
+          if (e.details?.needsConfirm === 'started' && !flags.confirmStarted) {
+            // A driver who already started the job is only replaced after a deliberate yes (R9-M2).
+            yes = await confirm.ask({ title: e.message, body: <p>{e.details.driverName} is no longer assigned once you continue. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' });
+            flags.confirmStarted = yes;
+          } else if (e.details?.canOverride && !flags.allowOverlap) {
+            // An overlap can be accepted on purpose; history records it (R11-m4).
+            yes = await confirm.ask({ title: 'This overlaps other work', body: <div className="stack-sm"><ul style={{ margin: 0, paddingLeft: 18 }}>{(e.details.clashes as string[]).map((x) => <li key={x}>{x}</li>)}</ul><p className="small muted" style={{ margin: 0 }}>Assign anyway only if the overlap is deliberate. The job history records it.</p></div>, confirm: 'Assign anyway' });
+            flags.allowOverlap = yes;
+          } else throw e;
+          if (!yes) { setVal(current.current); return; }
+        }
       }
       version.current = r.version;
       current.current = to;

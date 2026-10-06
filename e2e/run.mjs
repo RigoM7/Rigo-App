@@ -92,6 +92,73 @@ async function demoVisitor(label, vw = 1366, vh = 900, extra = {}) {
 const guideOf = (p) => p.getByRole('complementary', { name: 'Demo walkthrough' });
 const highlighted = (p, id) => p.locator(`[data-guide-active][data-guide-target="${id}"]`);
 
+// ---------------------------------------------------------------- a real company with a real driver (WP5, WP6)
+// A real company (not the demo) with a real driver account, so membership and phones behave as in life.
+async function fieldCompany(label, opts = {}) {
+  const owner = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
+  const om = `owner-${label}-${Date.now()}-${++accountN}@example.test`;
+  await owner.post('/api/auth/signup', { data: { name: 'Olga Owner', email: om, password: STRONG } });
+  const cid = (await (await owner.post('/api/companies', { data: { name: `Field ${label}`, timezone: 'America/Chicago', currency: 'USD', categories: ['fuel'], start: 'starter' } })).json()).id;
+  const o = {
+    get: async (path) => (await owner.get(`/api/c/${cid}${path}`)).json(),
+    post: async (path, data = {}) => { const r = await owner.post(`/api/c/${cid}${path}`, { data }); return { status: r.status(), body: await r.json() }; },
+    del: async (path) => (await owner.delete(`/api/c/${cid}${path}`)).status(),
+  };
+  const dm = `driver-${label}-${Date.now()}-${++accountN}@example.test`;
+  const driverApi = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
+  await driverApi.post('/api/auth/signup', { data: { name: 'Luis Driver', email: dm, password: STRONG } });
+  const inv = await o.post('/invitations', { email: dm, role: 'driver' });
+  await driverApi.post(`/api/invitations/${inv.body.link.split('/invite/')[1]}/accept`);
+  const driverId = (await (await driverApi.get('/api/auth/me')).json()).user.id;
+  await driverApi.dispose();
+  const fuel = (await o.get('/services')).services.find((x) => x.category === 'fuel');
+  const cust = await o.post('/customers', { name: 'Acme Farms', email: 'acme@example.test', location: { address: '12 Barn Rd', accessInstructions: 'Gate code 4411' } });
+  const loc = (await o.get(`/customers/${cust.body.id}`)).locations[0].id;
+  // More drivers when a test needs a busy day.
+  const driverIds = [driverId];
+  for (let n = 2; n <= (opts.drivers ?? 1); n++) {
+    const em = `driver${n}-${label}-${Date.now()}-${++accountN}@example.test`;
+    const api = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
+    await api.post('/api/auth/signup', { data: { name: `Driver ${n}`, email: em, password: STRONG } });
+    const i2 = await o.post('/invitations', { email: em, role: 'driver' });
+    await api.post(`/api/invitations/${i2.body.link.split('/invite/')[1]}/accept`);
+    driverIds.push((await (await api.get('/api/auth/me')).json()).user.id);
+    await api.dispose();
+  }
+  const customer = async (name, address) => {
+    const r = await o.post('/customers', { name, location: { address } });
+    return { id: r.body.id, loc: (await o.get(`/customers/${r.body.id}`)).locations[0].id };
+  };
+  const mkJob = async (startIso, j0 = {}) => {
+    const r = await o.post('/jobs', { customerId: j0.customerId ?? cust.body.id, locationId: j0.locationId ?? loc, serviceId: fuel.id, details: { product: 'Diesel', requested_qty: '100' }, intent: 'open', clientRequestId: `e2e-${Math.random()}`, scheduledStart: startIso, scheduledEnd: j0.end, priority: j0.priority });
+    const j = (await o.get(`/jobs/${r.body.id}`)).job;
+    if (j0.driver !== null) await o.post(`/jobs/${j.id}/assign`, { userId: j0.driver ?? driverId, resourceIds: j0.resources ?? [], version: j.version, allowOverlap: true });
+    return (await o.get(`/jobs/${r.body.id}`)).job;
+  };
+  return { owner, o, cid, driver: { email: dm, name: 'Luis Driver' }, ownerLogin: { email: om, name: 'Olga Owner' }, driverId, driverIds, customer, mkJob, C: `${BASE}/c/${cid}` };
+}
+const soon = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+/** An ISO time today at h:m in the company's zone (America/Chicago). */
+function chicagoAt(h, m = 0) {
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
+  const guess = new Date(`${date}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z`);
+  const local = new Date(guess.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const utc = new Date(guess.toLocaleString('en-US', { timeZone: 'UTC' }));
+  return new Date(guess.getTime() + (utc.getTime() - local.getTime())).toISOString();
+}
+async function ownerContext(f, vw = 1440, vh = 900) {
+  const c = await browser.newContext({ viewport: { width: vw, height: vh } });
+  await c.addCookies((await f.owner.storageState()).cookies);
+  const p = await c.newPage();
+  return { c, p };
+}
+async function driverSignIn(p, f) {
+  await p.goto(`${BASE}/signin?next=${encodeURIComponent(`/c/${f.cid}/today`)}`);
+  await signInHere(p, f.driver);
+  await p.waitForURL(/\/today/);
+}
+
+
 // ---------------------------------------------------------------- Phase 1: money (pricing, billing, approvals)
 // Run only this section with E2E_ONLY=phase1.
 if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
@@ -268,43 +335,6 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     await v.c.close();
     return a;
   });
-
-  // ---------------------------------------------------------------- WP5: driver app, offline and reassignment
-  // A real company (not the demo) with a real driver account, so membership and phones behave as in life.
-  async function fieldCompany(label) {
-    const owner = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
-    const om = `owner-${label}-${Date.now()}-${++accountN}@example.test`;
-    await owner.post('/api/auth/signup', { data: { name: 'Olga Owner', email: om, password: STRONG } });
-    const cid = (await (await owner.post('/api/companies', { data: { name: `Field ${label}`, timezone: 'America/Chicago', currency: 'USD', categories: ['fuel'], start: 'starter' } })).json()).id;
-    const o = {
-      get: async (path) => (await owner.get(`/api/c/${cid}${path}`)).json(),
-      post: async (path, data = {}) => { const r = await owner.post(`/api/c/${cid}${path}`, { data }); return { status: r.status(), body: await r.json() }; },
-      del: async (path) => (await owner.delete(`/api/c/${cid}${path}`)).status(),
-    };
-    const dm = `driver-${label}-${Date.now()}-${++accountN}@example.test`;
-    const driverApi = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
-    await driverApi.post('/api/auth/signup', { data: { name: 'Luis Driver', email: dm, password: STRONG } });
-    const inv = await o.post('/invitations', { email: dm, role: 'driver' });
-    await driverApi.post(`/api/invitations/${inv.body.link.split('/invite/')[1]}/accept`);
-    const driverId = (await (await driverApi.get('/api/auth/me')).json()).user.id;
-    await driverApi.dispose();
-    const fuel = (await o.get('/services')).services.find((x) => x.category === 'fuel');
-    const cust = await o.post('/customers', { name: 'Acme Farms', email: 'acme@example.test', location: { address: '12 Barn Rd', accessInstructions: 'Gate code 4411' } });
-    const loc = (await o.get(`/customers/${cust.body.id}`)).locations[0].id;
-    const mkJob = async (startIso) => {
-      const r = await o.post('/jobs', { customerId: cust.body.id, locationId: loc, serviceId: fuel.id, details: { product: 'Diesel', requested_qty: '100' }, intent: 'open', clientRequestId: `e2e-${Math.random()}`, scheduledStart: startIso });
-      const j = (await o.get(`/jobs/${r.body.id}`)).job;
-      await o.post(`/jobs/${j.id}/assign`, { userId: driverId, resourceIds: [], version: j.version });
-      return (await o.get(`/jobs/${r.body.id}`)).job;
-    };
-    return { owner, o, cid, driver: { email: dm, name: 'Luis Driver' }, driverId, mkJob, C: `${BASE}/c/${cid}` };
-  }
-  const soon = (h) => new Date(Date.now() + h * 3600_000).toISOString();
-  async function driverSignIn(p, f) {
-    await p.goto(`${BASE}/signin?next=${encodeURIComponent(`/c/${f.cid}/today`)}`);
-    await signInHere(p, f.driver);
-    await p.waitForURL(/\/today/);
-  }
 
   for (const [vw, vh] of [[360, 640], [375, 667], [390, 844]]) {
     await step(`WP5 ${vw}×${vh}: Start job is the sticky action, then Submit; nothing preselected; another day's job asks first (R9-M1, R6-m4)`, async () => {
@@ -498,6 +528,135 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     if (manifest.start_url !== '/open' || manifest.theme_color !== '#0A0A0B' || !meta) throw new Error(`manifest ${manifest.start_url} ${manifest.theme_color}, meta ${meta}`);
     await c.close(); await f.owner.dispose();
   });
+}
+// ---------------------------------------------------------------- Phase 2: dispatch, team, customers, fuel
+// Run only this section with E2E_ONLY=phase2.
+if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
+  for (const [vw, vh] of [[1440, 900], [1024, 768]]) {
+    await step(`WP6 ${vw}px: a busy day (6 drivers, 9–15 jobs each) stays readable on the timeline (R11-M3)`, async () => {
+      const f = await fieldCompany(`busy-${vw}`, { drivers: 6 });
+      const names = ['Hollis Family Farm', 'Ridgeline Construction', 'Grace Okafor', 'St. Brigid Church', 'Harbor & Vine Events', 'José Núñez', 'Lucky Dragon'];
+      const custs = [];
+      for (const [i, n] of names.entries()) custs.push(await f.customer(n, `${100 + i} Main St, Millbrook`));
+      let made = 0;
+      for (const [d, id] of f.driverIds.entries()) {
+        const count = 9 + (d % 4) * 2; // 9, 11, 13, 15 …
+        for (let k = 0; k < count; k++) {
+          const cu = custs[(d + k) % custs.length];
+          const start = chicagoAt(6 + Math.floor((k * 50) / 60), (k * 50) % 60);
+          await f.mkJob(start, { driver: id, customerId: cu.id, locationId: cu.loc, end: new Date(Date.parse(start) + 40 * 60000).toISOString() });
+          made++;
+        }
+      }
+      // Five overlapping jobs without a driver fold into "+N more".
+      for (let k = 0; k < 5; k++) await f.mkJob(chicagoAt(9, 0), { driver: null, customerId: custs[k].id, locationId: custs[k].loc });
+      const { c, p } = await ownerContext(f, vw, vh); watch(p, `wp6-busy-${vw}`);
+      await p.goto(`${f.C}/jobs?view=schedule`);
+      await p.locator('.tl-block').first().waitFor({ timeout: 15000 });
+      // Every block shows the customer's name, readable (not clipped to nothing).
+      const blocks = await p.locator('.tl-block').evaluateAll((els) => els.map((e) => ({ name: e.querySelector('.c')?.textContent ?? '', w: e.getBoundingClientRect().width, nameW: e.querySelector('.c')?.getBoundingClientRect().width ?? 0 })));
+      const bad = blocks.filter((b) => !b.name || b.w < 100 || b.nameW < 60);
+      if (bad.length) throw new Error(`${bad.length} of ${blocks.length} blocks unreadable: ${JSON.stringify(bad.slice(0, 3))}`);
+      await p.getByRole('button', { name: /\+\d+ more without a driver/ }).waitFor();
+      await noOverflow(p, `wp6-busy-${vw}`);
+      const a = await axe(p, `wp6-busy-${vw}`);
+      await p.screenshot({ path: `${OUT}/wp6-busy-${vw}.png` });
+      // The 4-hour window gives each block more room; the feed groups by driver.
+      await p.getByRole('button', { name: '4 hours' }).click();
+      await p.getByRole('button', { name: 'Whole day' }).waitFor();
+      await p.getByRole('radio', { name: 'Feed' }).click().catch(async () => p.getByRole('button', { name: 'Feed' }).click());
+      await p.getByRole('radio', { name: 'By driver' }).click().catch(async () => p.getByRole('button', { name: 'By driver' }).click());
+      await p.locator('.feed-group-h').first().waitFor({ timeout: 8000 });
+      const groups = await p.locator('.feed-group-h').count();
+      if (groups !== f.driverIds.length + 1) throw new Error(`${groups} driver groups in the feed`);
+      await c.close(); await f.owner.dispose();
+      return `${made + 5} jobs; ${a}`;
+    });
+  }
+
+  await step('WP6: someone else saves first — my typing is kept and I choose per field; leaving unsaved asks (R11-m1, R11-m2)', async () => {
+    const f = await fieldCompany('merge');
+    const j = await f.mkJob(soon(3));
+    const { c, p } = await ownerContext(f); watch(p, 'wp6-merge');
+    await p.goto(`${f.C}/jobs/${j.id}/edit`);
+    await p.locator('#f-notes').fill('Bring the long hose');
+    // Meanwhile dispatch changes the notes and the access instructions.
+    const cur = (await f.o.get(`/jobs/${j.id}`)).job;
+    const theirs = await f.owner.patch(`/api/c/${f.cid}/jobs/${j.id}`, { data: { version: cur.version, notes: 'Call before arriving', accessInstructions: 'North gate, code 2211' } });
+    if (!theirs.ok()) throw new Error(`other edit failed ${theirs.status()}`);
+    await p.getByRole('button', { name: 'Save changes' }).click();
+    const card = p.getByRole('alert').filter({ hasText: 'Someone else saved this job while you were editing' });
+    await card.waitFor({ timeout: 8000 });
+    await card.getByText('Keep mine: Bring the long hose').waitFor();
+    await card.getByText('Use theirs: Call before arriving').waitFor();
+    // Their access change (a field I didn't touch) is taken in.
+    if ((await p.locator('#f-accessInstructions').inputValue()) !== 'North gate, code 2211') throw new Error('their untouched change was not taken in');
+    const a = await axe(p, 'wp6-merge');
+    await card.getByRole('button', { name: 'Save with these choices' }).click();
+    await p.waitForURL(new RegExp(`/jobs/${j.id}$`), { timeout: 8000 });
+    const saved = (await f.o.get(`/jobs/${j.id}`)).job;
+    if (saved.notes !== 'Bring the long hose' || saved.access_instructions !== 'North gate, code 2211') throw new Error(`saved ${saved.notes} / ${saved.access_instructions}`);
+    // Unsaved changes: leaving asks first.
+    await p.goto(`${f.C}/jobs/${j.id}/edit`);
+    await p.locator('#f-notes').fill('Something new');
+    await p.getByRole('link', { name: 'Job', exact: true }).first().click();
+    await p.getByRole('dialog', { name: 'Leave without saving?' }).waitFor();
+    await p.getByRole('button', { name: 'Keep editing' }).click();
+    if (!/\/edit$/.test(p.url())) throw new Error('left the page');
+    await c.close(); await f.owner.dispose();
+    return a;
+  });
+
+  await step('WP6: the driver is told what changed, opens the address in Maps, and an out-of-service truck is swapped from the jobs list (R11-M2, R9-M3, R11-M1)', async () => {
+    const f = await fieldCompany('notify');
+    const truckA = (await f.o.post('/resources', { kind: 'truck', name: 'Tank wagon A', capacity: '3,000 gal' })).body.id;
+    const truckB = (await f.o.post('/resources', { kind: 'truck', name: 'Tank wagon B', capacity: '3,000 gal' })).body.id;
+    const j = await f.mkJob(soon(3), { resources: [truckA] });
+    const dc = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const dp = await dc.newPage(); watch(dp, 'wp6-driver');
+    await driverSignIn(dp, f);
+    await dp.goto(`${f.C}/today/${j.id}`);
+    const maps = dp.getByRole('link', { name: 'Open in Maps' });
+    await maps.waitFor({ timeout: 8000 });
+    const href = await maps.getAttribute('href');
+    if (!/^https:\/\/(www\.google\.com\/maps|maps\.apple\.com)/.test(href) || !href.includes('12%20Barn%20Rd')) throw new Error(`maps link ${href}`);
+    // The office moves the job; the driver's list shows what changed until "Got it".
+    const cur = (await f.o.get(`/jobs/${j.id}`)).job;
+    await f.owner.patch(`/api/c/${f.cid}/jobs/${j.id}`, { data: { version: cur.version, scheduledStart: new Date(Date.parse(cur.scheduled_start) + 3600_000).toISOString() } });
+    await dp.goto(`${f.C}/today`);
+    const banner = dp.locator('.changes-banner');
+    await banner.getByText(/Moved from/).waitFor({ timeout: 8000 });
+    const a1 = await axe(dp, 'wp6-driver-changes');
+    await banner.getByRole('button', { name: 'Got it' }).click();
+    await banner.waitFor({ state: 'detached', timeout: 8000 });
+    await dc.close();
+    // The truck goes out of service: the office confirms with the jobs named, then swaps it.
+    const { c, p } = await ownerContext(f); watch(p, 'wp6-oos');
+    await p.goto(`${f.C}/resources`);
+    await p.getByRole('row', { name: /Tank wagon A/ }).getByRole('button', { name: 'Edit' }).click();
+    await p.getByRole('dialog').getByLabel('Status').selectOption('out_of_service');
+    await p.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+    await p.getByRole('dialog', { name: '1 open job uses Tank wagon A.' }).waitFor();
+    await p.getByRole('button', { name: 'Mark out of service' }).click();
+    await p.getByRole('button', { name: 'Show jobs' }).click();
+    await p.waitForURL(/jobs\?resource=/);
+    await p.getByText('Jobs using Tank wagon A').waitFor();
+    await p.getByRole('checkbox', { name: `Select job #${j.number}` }).check();
+    await p.locator('#swap-to').selectOption(truckB);
+    await p.getByRole('button', { name: 'Swap truck' }).click();
+    await p.getByText(`Tank wagon B is now on job #${j.number}`).waitFor();
+    const a2 = await axe(p, 'wp6-swap');
+    await c.close(); await f.owner.dispose();
+    return `${a1}; ${a2}`;
+  });
+}
+if (process.env.E2E_ONLY === 'phase2') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-phase2.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
 }
 if (process.env.E2E_ONLY === 'phase1') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

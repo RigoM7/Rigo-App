@@ -425,6 +425,8 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
     scheduledStart: z.string().datetime({ offset: true }).nullable().optional(), scheduledEnd: z.string().datetime({ offset: true }).nullable().optional(), version: z.number().int(),
     /** The person confirmed taking a started job away from its driver. */
     confirmStarted: z.boolean().default(false),
+    /** Assign anyway although it overlaps (deliberate double-booking); recorded in history (R11-m4). */
+    allowOverlap: z.boolean().default(false),
   }));
   const out = await cc.db.tx(async (q) => {
     const job = await loadJob(cc, q, c.req.param('id'), true);
@@ -452,25 +454,30 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
     let end = keepDuration(job, input.scheduledStart, input.scheduledEnd) ?? (input.scheduledEnd !== undefined ? input.scheduledEnd : job.scheduled_end);
     if (start && !end) end = new Date(new Date(start).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString();
     if (start && end && new Date(end) <= new Date(start)) throw badRequest('The end time must be after the start time.', { fields: { scheduledEnd: 'End must be after start' } });
+    let overlap: string[] | null = null;
     if (start && end) {
       const clashes = [];
       if (input.userId) {
         const r = await q.query<any>(`select number from rigo.jobs where company_id = $1 and id <> $2 and assigned_user_id = $3 and status in ('open','in_progress') and scheduled_start < $5 and coalesce(scheduled_end, scheduled_start + interval '1 hour') > $4`, [cc.company.id, job.id, input.userId, start, end]);
-        if (r.rows.length) clashes.push(`The driver already has job #${r.rows.map((x) => x.number).join(', #')} at that time.`);
+        if (r.rows.length) {
+          const who = (await q.query<any>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = $1`, [input.userId, cc.company.id])).rows[0]?.name ?? 'The driver';
+          clashes.push(`${who} is busy then: job #${r.rows.map((x) => x.number).join(', #')}.`);
+        }
       }
       if (input.resourceIds.length) {
         const r = await q.query<any>(`select distinct j.number, res.name from rigo.job_resources jr join rigo.jobs j on j.id = jr.job_id join rigo.resources res on res.id = jr.resource_id
             where jr.company_id = $1 and j.id <> $2 and jr.resource_id = any($3) and j.status in ('open','in_progress') and j.scheduled_start < $5 and coalesce(j.scheduled_end, j.scheduled_start + interval '1 hour') > $4`, [cc.company.id, job.id, input.resourceIds, start, end]);
         if (r.rows.length) clashes.push(...r.rows.map((x) => `${x.name} is already on job #${x.number} at that time.`));
       }
-      if (clashes.length) throw conflict(clashes.join(' '), { clashes });
+      if (clashes.length && !input.allowOverlap) throw conflict(clashes.length === 1 ? clashes[0] : `${clashes.length} overlaps at that time.`, { clashes, canOverride: true });
+      if (clashes.length) overlap = clashes;
     }
     await q.query(`update rigo.jobs set assigned_user_id = $2, scheduled_start = $3, scheduled_end = $4, version = version + 1, updated_at = now() where id = $1`, [job.id, input.userId, start, end]);
     await q.query(`delete from rigo.job_resources where job_id = $1`, [job.id]);
     for (const rid of input.resourceIds) await q.query(`insert into rigo.job_resources (job_id, resource_id, company_id) values ($1,$2,$3)`, [job.id, rid, cc.company.id]);
     const changedDriver = job.assigned_user_id !== input.userId;
     await event(q, cc, job.id, changedDriver ? (job.assigned_user_id ? (input.userId ? 'reassigned' : 'unassigned') : 'assigned') : 'rescheduled',
-      { from: job.assigned_user_id, to: input.userId, resources: resources.map((r) => r.name), start, end });
+      { from: job.assigned_user_id, to: input.userId, resources: resources.map((r) => r.name), start, end, ...(overlap ? { overlapAccepted: overlap } : {}) });
     if (changedDriver && job.assigned_user_id) {
       const { notifyUsers } = await import('./inbox.js');
       await notifyUsers(q, cc.company.id, [job.assigned_user_id], { category: soon(job, cc.company.timezone) ? 'needs_action' : 'update', title: `Job #${job.number} was given to someone else`, body: 'It is no longer on your list. Don\'t go.', link: 'today', refType: 'job_change', refId: job.id });

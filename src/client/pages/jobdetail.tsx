@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck, ChevronLeft, CalendarClock, UserRound, Contact, Smartphone } from 'lucide-react';
 import { useCompany } from '../lib/session';
-import { get, post } from '../lib/api';
+import { get, post, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { PaymentPill } from './invoices';
 import { PAYMENT_METHODS } from '../../shared/invoices';
@@ -13,20 +13,22 @@ import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
 import { tzLabel } from '../../shared/timezones';
 import { DynamicField } from './jobform';
+import { TruckPicker } from '../components/trucks';
 import { useDocumentTitle } from '../lib/title';
 import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
   started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
-  handed_over: 'Handed over by driver', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
+  handed_over: 'Handed over by driver', resources_changed: 'Truck swapped', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
 };
 
 function eventText(e: any, members: Record<string, string>) {
   const d = e.data ?? {};
   switch (e.type) {
     case 'status': return `${titleCase(d.from ?? '')} → ${titleCase(d.to ?? '')}${d.reason ? `: ${d.reason}` : ''}`;
-    case 'assigned': case 'reassigned': case 'unassigned': case 'rescheduled': return [d.to ? `Driver: ${members[d.to] ?? 'member'}` : d.from ? 'Driver removed' : '', d.resources?.length ? `Equipment: ${d.resources.join(', ')}` : '', d.reason ?? ''].filter(Boolean).join(' · ');
+    case 'assigned': case 'reassigned': case 'unassigned': case 'rescheduled': return [d.to ? `Driver: ${members[d.to] ?? 'member'}` : d.from ? 'Driver removed' : '', d.resources?.length ? `Equipment: ${d.resources.join(', ')}` : '', d.reason ?? '', d.overlapAccepted ? `Assigned despite an overlap: ${d.overlapAccepted.join(' ')}` : ''].filter(Boolean).join(' · ');
+    case 'resources_changed': return `Truck swapped: ${d.from} → ${d.to}`;
     case 'completion': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}${d.reason ? `: ${d.reason}` : ''}${d.photos ? ` · ${d.photos} photo(s)` : ''}${d.signed ? (d.typedSignature ? ' · typed signature' : ' · signed') : ''}${d.acceptedFrom ? ' · sent late, accepted by the office' : ''}`;
     case 'started': return d.implicit ? 'Not started on the app first; recorded with the outcome.' : '';
     case 'handed_over': return `To ${d.toName ?? members[d.to] ?? 'another driver'}${d.note ? `: ${d.note}` : ''}`;
@@ -55,7 +57,15 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
   const s = useSubmit(async () => {
     // Taking a started job from its driver is a deliberate step (R9-M2).
     if (takingStarted && !(await confirm.ask({ title: `${j.assignee_name ?? 'The driver'} has already started this job`, body: <p>They are no longer assigned once you save. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' }))) return false;
-    await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version, confirmStarted: takingStarted });
+    const send = (allowOverlap: boolean) => post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version, confirmStarted: takingStarted, allowOverlap });
+    try { await send(false); }
+    catch (e) {
+      // An overlap is listed plainly, and can be accepted on purpose (it is recorded in history).
+      if (!(e instanceof ApiError) || !e.details?.canOverride) throw e;
+      const clashes = e.details.clashes as string[];
+      if (!(await confirm.ask({ title: 'This overlaps other work', body: <div className="stack-sm"><ul style={{ margin: 0, paddingLeft: 18 }}>{clashes.map((x) => <li key={x}>{x}</li>)}</ul><p className="small muted" style={{ margin: 0 }}>Assign anyway only if the overlap is deliberate. The job history records it.</p></div>, confirm: 'Assign anyway' }))) return false;
+      await send(true);
+    }
     toast('Assignment saved'); onDone(); return true;
   });
   const drivers = c.members.filter((m) => ['driver', 'owner', 'dispatcher'].includes(m.role_key));
@@ -72,11 +82,7 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
           <Field label="End" id="f-scheduledEnd" error={s.fieldError('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
         </div>
         <Field label="Driver" id="f-userId" error={s.fieldError('userId')}>{(p) => <Select {...p} value={v.userId} onChange={(e) => setV({ ...v, userId: e.target.value })}><option value="">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>}</Field>
-        {resources.data?.resources.length ? (
-          <fieldset><legend>Trucks and equipment</legend>{resources.data.resources.filter((r: any) => r.status !== 'retired').map((r: any) => (
-            <Checkbox key={r.id} label={`${r.name}${r.capacity ? ` (${r.capacity})` : ''}${r.status === 'out_of_service' ? ' — out of service' : ''}`} disabled={r.status === 'out_of_service' && !v.resourceIds.includes(r.id)} checked={v.resourceIds.includes(r.id)} onChange={(e) => setV({ ...v, resourceIds: e.target.checked ? [...v.resourceIds, r.id] : v.resourceIds.filter((x) => x !== r.id) })} />
-          ))}</fieldset>
-        ) : null}
+        <TruckPicker resources={resources.data?.resources ?? []} selected={v.resourceIds} onChange={(ids) => setV({ ...v, resourceIds: ids })} category={data.service?.category ?? null} />
         {takingStarted && <Banner tone="warning">This job is in progress. Reassigning tells the current driver it is no longer theirs; anything they record for it goes to the office for review.</Banner>}
         <div className="row"><Button type="submit" variant="primary" busy={s.busy}>Save assignment</Button>{dirty ? <span className="small" role="status"><strong>Unsaved changes.</strong> Save to keep them.</span> : null}</div>
       </form>
@@ -215,7 +221,9 @@ export function JobDetail() {
         </div>
       </div>
       <Dialog open={cancelOpen} onClose={() => setCancelOpen(false)} title={`Cancel job #${job.number}?`} footer={<><Button onClick={() => setCancelOpen(false)}>Keep job</Button><Button variant="danger" busy={status.busy} onClick={() => status.run('cancelled', reason)}>Cancel job</Button></>}>
-        <div className="stack"><p>The job is marked cancelled and will not be billed. {job.assigned_user_id ? 'The assigned driver is notified.' : ''} This cannot be undone; create a new job if plans change.</p>
+        <div className="stack">
+          {job.status === 'in_progress' && <Banner tone="warning" title={`${job.assignee_name ?? 'The driver'} may be on site`}>Work already done won't be billed if you cancel. If something was done, record it first: ask the driver to submit what they did as "Partially completed", then cancel the rest.</Banner>}
+          <p>The job is marked cancelled and will not be billed. {job.assigned_user_id ? 'The assigned driver is told not to go.' : ''} This cannot be undone; create a new job if plans change.</p>
           <ErrorSummary error={status.error} />
           <Field label="Reason" id="f-reason" error={status.fieldError('reason')}>{(p) => <Textarea {...p} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field></div>
       </Dialog>

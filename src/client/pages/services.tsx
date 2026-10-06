@@ -5,6 +5,7 @@ import { Plus, Trash2, ArrowUp, ArrowDown, Save, Wrench } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, put } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, Checkbox, Banner, useToast } from '../components/ui';
 import { formatMoney, parseMoney, minorToInput, fmtDate } from '../lib/format';
 import { parseRate, rateToInput, formatRate, buildLines, computeTotals, pricingWarnings, lineApplies } from '../../shared/billing';
@@ -93,6 +94,10 @@ export function ServiceEditor() {
   }, [svc, v]);
   const fin = c.can('finance.view');
   const cur = c.company.currency;
+  // The editor's state when loaded or last saved, to warn before leaving with changes (R11-m2).
+  const [snap, setSnap] = useState<string | null>(null);
+  const current = v ? JSON.stringify({ v, rates, tax }) : null;
+  useEffect(() => { if (current && snap === null) setSnap(current); }, [current, snap]);
   const s = useSubmit(async () => {
     const { pricing, bad } = readRates(v.pricing, rates);
     if (bad) throw Object.assign(new Error(bad), { status: 400 });
@@ -100,9 +105,10 @@ export function ServiceEditor() {
     if (taxBp !== null && (!Number.isFinite(taxBp) || taxBp < 0 || taxBp > 5000)) throw new Error('Tax rate must be a percentage between 0 and 50.');
     await put(`/c/${c.cid}/services/${id}`, { service: { ...v, pricing, taxRateBp: taxBp }, version: svc.version });
     await qc.invalidateQueries({ queryKey: [c.cid] });
-    setV(null);
+    setV(null); setSnap(null);
     toast('Service saved. Held invoices for this service were recalculated.');
   });
+  const guard = useUnsavedGuard(!!snap && !!current && current !== snap && !s.busy, { message: 'This service has changes that are not saved. Save or discard?', onSave: async () => { await s.run(); return true; } });
   if (q.isLoading || (svc && !v)) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
   if (!svc) return <div className="page"><ErrorState error={{ status: 404, message: 'Service not found.' }} /></div>;
@@ -231,6 +237,7 @@ export function ServiceEditor() {
         {fin && <ExampleBill pricing={draft} fields={v.fields} taxRateBp={taxSet ? taxBp : null} currency={cur} sample={sample} setSample={setSample} />}
         {canEdit && <div className="form-actions"><Button type="submit" variant="primary" size="lg" icon={<Save aria-hidden />} busy={s.busy}>Save service</Button></div>}
       </form>
+      {guard}
     </div>
   );
 }

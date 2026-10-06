@@ -11,16 +11,19 @@ import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding'
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
 import { CapabilityList } from './automation';
+import { useDirtySet, useReportDirty, useUnsavedGuard } from '../lib/unsaved';
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f_$1').slice(0, 40) || 'field';
 
-function CustomFieldsEditor() {
+function CustomFieldsEditor({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [v, setV] = useState<any>(() => structuredClone(c.company.customFields ?? { customers: [], jobs: [], locations: [] }));
   const [kind, setKind] = useState<'customers' | 'jobs' | 'locations'>('customers');
-  const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, { customFields: v }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Custom fields saved'); });
+  const [saved, setSaved] = useState(() => JSON.stringify(c.company.customFields ?? { customers: [], jobs: [], locations: [] }));
+  const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, { customFields: v }); setSaved(JSON.stringify(v)); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Custom fields saved'); });
+  useReportDirty(onDirty, 'customFields', JSON.stringify(v) !== saved);
   const list = v[kind];
   const set = (i: number, p: any) => setV({ ...v, [kind]: list.map((f: any, x: number) => (x === i ? { ...f, ...p } : f)) });
   const mv = (i: number, d: number) => { const a = [...list]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; setV({ ...v, [kind]: a }); };
@@ -45,12 +48,13 @@ function CustomFieldsEditor() {
   );
 }
 
-function Branding() {
+function Branding({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [accent, setAccent] = useState<string>(c.company.branding?.accent ?? '');
   const variants = accentVariants(accent || null);
+  useReportDirty(onDirty, 'branding', accent !== (c.company.branding?.accent ?? ''));
   const s = useSubmit(async () => { await patch(`/c/${c.cid}/branding`, { accent: accent || null }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Branding saved'); });
   const logo = useSubmit(async (file: File) => { const form = new FormData(); form.append('file', file); await api(`/c/${c.cid}/branding/logo`, { method: 'POST', form }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Logo uploaded'); });
   const removeLogo = useSubmit(async () => { await patch(`/c/${c.cid}/branding`, { removeLogo: true }); qc.invalidateQueries({ queryKey: [c.cid] }); });
@@ -97,7 +101,7 @@ function BrandPreview({ name, accent }: { name: string; accent: string }) {
 }
 
 /** Invoice settings (R3-m7): terms, numbering that continues from the previous system (D17), how to pay. */
-function InvoiceSettings() {
+function InvoiceSettings({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
@@ -113,6 +117,8 @@ function InvoiceSettings() {
     qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Invoice settings saved');
   });
   const preview = `${v.invoicePrefix}${String(Number(v.nextInvoiceNumber) || currentNext).padStart(5, '0')}`;
+  useReportDirty(onDirty, 'invoices', JSON.stringify(v) !== JSON.stringify({ invoiceDueDays: String(c.company.invoiceDueDays ?? 30), invoicePrefix: c.company.invoicePrefix ?? 'INV-', nextInvoiceNumber: String(currentNext),
+    paymentInstructions: c.company.paymentInstructions ?? '', remitTo: c.company.remitTo ?? '', taxId: c.company.taxId ?? '' }));
   return (
     <Card id="inv" title="Invoices and payments">
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
@@ -169,10 +175,15 @@ export function SettingsPage() {
   const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services';
   const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories,
     invoiceDueDays: c.company.invoiceDueDays ?? 30, paymentInstructions: c.company.paymentInstructions ?? '' });
+  const [savedDetails, setSavedDetails] = useState(() => JSON.stringify(v));
   const s = useSubmit(async () => {
     const { invoiceDueDays: _d, paymentInstructions: _p, ...details } = v;
-    await patch(`/c/${c.cid}/settings`, details); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved');
+    await patch(`/c/${c.cid}/settings`, details); setSavedDetails(JSON.stringify(v)); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved');
   });
+  // One guard for the page: any section with unsaved changes asks before leaving or switching tabs (R11-m2).
+  const dirt = useDirtySet();
+  useReportDirty(dirt.report, 'company', JSON.stringify(v) !== savedDetails);
+  const guard = useUnsavedGuard(dirt.any, { message: 'Some settings are not saved. Leave without saving?' });
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" sub={c.company.name} />
@@ -196,9 +207,10 @@ export function SettingsPage() {
           </form>
         </Card>
       )}
-      {tab === 'invoices' && <InvoiceSettings />}
-      {tab === 'branding' && <Branding />}
-      {tab === 'fields' && <CustomFieldsEditor />}
+      {tab === 'invoices' && <InvoiceSettings onDirty={dirt.report} />}
+      {tab === 'branding' && <Branding onDirty={dirt.report} />}
+      {tab === 'fields' && <CustomFieldsEditor onDirty={dirt.report} />}
+      {guard}
       {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}
     </div>
   );

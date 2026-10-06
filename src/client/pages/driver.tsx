@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog } from 'lucide-react';
+import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog, Navigation, BellRing, Siren } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError, OFFLINE } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, syncPending, onDraftsChanged, isUnsent, needsAttention, WAITING_FOR_SIGNAL, type Draft, type DraftState, type JobSnapshot } from '../lib/offline';
 import { syncSummaryText } from '../lib/autosync';
 import { Button, Card, Field, Textarea, Input, Select, Checkbox, Dialog, Banner, LoadingBlock, Empty, JobStatus, PriorityPill, GuideTarget, useToast, useConfirm } from '../components/ui';
-import { fmtTime, fmtDate, relTime } from '../lib/format';
+import { fmtTime, fmtDate, relTime, mapsUrl } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
 import { OUTCOMES, REASON_CODES, completionProblems, outcomeReason, type ReasonCode } from '../../shared/jobs';
@@ -48,6 +48,8 @@ function useDrafts(uid: string, cid: string) {
   return drafts;
 }
 
+const finishedStatus = (s: string) => ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(s);
+
 const SYNC_LABEL: Record<DraftState, [React.ReactNode, string, string]> = {
   local: [<HardDrive key="l" aria-hidden />, 'Saved on this phone', 'var(--text-2)'],
   queued: [<CloudOff key="q" aria-hidden />, 'Waiting for signal — will send automatically', 'var(--info)'],
@@ -85,16 +87,25 @@ export function Today() {
     const jobs = data?.jobs ?? [];
     const active = jobs.filter((j) => ['open', 'in_progress'].includes(j.status));
     const isToday = (j: any) => !j.scheduled_start || localDate(new Date(j.scheduled_start), c.company.timezone) <= today;
-    return { today: active.filter(isToday), upcoming: active.filter((j) => !isToday(j)), done: jobs.filter((j) => !['open', 'in_progress'].includes(j.status)) };
+    // Emergencies come first, whatever their day (R6-M1, D15).
+    const emergency = active.filter((j) => j.priority === 'emergency');
+    const rest = active.filter((j) => j.priority !== 'emergency');
+    return { emergency, today: rest.filter(isToday), upcoming: rest.filter((j) => !isToday(j)), done: jobs.filter((j) => !['open', 'in_progress'].includes(j.status)) };
   }, [data, today, c.company.timezone]);
+  const changed = (data?.jobs ?? []).filter((j) => j.driver_changes?.lines?.length && !j.driver_changes.isNew && ['open', 'in_progress'].includes(j.status));
+  const [acking, setAcking] = useState('');
+  const ack = async (id: string) => { setAcking(id); try { await post(`/c/${c.cid}/jobs/${id}/seen-changes`); await reload(); } catch { toast('Could not save that. Try again when you have signal.', 'error'); } finally { setAcking(''); } };
+  const town = (a: string | null) => (a ?? '').split(',').slice(1).join(',').trim() || (a ?? '');
   const card = (j: any) => (
     <li key={j.id}>
-      <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}`}>
+      <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}${j.priority === 'emergency' ? ' is-emergency' : ''}`}>
         <div className="row-between">
           <span className="time">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span>
           <span className="row" style={{ gap: 6 }}><PriorityPill priority={j.priority} /><JobStatus status={j.status} /></span>
         </div>
+        {j.priority === 'emergency' && <div className="emergency-tag"><Siren aria-hidden />Emergency</div>}
         <div className="addr">{j.address ?? 'No address'}</div>
+        {j.driver_changes?.lines?.length ? <div className="changed-tag">{j.driver_changes.isNew ? 'New' : 'Changed'}</div> : null}
         <div className="small"><span className="num muted">#{j.number}</span> · {j.service_name} · {j.customer_name}</div>
         {(j.access_instructions || j.location_access) && <div className="small muted row" style={{ gap: 6, alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>{j.access_instructions || j.location_access}</span></div>}
         {drafts[j.id] && <div style={{ marginTop: 6 }}><SyncState state={drafts[j.id].state} /></div>}
@@ -116,8 +127,30 @@ export function Today() {
         </Banner>
       )}
       {waiting.length > 0 && <Banner tone="info" title={`${waiting.length} record${waiting.length === 1 ? '' : 's'} waiting to send`} action={<Button size="sm" busy={syncing} onClick={sendNow}>{syncing ? 'Sending…' : 'Send now'}</Button>}>{WAITING_FOR_SIGNAL} Jobs are only completed once the office's system accepts them.</Banner>}
+      {changed.length > 0 && (
+        <section className="banner banner-warning changes-banner" aria-labelledby="h-changes">
+          <BellRing aria-hidden />
+          <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
+            <strong id="h-changes">The office changed {changed.length === 1 ? 'a job' : `${changed.length} jobs`}</strong>
+            {changed.map((j) => (
+              <div key={j.id} className="change-item">
+                <div><Link to={c.to(`today/${j.id}`)}>Job #{j.number}</Link>{j.scheduled_start ? `, ${fmtTime(j.scheduled_start, c.company.timezone)}` : ''}</div>
+                <ul>{j.driver_changes.lines.filter((l: string) => l !== 'New job for you').map((l: string) => <li key={l}>{l}</li>)}</ul>
+                <Button size="sm" busy={acking === j.id} onClick={() => ack(j.id)}>Got it</Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       {loading && !data ? <LoadingBlock /> : data && (
         <>
+          {groups.emergency.length > 0 && <section aria-labelledby="h-emergency" className="stack-sm"><h2 id="h-emergency" className="emergency-heading"><Siren aria-hidden />Emergency</h2><ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.emergency.map(card)}</ul></section>}
+          {groups.today.length > 1 && (
+            <details className="next-stops">
+              <summary>Today's stops in order ({groups.today.length})</summary>
+              <ol>{groups.today.map((j) => <li key={j.id}><span className="num">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span> {j.customer_name}{town(j.address) ? `, ${town(j.address)}` : ''}</li>)}</ol>
+            </details>
+          )}
           <section aria-labelledby="h-today" className="stack-sm"><h2 id="h-today">Today</h2>
             {groups.today.length ? <ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.today.map(card)}</ul> : <Card><Empty icon={<CheckCircle2 />} title="No jobs for today">New assignments appear here. Tap Refresh to check.</Empty></Card>}
           </section>
@@ -211,6 +244,11 @@ export function DriverJob() {
   const [handover, setHandover] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
 
+  // Opening a new job is seeing it: the "New" mark goes (changes stay until "Got it").
+  useEffect(() => {
+    if (job?.driver_changes?.isNew && job.driver_changes.lines.every((l: string) => l === 'New job for you') && !stale) void post(`/c/${c.cid}/jobs/${job.id}/seen-changes`).catch(() => {});
+  }, [job?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [acked, setAcked] = useState(false);
   useEffect(() => {
     const read = async () => setDraft((await getDraft(uid, c.cid, jobId)) ?? null);
     void read();
@@ -346,12 +384,18 @@ export function DriverJob() {
       <div className="stack-sm">
         <div className="row-between" style={{ alignItems: 'flex-start' }}><h1 style={{ fontSize: 'var(--fs-22)' }}><span className="num muted" style={{ fontSize: 'var(--fs-16)', display: 'block', fontWeight: 500 }}>#{job.number}</span>{job.service_name}</h1><span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}><PriorityPill priority={job.priority} /><JobStatus status={job.status} /></span></div>
         {stale && <Banner tone="warning">No signal: this is the copy saved on this phone {relTime(stale)}. Details may have changed.</Banner>}
+        {!acked && job.driver_changes?.lines?.some((l: string) => l !== 'New job for you') && (
+          <Banner tone="warning" title="The office changed this job" action={<Button size="sm" onClick={async () => { setAcked(true); await post(`/c/${c.cid}/jobs/${job.id}/seen-changes`).catch(() => setAcked(false)); }}>Got it</Button>}>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>{job.driver_changes.lines.filter((l: string) => l !== 'New job for you').map((l: string) => <li key={l}>{l}</li>)}</ul>
+          </Banner>
+        )}
+        {job.priority === 'emergency' && !finishedStatus(job.status) && <Banner tone="danger" title="Emergency">Go as soon as you can. Call the office if you can't.</Banner>}
         {jobDay && jobDay > today && !finished && <Banner tone="info">Scheduled for {fmtDate(job.scheduled_start, c.company.timezone)}, not today.</Banner>}
       </div>
       <Card id="essentials">
         <div className="stack">
           <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><MapPin aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 'var(--fs-18)', letterSpacing: '-0.01em' }}>{job.address ?? 'No address'}</div><div className="muted">{job.customer_name}{job.location_label ? ` · ${job.location_label}` : ''}</div></div>
-            {job.address && <Button size="sm" icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button>}</div>
+            {job.address && <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}><a className="btn btn-sm" href={mapsUrl(job.address)} target="_blank" rel="noreferrer"><Navigation aria-hidden />Open in Maps</a><Button size="sm" icon={<Copy aria-hidden />} aria-label="Copy address" onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button></div>}</div>
           <div className="row"><Clock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDate(job.scheduled_start, c.company.timezone)}, ${fmtTime(job.scheduled_start, c.company.timezone)}` : 'Any time'}</span></div>
           {access && <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div><strong>Access:</strong> {access}</div></div>}
           {(job.contact_name || job.site_contact || job.contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</span></div>}
