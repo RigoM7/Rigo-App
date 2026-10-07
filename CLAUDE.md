@@ -8,6 +8,16 @@
   pull request, push once when the work is done, and avoid extra pushes.
 - Only stop to ask when a decision is genuinely the owner's, or when access or a
   safety check blocks the work.
+- Visual work (look, screens, components, design system): first research open-source
+  projects on GitHub with 1,000+ stars related to what Rigo does (field service,
+  dispatch and scheduling timelines, fleet and driver apps, invoicing and billing,
+  CRM, dashboards and design systems), and build on their work. Rigo has no open
+  license, so copy or adapt code only from permissive licenses (MIT, Apache-2.0,
+  BSD, ISC), keep their copyright notices and list them in `THIRD_PARTY_NOTICES.md`;
+  projects under GPL, AGPL, LGPL, SSPL, Elastic, BSL or no license are for ideas and
+  patterns only, never copied code or assets. Record what was used, from where and
+  why in `docs/DESIGN-RESEARCH.md`. Rigo's confirmed palette and
+  `docs/DESIGN-SYSTEM.md` still take precedence.
 
 ## Project
 - Live site: https://rigo-app-dun.vercel.app (Vercel project `rigo-app`, team `rigo9`).
