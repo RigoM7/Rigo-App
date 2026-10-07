@@ -27,3 +27,14 @@ export function toLocalInput(iso: string | null | undefined, tz: string) {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 export function titleCase(s: string) { return s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()); }
+/**
+ * When a start time moves, move the end by the same amount so the job keeps its length
+ * (datetime-local values, "2026-10-06T09:00"). An empty end or start stays as it is.
+ */
+export function shiftEnd(oldStart: string, oldEnd: string, newStart: string) {
+  if (!oldStart || !oldEnd || !newStart) return oldEnd;
+  const ms = (s: string) => Date.parse(`${s}:00Z`);
+  const len = ms(oldEnd) - ms(oldStart);
+  if (!Number.isFinite(len) || len <= 0 || !Number.isFinite(ms(newStart))) return oldEnd;
+  return new Date(ms(newStart) + len).toISOString().slice(0, 16);
+}

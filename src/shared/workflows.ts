@@ -81,9 +81,15 @@ export const CONDITION_FIELDS = {
   'job.problem_open': { label: 'Problem reported', type: 'boolean', subject: 'job' },
   'job.has_assignee': { label: 'Job has a driver', type: 'boolean', subject: 'job' },
   'job.priority': { label: 'Job priority', type: 'select', options: ['normal', 'urgent', 'emergency'], subject: 'job' },
+  'job.partial': { label: 'Visit was only partly completed', type: 'boolean', subject: 'job' },
+  'job.quantity_over_capacity': { label: 'Quantity flagged as over the truck\'s capacity', type: 'boolean', subject: 'job' },
   'customer.name': { label: 'Customer name', type: 'text', subject: 'any' },
-  'invoice.total_minor': { label: 'Invoice total (cents)', type: 'number', subject: 'invoice' },
+  'customer.tax_exempt': { label: 'Customer is tax exempt', type: 'boolean', subject: 'any' },
+  'customer.type': { label: 'Customer type', type: 'text', subject: 'any' },
+  // Amounts are typed in dollars in the editor and stored in cents (R14-m1).
+  'invoice.total_minor': { label: 'Invoice total', type: 'money', subject: 'invoice' },
   'invoice.held': { label: 'Invoice is on hold', type: 'boolean', subject: 'invoice' },
+  'invoice.price_changed': { label: 'A price changed since booking', type: 'boolean', subject: 'invoice' },
 } as const;
 export type ConditionField = keyof typeof CONDITION_FIELDS;
 
@@ -132,7 +138,40 @@ export type Definition = z.infer<typeof definitionSchema>;
 
 export interface ValidationResult { ok: boolean; errors: string[]; warnings: string[] }
 
-export function validateDefinition(def: Definition, env: { roles: string[]; emailAvailable: boolean; isDemo: boolean }): ValidationResult {
+/** A member as the validator sees them: who they are, their role and its permissions. */
+export interface ApproverCandidate { userId: string; name: string; roleKey: string; isOwner: boolean; permissions: string[] }
+
+/**
+ * Can this member decide an approval for this action? Owners and anyone with "Decide approvals" can;
+ * "Approve invoices" covers invoice steps only. The engine uses the same rule.
+ */
+export function canDecideFor(m: Pick<ApproverCandidate, 'isOwner' | 'permissions'>, subjectType: string) {
+  return m.isOwner || m.permissions.includes('approvals.decide') || (subjectType === 'invoice' && m.permissions.includes('invoices.approve'));
+}
+
+/**
+ * Conditions that can never all be true together (R14-m3): the same field equal to two values, equal
+ * and not equal to one value, or a range with nothing in it.
+ */
+export function contradictions(conds: Condition[]): string[] {
+  const out: string[] = [];
+  const byField = new Map<string, Condition[]>();
+  for (const c of conds) byField.set(c.field, [...(byField.get(c.field) ?? []), c]);
+  for (const [field, cs] of byField) {
+    const label = CONDITION_FIELDS[field as ConditionField]?.label ?? field;
+    const eqs = [...new Set(cs.filter((c) => c.op === 'eq').map((c) => String(c.value)))];
+    if (eqs.length > 1) out.push(`"${label}" can't be ${eqs.join(' and ')} at the same time.`);
+    for (const e of eqs) if (cs.some((c) => c.op === 'neq' && String(c.value) === e)) out.push(`"${label}" can't be and not be ${e}.`);
+    const nums = (op: string[]) => cs.filter((c) => op.includes(c.op)).map((c) => ({ v: Number(c.value), strict: c.op === 'gt' || c.op === 'lt' }));
+    const lows = nums(['gt', 'gte']); const highs = nums(['lt', 'lte']);
+    for (const lo of lows) for (const hi of highs) {
+      if (lo.v > hi.v || (lo.v === hi.v && (lo.strict || hi.strict))) out.push(`"${label}" can't be more than ${lo.v} and less than ${hi.v} at the same time.`);
+    }
+  }
+  return [...new Set(out)];
+}
+
+export function validateDefinition(def: Definition, env: { roles: string[]; emailAvailable: boolean; isDemo: boolean; roleNames?: Record<string, string>; members?: ApproverCandidate[] }): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const subject = TRIGGERS[def.trigger.event].subject;
@@ -155,6 +194,26 @@ export function validateDefinition(def: Definition, env: { roles: string[]; emai
       errors.push(`Step ${n}: approval is required but no approver is assigned.`);
     }
     if (s.approval.required === 'conditional' && s.approval.conditions.length === 0) errors.push(`Step ${n}: add a condition for when approval is needed.`);
+    for (const x of contradictions(s.approval.conditions)) errors.push(`Step ${n} approval: ${x}`);
+    // Someone must actually be able to approve (R14-C1): a role or person without the permission is never asked.
+    if (s.approval.required !== 'never' && env.members && (s.approval.approverRoles.length || s.approval.approverUserIds.length)) {
+      const subj = meta.needs === 'invoice' ? 'invoice' : meta.needs;
+      const rn = (r: string) => env.roleNames?.[r] ?? r;
+      const chosen = env.members.filter((m) => s.approval.approverRoles.includes(m.roleKey) || s.approval.approverUserIds.includes(m.userId));
+      const able = chosen.filter((m) => canDecideFor(m, subj));
+      if (!able.length) {
+        errors.push(`Step ${n} (${meta.label}): nobody chosen to approve it can approve ${subj === 'invoice' ? 'invoices' : 'this'}. Add Owner, or give ${s.approval.approverRoles.map(rn).join(' or ') || 'the chosen people'} permission to ${subj === 'invoice' ? 'approve invoices' : 'decide approvals'} in Team.`);
+      } else {
+        for (const r of s.approval.approverRoles) {
+          const inRole = env.members.filter((m) => m.roleKey === r);
+          if (inRole.length && !inRole.some((m) => canDecideFor(m, subj))) warnings.push(`Step ${n}: ${rn(r)} can't approve ${subj === 'invoice' ? 'invoices' : 'this'}, so they won't be asked.`);
+        }
+      }
+      for (const b of s.approval.backupUserIds) {
+        const m = env.members.find((x) => x.userId === b);
+        if (!m || !canDecideFor(m, subj)) warnings.push(`Step ${n}: backup ${m?.name ?? 'approver'} can't approve ${subj === 'invoice' ? 'invoices' : 'this'}, so escalation won't reach them.`);
+      }
+    }
     if (meta.kind === 'commit' && s.approval.required === 'never' && (s.mode === 'automatic' || s.mode === null)) {
       warnings.push(`Step ${n} (${meta.label}) has no approval. In Automatic mode it will run without a person reviewing it.`);
     }
@@ -168,6 +227,7 @@ export function validateDefinition(def: Definition, env: { roles: string[]; emai
     const f = CONDITION_FIELDS[c.field];
     if (f.subject !== 'any' && f.subject !== subject) errors.push(`Condition "${f.label}" does not apply to this trigger.`);
   }
+  for (const x of contradictions(def.conditions)) errors.push(`Conditions never all match: ${x}`);
   return { ok: errors.length === 0, errors, warnings };
 }
 
@@ -234,8 +294,9 @@ export function approvalNeeded(rule: ApprovalRule, facts: Record<string, unknown
 /** Pure dry run against sample facts. Used by "Test with sample data"; it has no side effects. */
 export function simulate(def: Definition, opts: { mode: Mode; overrideMode: Mode | null; facts: Record<string, unknown>; emailAvailable: boolean; isDemo: boolean; sampleHasRates: boolean }) {
   const out: { step: number; label: string; outcome: string }[] = [];
-  const matched = def.conditions.every((c) => evaluate(c, opts.facts));
-  if (!matched) return { matched, steps: out, summary: 'The sample does not meet the workflow conditions, so nothing would run.' };
+  const failing = def.conditions.filter((c) => !evaluate(c, opts.facts));
+  const matched = failing.length === 0;
+  if (!matched) return { matched, steps: out, summary: `Would not start: in this sample, ${failing.map(describeCondition).join(' and ')} is not true.` };
   let stopped = false;
   def.steps.forEach((s, i) => {
     const meta = ACTIONS[s.action];
@@ -290,7 +351,7 @@ export function defaultWorkflows(): { name: string; description: string; definit
         trigger: { event: 'job.completed' }, conditions: [],
         steps: [
           { id: 'prepare', action: 'invoice.prepare', params: {}, mode: null, approval: noApproval, onException: exc },
-          { id: 'issue', action: 'invoice.issue', params: {}, mode: null, approval: { ...noApproval, required: 'always', approverRoles: ['owner'], escalateAfterHours: 24 }, onException: exc },
+          { id: 'issue', action: 'invoice.issue', params: {}, mode: null, approval: { ...noApproval, required: 'always', approverRoles: ['owner', 'office'], escalateAfterHours: 24 }, onException: exc },
           { id: 'email', action: 'message.prepare_invoice', params: {}, mode: null, approval: noApproval, onException: exc },
           { id: 'send', action: 'message.send', params: {}, mode: null, approval: noApproval, onException: exc },
         ],

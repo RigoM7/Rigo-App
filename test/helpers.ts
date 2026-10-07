@@ -1,10 +1,29 @@
 
 import { createApp } from '../src/server/http/app.js';
-import { processAll } from '../src/server/automation/engine.js';
+import { processAll as processOnce } from '../src/server/automation/engine.js';
 import { getDb } from '../src/server/db/index.js';
 
 export const app = createApp();
-export { processAll, getDb };
+export { getDb };
+
+/**
+ * Run automation until nothing is waiting. On a shared PostgreSQL database several test files run
+ * at once and drain one queue: a single bounded pass can end on other files' work (or skip rows
+ * another worker holds) before this test's events are done.
+ */
+export async function processAll(budgetMs = 4000) {
+  const db = await getDb();
+  const until = Date.now() + 30_000;
+  for (;;) {
+    await processOnce(budgetMs);
+    const { rows } = await db.query<{ n: number }>(`select
+        (select count(*) from rigo.events where processed_at is null) +
+        (select count(*) from rigo.actions a join rigo.companies c on c.id = a.company_id where a.status = 'queued' and not c.paused and (a.next_attempt_at is null or a.next_attempt_at <= now())) +
+        (select count(*) from rigo.automation_runs where status = 'running') as n`);
+    if (Number(rows[0].n) === 0 || Date.now() > until) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 let n = 0;
 export class Client {

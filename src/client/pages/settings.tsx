@@ -6,7 +6,7 @@ import { Upload, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { patch, api } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast, useConfirm } from '../components/ui';
 import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding';
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
@@ -96,19 +96,87 @@ function BrandPreview({ name, accent }: { name: string; accent: string }) {
   );
 }
 
+/** Invoice settings (R3-m7): terms, numbering that continues from the previous system (D17), how to pay. */
+function InvoiceSettings() {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const currentNext = (c.company.invoice_seq ?? 0) + 1;
+  const [v, setV] = useState({ invoiceDueDays: String(c.company.invoiceDueDays ?? 30), invoicePrefix: c.company.invoicePrefix ?? 'INV-', nextInvoiceNumber: String(currentNext),
+    paymentInstructions: c.company.paymentInstructions ?? '', remitTo: c.company.remitTo ?? '', taxId: c.company.taxId ?? '' });
+  const s = useSubmit(async () => {
+    const days = Number(v.invoiceDueDays);
+    if (!/^\d+$/.test(v.invoiceDueDays) || days > 180) throw Object.assign(new Error('Payment terms are a number of days from 0 to 180.'), { fields: { invoiceDueDays: 'Enter 0 to 180 days' } });
+    const next = Number(v.nextInvoiceNumber);
+    if (!/^\d+$/.test(v.nextInvoiceNumber) || next < 1) throw Object.assign(new Error('Enter the next invoice number, like 1042.'), { fields: { nextInvoiceNumber: 'Enter a whole number' } });
+    await patch(`/c/${c.cid}/settings`, { invoiceDueDays: days, invoicePrefix: v.invoicePrefix, paymentInstructions: v.paymentInstructions, remitTo: v.remitTo, taxId: v.taxId, ...(next !== currentNext ? { nextInvoiceNumber: next } : {}) });
+    qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Invoice settings saved');
+  });
+  const preview = `${v.invoicePrefix}${String(Number(v.nextInvoiceNumber) || currentNext).padStart(5, '0')}`;
+  return (
+    <Card id="inv" title="Invoices and payments">
+      <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
+        <ErrorSummary error={s.error} />
+        <Field label="Payment terms (days after the invoice is issued)" id="f-invoiceDueDays" hint="0 means due on receipt. A customer can have their own terms on their page." error={s.fieldError('invoiceDueDays')}>{(p) => <Input {...p} inputMode="numeric" value={v.invoiceDueDays} onChange={(e) => setV({ ...v, invoiceDueDays: e.target.value.replace(/\D/g, '') })} />}</Field>
+        <div className="grid-2">
+          <Field label="Number prefix" optionalText id="f-invoicePrefix" error={s.fieldError('invoicePrefix')}>{(p) => <Input {...p} maxLength={12} value={v.invoicePrefix} onChange={(e) => setV({ ...v, invoicePrefix: e.target.value })} />}</Field>
+          <Field label="Next invoice number" id="f-nextInvoiceNumber" hint={`Continue from QuickBooks or your old system. Next invoice: ${preview}`} error={s.fieldError('nextInvoiceNumber')}>{(p) => <Input {...p} inputMode="numeric" value={v.nextInvoiceNumber} onChange={(e) => setV({ ...v, nextInvoiceNumber: e.target.value.replace(/\D/g, '') })} />}</Field>
+        </div>
+        <Field label="How customers pay you" optionalText id="f-paymentInstructions" hint="Shown on invoices and in invoice emails, for example who to make checks out to or a number to call to pay by card." error={s.fieldError('paymentInstructions')}>{(p) => <Textarea {...p} maxLength={500} value={v.paymentInstructions} onChange={(e) => setV({ ...v, paymentInstructions: e.target.value })} />}</Field>
+        <div className="grid-2">
+          <Field label="Send payments to" optionalText id="f-remitTo" hint="A mailing address for checks, if different from yours.">{(p) => <Textarea {...p} maxLength={300} value={v.remitTo} onChange={(e) => setV({ ...v, remitTo: e.target.value })} />}</Field>
+          <Field label="Tax ID" optionalText id="f-taxId" hint="Printed on invoices.">{(p) => <Input {...p} maxLength={40} value={v.taxId} onChange={(e) => setV({ ...v, taxId: e.target.value })} />}</Field>
+        </div>
+        <div><Button type="submit" variant="primary" busy={s.busy}>Save invoice settings</Button></div>
+      </form>
+      {c.role.isOwner && <ApprovalRule />}
+    </Card>
+  );
+}
+
+/** "Every invoice needs approval before issuing" (R14-M1): visible, owner only, confirmed and audited. */
+function ApprovalRule() {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { ask, node } = useConfirm();
+  const on = c.company.invoiceApprovalRequired !== false;
+  const s = useSubmit(async () => {
+    const ok = await ask(on
+      ? { title: 'Stop requiring approval for every invoice?', body: 'Workflows and people with "Issue invoices" can then issue invoices without anyone approving them first. Steps that have their own approval still ask for it.', confirm: 'Stop requiring approval', danger: true }
+      : { title: 'Require approval for every invoice?', body: 'Every invoice will need an approval before it is issued, including invoices issued by workflows in Automatic mode. People who can approve invoices are asked.', confirm: 'Require approval' });
+    if (!ok) return;
+    await patch(`/c/${c.cid}/settings`, { invoiceApprovalRequired: !on });
+    qc.invalidateQueries({ queryKey: ['me'] }); qc.invalidateQueries({ queryKey: [c.cid] });
+    toast(on ? 'Invoices no longer need approval by default' : 'Every invoice now needs approval before it is issued');
+  });
+  return (
+    <div className="stack-sm" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+      <h3 style={{ margin: 0 }}>Approval before issuing</h3>
+      <ErrorSummary error={s.error} />
+      <p className="muted" style={{ margin: 0 }}>{on ? 'On: every invoice needs an approval before it is issued, whoever or whatever issues it. In Automatic mode, Rigo asks the people who can approve invoices.' : 'Off: invoices can be issued without an approval, unless a workflow step asks for one.'}</p>
+      <div><Button variant={on ? 'danger' : 'primary'} busy={s.busy} onClick={() => s.run()}>{on ? 'Stop requiring approval' : 'Require approval for every invoice'}</Button></div>
+      {node}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [sp, setSp] = useSearchParams();
-  const tab = (sp.get('tab') ?? 'company') as 'company' | 'branding' | 'fields' | 'services';
+  const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services';
   const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories,
     invoiceDueDays: c.company.invoiceDueDays ?? 30, paymentInstructions: c.company.paymentInstructions ?? '' });
-  const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, v); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved'); });
+  const s = useSubmit(async () => {
+    const { invoiceDueDays: _d, paymentInstructions: _p, ...details } = v;
+    await patch(`/c/${c.cid}/settings`, details); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved');
+  });
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" sub={c.company.name} />
-      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }]} />
+      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'invoices', label: 'Invoices' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }]} />
       {tab === 'company' && (
         <Card id="co" title="Company details">
           <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
@@ -123,15 +191,12 @@ export function SettingsPage() {
               <Field label="Time zone" id="f-timezone" hint="Schedules, late jobs and due dates use this." error={s.fieldError('timezone')}>{(p) => <TimezoneSelect {...p} value={v.timezone} onChange={(tz) => setV({ ...v, timezone: tz })} />}</Field>
               <Field label="Currency" id="f-currency">{(p) => <Select {...p} value={v.currency} onChange={(e) => setV({ ...v, currency: e.target.value })}>{CURRENCIES.map((x) => <option key={x}>{x}</option>)}</Select>}</Field>
             </div>
-            <div className="grid-2">
-              <Field label="Payment due (days after the invoice is issued)" id="f-invoiceDueDays" error={s.fieldError('invoiceDueDays')}>{(p) => <Input {...p} inputMode="numeric" value={v.invoiceDueDays} onChange={(e) => setV({ ...v, invoiceDueDays: Math.min(180, Math.max(0, Number(e.target.value.replace(/\D/g, '')) || 0)) })} />}</Field>
-            </div>
-            <Field label="How customers pay you" optionalText id="f-paymentInstructions" hint="Shown on invoices and in invoice emails, for example who to make checks out to or a number to call to pay by card." error={s.fieldError('paymentInstructions')}>{(p) => <Textarea {...p} maxLength={500} value={v.paymentInstructions} onChange={(e) => setV({ ...v, paymentInstructions: e.target.value })} />}</Field>
             <fieldset><legend>Service types</legend>{Object.entries(SERVICE_CATEGORIES).map(([k, l]) => <Checkbox key={k} label={l} checked={v.serviceCategories.includes(k)} onChange={(e) => setV({ ...v, serviceCategories: e.target.checked ? [...v.serviceCategories, k] : v.serviceCategories.filter((x) => x !== k) })} />)}</fieldset>
             <div><Button type="submit" variant="primary" busy={s.busy}>Save</Button></div>
           </form>
         </Card>
       )}
+      {tab === 'invoices' && <InvoiceSettings />}
       {tab === 'branding' && <Branding />}
       {tab === 'fields' && <CustomFieldsEditor />}
       {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}

@@ -1,5 +1,5 @@
 import type { Q } from '../db/index.js';
-import { prepareInvoiceForJob, issueInvoice, invoiceEmail } from '../modules/invoicing.js';
+import { prepareInvoiceForJob, issueInvoice, invoiceEmail, invoiceViewLink } from '../modules/invoicing.js';
 import { deliverMessage } from '../adapters/index.js';
 import { notifyRoles, notifyUsers } from '../modules/inbox.js';
 import { subjectLabel } from './engine.js';
@@ -24,17 +24,22 @@ async function prepareMessage(q: Q, companyId: string, actionId: string, m: { ch
 }
 
 export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult>> = {
-  async 'invoice.prepare'(i) {
+  async 'invoice.prepare'(i): Promise<HandlerResult> {
     const r = await prepareInvoiceForJob(i.q, i.companyId, i.subject.id, { userId: i.actorUserId, depth: i.depth });
+    // A rental visit covered by the rent has nothing to bill: the run ends here, quietly.
+    if (!r.invoiceId) return { status: 'completed', explanation: r.covered ?? 'Nothing to bill.', result: r, context: { stopRun: 'covered' } };
+    const invoiceId: string = r.invoiceId;
     if (r.held) {
-      return { status: 'blocked', explanation: `Invoice prepared but on hold: ${r.reasons.join(' ') || 'it needs review.'}`, result: r, context: { invoiceId: r.invoiceId }, link: `invoices/${r.invoiceId}` };
+      return { status: 'blocked', explanation: `Invoice prepared but on hold: ${r.reasons.join(' ') || 'it needs review.'}`, result: r, context: { invoiceId }, link: `invoices/${invoiceId}` };
     }
-    return { status: 'completed', explanation: r.created ? 'Invoice draft prepared.' : 'An invoice already existed for this job; reused it.', result: r, context: { invoiceId: r.invoiceId } };
+    return { status: 'completed', explanation: r.created ? 'Invoice draft prepared.' : 'An invoice already existed for this job; reused it.', result: r, context: { invoiceId } };
   },
 
   async 'invoice.issue'(i) {
     const { rows } = await i.q.query<any>(`select i.status, i.hold_reasons, c.settings from rigo.invoices i join rigo.companies c on c.id = i.company_id where i.id = $1`, [i.subject.id]);
-    if (rows[0]?.status === 'draft' && rows[0].settings?.invoiceApprovalRequired !== false) {
+    // Same rule as issuing by hand: with the company approval rule on, only an approved invoice is issued
+    // (a draft or one still waiting for approval is not).
+    if (['draft', 'pending_approval'].includes(rows[0]?.status) && rows[0].settings?.invoiceApprovalRequired !== false) {
       // The company-wide approval rule applies even when a workflow step has no approval of its own.
       return { status: 'blocked', explanation: 'Not issued: company settings require invoice approval before issuing. Add an approval to this step or approve the invoice.', link: `invoices/${i.subject.id}` };
     }
@@ -44,7 +49,7 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
   },
 
   async 'message.prepare_invoice'(i) {
-    const mail = await invoiceEmail(i.q, i.subject.id);
+    const mail = await invoiceEmail(i.q, i.subject.id, await invoiceViewLink(i.q, i.companyId, i.subject.id));
     const id = await prepareMessage(i.q, i.companyId, i.actionId, { channel: 'email', recipient: mail.recipient, subject: mail.subject, body: mail.body, customerId: mail.customerId, jobId: mail.jobId, invoiceId: i.subject.id, userId: i.actorUserId });
     await i.q.query(`update rigo.invoices set delivery_status = 'prepared' where id = $1 and delivery_status = 'not_prepared'`, [i.subject.id]);
     return { status: 'completed', explanation: mail.recipient ? 'Invoice email prepared.' : 'Invoice email prepared, but the customer has no email address on file.', context: { messageId: id } };
@@ -77,7 +82,14 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
 
   async notify(i) {
     const label = await subjectLabel(i.q, i.subject);
-    const n = { category: 'update' as const, title: i.params.text || 'Update from Rigo', body: label, link: i.subject.type === 'job' ? `jobs/${i.subject.id}` : i.subject.type === 'invoice' ? `invoices/${i.subject.id}` : undefined, dedupeKey: `notify:${i.actionId}` };
+    // The title names the record (and, for a job, when it is), so the bell is never vague (R14-m5).
+    let when = '';
+    if (i.subject.type === 'job') {
+      const j = (await i.q.query<any>(`select j.scheduled_start, c.timezone from rigo.jobs j join rigo.companies c on c.id = j.company_id where j.id = $1`, [i.subject.id])).rows[0];
+      if (j?.scheduled_start) when = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: j.timezone }).format(new Date(j.scheduled_start));
+    }
+    const text = (i.params.text || 'Update from Rigo').replace(/[.!]\s*$/, '');
+    const n = { category: 'update' as const, title: `${text}: ${label}${when ? `, ${when}` : ''}`.slice(0, 200), body: i.params.text && i.params.text !== text ? i.params.text : label, link: i.subject.type === 'job' ? `jobs/${i.subject.id}` : i.subject.type === 'invoice' ? `invoices/${i.subject.id}` : undefined, dedupeKey: `notify:${i.actionId}` };
     if (i.params.roles?.length) await notifyRoles(i.q, i.companyId, i.params.roles, n);
     if (i.params.assignee && i.subject.type === 'job') {
       const { rows } = await i.q.query<{ assigned_user_id: string | null }>(`select assigned_user_id from rigo.jobs where id = $1`, [i.subject.id]);

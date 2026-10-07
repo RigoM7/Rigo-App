@@ -6,7 +6,7 @@ import { type AppEnv, requireUser, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, forbidden } from '../http/errors.js';
 import { seedRoles, insertService, seedDefaultWorkflows, exportStructure } from './structure.js';
-import { starterService } from '../../shared/services.js';
+import { starterService, type PriceLine } from '../../shared/services.js';
 import { stableHash } from '../../shared/workflows.js';
 import { createCompany, createCompanySchema } from './companies.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
@@ -49,13 +49,18 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   }
   await q.query(`update rigo.companies set settings = jsonb_set(settings, '{demo,driverUserId}', to_jsonb($2::text)) where id = $1`, [cid, dana]);
 
-  // Services with fictional example rates (not recommendations). Fuel is priced per product; septic
+  // Services with fictional example rates (not recommendations), in ten-thousandths of a dollar.
+  // Fuel is priced per product (diesel to the tenth of a cent); septic pump-outs include 1,000 gal;
   // inspections are deliberately left without a rate so the demo shows an invoice on hold.
-  const rate = (svc: ReturnType<typeof starterService>, rates: Record<string, number | null>) => { for (const p of svc.pricing) if (p.id in rates) p.rateMinor = rates[p.id]; return svc; };
-  const fuel = rate(starterService('fuel'), { fuel_diesel: 419, fuel_gasoline: 389, fuel_heating_oil: 359, after_hours: 7500 });
-  fuel.pricing.splice(3, 0, { id: 'delivery', label: 'Delivery fee', basis: 'flat', quantityField: '', unit: '', rateMinor: 4500, taxable: false, when: null });
-  const toilet = starterService('portable_toilet'); toilet.pricing[0].rateMinor = 3500; toilet.requiresPhoto = false;
-  const septic = rate(starterService('septic'), { pump_out: 35, inspection: null, repair_visit: 12500, after_hours: 15000 }); septic.requiresPhoto = false;
+  const today0 = localDate(new Date(), TZ);
+  const rate = (svc: ReturnType<typeof starterService>, rates: Record<string, Partial<PriceLine>>) => {
+    for (const p of svc.pricing) if (p.id in rates) Object.assign(p, rates[p.id], { rateSince: rates[p.id].rateE4 ? today0 : null });
+    return svc;
+  };
+  const fuel = rate(starterService('fuel'), { fuel_diesel: { rateE4: 41990 }, fuel_dyed_diesel: { rateE4: 37990 }, fuel_gasoline: { rateE4: 38900 }, fuel_heating_oil: { rateE4: 35900 }, delivery: { rateE4: 450000 }, after_hours: { rateE4: 750000 } });
+  const toilet = starterService('portable_toilet'); toilet.pricing[0].rateE4 = 350000; toilet.requiresPhoto = false;
+  const septic = rate(starterService('septic'), { pump_out: { rateE4: 3750000, overageRateE4: 3500 }, inspection: { rateE4: null }, grease_trap: { rateE4: 9500, minimumMinor: 20000 }, repair_visit: { rateE4: 1250000 }, after_hours: { rateE4: 1500000 } });
+  septic.requiresPhoto = false;
   const sFuel = await insertService(q, cid, fuel), sToilet = await insertService(q, cid, toilet), sSeptic = await insertService(q, cid, septic);
 
   const res: Record<string, string> = {};
@@ -76,11 +81,7 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   }
 
   // Workflows: the standard set, active, acting on behalf of the demo visitor.
-  const wfs = await seedDefaultWorkflows(q, cid, userId);
-  for (const w of wfs) {
-    await q.query(`update rigo.workflow_versions set status = 'active', tested_hash = definition_hash, tested_at = now(), activated_at = now(), activated_by = $2, test_result = '{"note":"Pre-tested demo workflow"}' where id = $1`, [w.versionId, userId]);
-    await q.query(`update rigo.workflows set active_version_id = $2 where id = $1`, [w.workflowId, w.versionId]);
-  }
+  await seedDefaultWorkflows(q, cid, userId, { activate: true, note: 'Pre-tested demo workflow' });
 
   const today = localDate(new Date(), TZ);
   let n = 0;
@@ -122,7 +123,7 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
   const paid = await job({ cust: 2, svc: sFuel, status: 'completed', day: addDays(today, -6), time: '08:30', driver: dana, resources: ['Tanker 12'], details: { product: 'Heating oil', requested_qty: '300' } });
   await complete(paid, 'Dana Driver (fictional)', 140, { delivered_qty: '300' });
   for (const [id, payNow] of [[emergency, false], [paid, true]] as const) {
-    const inv = await prepareInvoiceForJob(q, cid, id, { userId });
+    const inv = await prepareInvoiceForJob(q, cid, id, { userId }) as { invoiceId: string };
     await q.query(`update rigo.invoices set approved_by = $2, approved_at = now() where id = $1`, [inv.invoiceId, userId]);
     await issueInvoice(q, cid, inv.invoiceId, { userId });
     if (payNow) {
@@ -135,10 +136,12 @@ export async function seedDemo(q: Q, userId: string, companyId?: string) {
 
   // A rental plan: weekly servicing, billed every 28 days from the start date. The first period's
   // invoice is prepared right after seeding (see generateForCompany in the routes below).
-  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through)
-      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8)`,
+  // Two unit types; routine visits are covered by the rent and arrive assigned to the plan's driver.
+  await q.query(`insert into rigo.recurring_plans (company_id, name, kind, customer_id, location_id, service_id, visit_rule, billing_rule, units, starts_on, generated_through, default_user_id)
+      values ($1,'Lakeview season rental (fictional)','rental',$2,$3,$4,$5,$6,6,$7,$8,$9)`,
     [cid, custs[2].id, custs[2].loc, sToilet, JSON.stringify({ frequency: 'weekly', interval: 1, weekdays: [5], time: '07:00', durationMinutes: 60 }),
-      JSON.stringify({ frequency: 'every_n_days', everyDays: 28, rateMinor: 12500, description: 'Unit rental' }), addDays(today, -10), addDays(today, 14)]);
+      JSON.stringify({ frequency: 'every_n_days', everyDays: 28, description: 'Unit rental', lines: [{ id: 'std', label: 'Standard unit', quantity: 5, rateE4: 1_250_000 }, { id: 'ada', label: 'ADA unit', quantity: 1, rateE4: 1_600_000 }], visitPrices: { extra: 650_000 } }),
+      addDays(today, -10), addDays(today, 14), dana]);
   return cid;
 }
 

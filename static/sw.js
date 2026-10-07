@@ -1,6 +1,7 @@
-// Rigo service worker: caches the app shell so the driver screens open offline.
+// Rigo service worker: caches the app shell so the driver screens open offline. Any page opened with
+// no signal (a deep link like /c/…/today/…) gets the shell, which then runs from the device copy.
 // API responses are never cached here; offline job data lives in IndexedDB, scoped per user and company.
-const CACHE = 'rigo-shell-v1';
+const CACHE = 'rigo-shell-v2';
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon.svg'])).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {

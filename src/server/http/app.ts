@@ -17,6 +17,9 @@ import { templateRoutes } from '../modules/templates.js';
 import { assistantRoutes } from '../modules/assistant.js';
 import { demoPublic, demoRoutes } from '../modules/demo.js';
 import { overviewRoutes } from '../modules/overview.js';
+import { invoiceViewPublic } from '../modules/invoice-view.js';
+import { collectionRoutes, runCollections } from '../modules/collections.js';
+import { latePublic, lateRoutes } from '../modules/late-records.js';
 import { processAll, escalateApprovals } from '../automation/engine.js';
 import { config } from '../config.js';
 
@@ -39,6 +42,8 @@ export function createApp() {
   app.route('/', companiesPublic);
   app.route('/', invitationPublic);
   app.route('/', demoPublic);
+  app.route('/', invoiceViewPublic);
+  app.route('/', latePublic);
 
   const company = new Hono<AppEnv>();
   company.use('*', companyScope);
@@ -47,7 +52,7 @@ export function createApp() {
     await next();
     if (config.isServerless && c.req.method !== 'GET' && c.res.status < 400) await processAll(2500).catch((e) => console.error('[automation]', e));
   });
-  for (const r of [companyRoutes, teamRoutes, inboxRoutes, recordRoutes, jobRoutes, billingRoutes, workflowRoutes, recurringRoutes, importRoutes, templateRoutes, assistantRoutes, demoRoutes, overviewRoutes]) {
+  for (const r of [companyRoutes, teamRoutes, inboxRoutes, recordRoutes, jobRoutes, billingRoutes, collectionRoutes, lateRoutes, workflowRoutes, recurringRoutes, importRoutes, templateRoutes, assistantRoutes, demoRoutes, overviewRoutes]) {
     company.route('/', r);
   }
   app.route('/c/:cid', company);
@@ -57,6 +62,7 @@ export function createApp() {
     if (config.cronSecret && c.req.header('authorization') !== `Bearer ${config.cronSecret}`) return c.json({ error: 'unauthorized' }, 401);
     const visits = await generateAll();
     const escalated = await escalateApprovals();
+    await runCollections();
     await processAll(8000);
     await cleanupAuth();
     return c.json({ ok: true, visits, escalated });

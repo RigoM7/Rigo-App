@@ -96,7 +96,7 @@ All optional; see `.env.example`.
 
 ```bash
 npm run typecheck
-npm test                                   # 63 API/domain tests on embedded PostgreSQL
+npm test                                   # API/domain tests on embedded PostgreSQL (PGlite)
 DATABASE_URL=postgres://… npm test         # the same tests on a real PostgreSQL server
 
 # Browser checks against a running server (uses the pre-installed Chromium):
@@ -104,7 +104,8 @@ npm run build && npm start &
 BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) npm run test:browser
 # Add NOEMAIL_URL=http://localhost:8788 (the production-like copy above) to also check recovery
 # without email; E2E_ONLY=auth runs only the account and sign-in checks, E2E_ONLY=round2 only
-# the demo walkthrough, assignment, approval-card and demo-content checks.
+# the demo walkthrough, assignment, approval-card and demo-content checks, E2E_ONLY=phase1 only
+# the money, approvals, rentals and driver-app checks (offline phone, removed driver, hand-over).
 ```
 
 The browser checks run real flows (the landing page, sign-in and sign-up from any entry point,
@@ -113,7 +114,10 @@ demo and its guided walkthrough from the driver view to the simulated invoice em
 timeline and job panel, command menu, sidebar collapse, dispatch (save on change, Undo, stale
 tabs, keyboard, unsaved-changes warning), driver completion, approval cards with the invoice
 total, per-product fuel pricing, 28-day rental billing, late and urgent jobs,
-workflow edit/test, assistant proposal, company creation, employee invitation), an axe
+workflow edit/test, assistant proposal, company creation, employee invitation, example bills,
+void and re-bill, collections, discounts and view links, approval confirmations, rental plans,
+the driver's phone at 360–390 px, offline save and reopen with automatic sending, a removed
+driver's late record, reassignment mid-job and shared-phone sign-out), an axe
 WCAG 2.2 AA scan of 18 app pages plus the landing, sign-in, sign-up, forgot, reset,
 workspaces and account pages and the Team reset-link dialog in light and dark themes,
 horizontal-overflow checks at 375,

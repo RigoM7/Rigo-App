@@ -3,7 +3,7 @@ import { getCookie } from 'hono/cookie';
 import type { Db, Q } from '../db/index.js';
 import { getDb } from '../db/index.js';
 import { sha256 } from '../lib/util.js';
-import { forbidden, notFound, unauthorized } from './errors.js';
+import { HttpError, forbidden, notFound, unauthorized } from './errors.js';
 import type { Permission } from '../../shared/permissions.js';
 import { ALL_PERMISSIONS } from '../../shared/permissions.js';
 
@@ -72,8 +72,14 @@ export async function loadCompanyCtx(db: Db, user: User, companyId: string): Pro
        join rigo.roles r on r.company_id = c.id and r.key = m.role_key
       where c.id = $1`, [companyId, user.id]);
   const row = rows[0];
-  // Non-members get the same answer as for a company that does not exist.
-  if (!row) throw notFound('Company');
+  if (!row) {
+    // Someone removed from this company is told so (only they can see it), so their phone can send
+    // records still waiting on it and then clear the company's data (R12-M1). Everyone else gets the
+    // same answer as for a company that does not exist.
+    const gone = (await db.query<{ until: string }>(`select (removed_at + interval '7 days') as until from rigo.memberships where company_id = $1 and user_id = $2 and status = 'removed' and removed_at > now() - interval '7 days'`, [companyId, user.id])).rows[0];
+    if (gone) throw new HttpError(403, 'not_member', 'You are no longer a member of this company.', { lateRecordsUntil: gone.until });
+    throw notFound('Company');
+  }
   const { role_key, role_name, is_owner, permissions, ...company } = row;
   const isDemo = company.kind === 'demo';
   let perms = new Set((is_owner ? ALL_PERMISSIONS : permissions) as Permission[]);

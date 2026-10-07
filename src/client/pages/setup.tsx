@@ -58,7 +58,7 @@ export function Setup() {
   const [inv, setInv] = useState({ email: '', role: 'driver' });
   const [invLink, setInvLink] = useState('');
   const addSvc = useSubmit(async (cat: string) => { await post(`/c/${c.cid}/services`, starterService(cat as any)); refresh(); toast(`${SERVICE_CATEGORIES[cat as keyof typeof SERVICE_CATEGORIES]} service added. Set its rates in Services when you are ready.`); });
-  const saveMode = useSubmit(async () => { await patch(`/c/${c.cid}/automation`, { mode }); refresh(); toast('Automation mode saved'); });
+  const saveMode = useSubmit(async () => { await patch(`/c/${c.cid}/automation`, { mode }); refresh(); toast('Automation mode saved'); return true; });
   const activateAll = useSubmit(async () => {
     let n = 0;
     for (const w of workflows.data.workflows.filter((x: any) => x.latest_id && !x.active_version_id)) {
@@ -104,7 +104,8 @@ export function Setup() {
             <h3>Recommended workflows</h3>
             {workflows.data?.workflows.length ? <ul className="list">{workflows.data.workflows.filter((w: any) => w.latest_id).map((w: any) => <li key={w.id} className="row-between" style={{ padding: '8px 0' }}><span>{w.name}<div className="small muted">{w.description}</div></span>{w.active_version_id ? <span className="small row"><CheckCircle2 aria-hidden style={{ color: 'var(--success)', width: 18 }} />Active</span> : <span className="small muted">Draft</span>}</li>)}</ul> : <p className="muted">No workflows yet. You can add them from Workflows or a template.</p>}
             {workflows.data?.workflows.some((w: any) => w.latest_id && !w.active_version_id) && <div className="stack-sm"><Button busy={activateAll.busy} onClick={() => activateAll.run()}>Test and activate these</Button><span className="small muted">Each one is checked with sample data first. Invoices still need approval before they are issued.</span></div>}
-            <div className="form-actions"><Button variant="primary" onClick={() => { mark('automation'); next(); }}>Continue</Button></div>
+            {/* Continue saves the chosen mode too, so a choice is never lost (R3-M5). */}
+            <div className="form-actions"><Button variant="primary" busy={saveMode.busy} onClick={async () => { if (mode !== c.company.automation_mode && !(await saveMode.run())) return; mark('automation'); next(); }}>Continue</Button></div>
           </div>
         </Card>
       )}

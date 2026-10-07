@@ -59,8 +59,18 @@ export function Automation() {
   const tab = (sp.get('tab') ?? 'queue') as 'queue' | 'runs' | 'history' | 'services';
   const [pauseOpen, setPauseOpen] = useState(false);
   const q = useQuery({ queryKey: [c.cid, 'automation'], queryFn: () => get(`/c/${c.cid}/automation`), refetchInterval: 10_000 });
-  const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
-  const setMode = useSubmit(async (mode: Mode) => { await patch(`/c/${c.cid}/automation`, { mode }); refresh(); toast(`Automation mode set to ${mode}. Approval rules still apply.`); });
+  // The shell's paused banner reads the company from "me", so refresh that too.
+  const refresh = () => { qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); };
+  // Changing what Rigo does on its own is confirmed with a plain summary of what changes (R14-m2).
+  const MODE_SUMMARY: Record<Mode, string> = {
+    manual: 'Rigo stops preparing anything on its own. Each workflow step becomes a to-do for a person; in-app notices still go out.',
+    assisted: 'Rigo prepares drafts (invoices, emails) and proposes every step that commits something; a person runs each one.',
+    automatic: `Rigo runs workflow steps on its own, including issuing invoices and sending messages through connected services. Steps with an approval still wait for one${c.company.invoiceApprovalRequired !== false ? ', and every invoice still needs approval before it is issued' : ''}.`,
+  };
+  const setMode = useSubmit(async (mode: Mode) => {
+    if (!(await ask({ title: `Switch to ${mode === 'automatic' ? 'Automatic' : mode === 'assisted' ? 'Assisted' : 'Manual'}?`, body: MODE_SUMMARY[mode], confirm: `Switch to ${mode}`, danger: mode === 'automatic' }))) return;
+    await patch(`/c/${c.cid}/automation`, { mode }); refresh(); toast(`Automation mode set to ${mode}. Approval rules still apply.`);
+  });
   const pause = useSubmit(async (queued: 'hold' | 'cancel') => { const r = await patch(`/c/${c.cid}/automation`, { paused: true, queued }); setPauseOpen(false); refresh(); toast(queued === 'cancel' ? `Paused. ${r.cancelled} waiting step(s) cancelled.` : 'Paused. Queued steps are held.'); });
   const resume = useSubmit(async () => { await patch(`/c/${c.cid}/automation`, { paused: false }); refresh(); toast('Automation resumed. Held steps will continue.'); });
   const act = useSubmit(async (id: string, what: 'run' | 'dismiss') => { await post(`/c/${c.cid}/automation/actions/${id}/${what}`); refresh(); toast(what === 'run' ? 'Step started.' : 'Step dismissed; the workflow run stops.'); });
@@ -84,6 +94,7 @@ export function Automation() {
       <Card id="mode" title="How much Rigo automates">
         <ModePicker value={d.mode} onChange={(m) => setMode.run(m)} disabled={!c.can('company.settings') || setMode.busy} />
         <p className="small muted" style={{ marginTop: 12 }}>Workflows and individual steps can override this. Automatic never skips approvals and never turns on services that are not enabled.</p>
+        {d.workflows ? <p className="small" style={{ marginBottom: 0 }}><strong>{d.workflows.active} of {d.workflows.total} workflows on.</strong> <Link to={c.to('workflows')}>Review workflows</Link></p> : null}
         <ErrorSummary error={setMode.error} />
       </Card>
       <Tabs label="Automation activity" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[

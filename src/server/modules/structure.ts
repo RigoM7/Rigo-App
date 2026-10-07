@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { ROLE_PRESETS, ALL_PERMISSIONS } from '../../shared/permissions.js';
-import { serviceInputSchema, starterService, customFieldsSchema, type ServiceCategory, type ServiceInput } from '../../shared/services.js';
+import { serviceInputSchema, starterService, customFieldsSchema, readPricing, storedPricing, type ServiceCategory, type ServiceInput, type PriceLine } from '../../shared/services.js';
 import { definitionSchema, defaultWorkflows, stableHash, type Definition } from '../../shared/workflows.js';
 
 // "Structure" is reusable configuration: services, custom fields, role permissions and workflow
@@ -22,11 +22,14 @@ export async function seedRoles(q: Q, companyId: string) {
   }
 }
 
+/** Structure without prices: rates, overage rates, minimums and rate dates are the company's own decisions. */
+const withoutRates = (p: PriceLine): PriceLine => ({ ...p, rateE4: null, overageRateE4: null, minimumMinor: null, rateSince: null });
+
 export async function insertService(q: Q, companyId: string, s: ServiceInput) {
   const { rows } = await q.query<{ id: string }>(
-    `insert into rigo.services (company_id, name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, active)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-    [companyId, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(s.pricing), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active]);
+    `insert into rigo.services (company_id, name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, active, invoice_shows_notes)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+    [companyId, s.name, s.category, s.description, JSON.stringify(s.fields), JSON.stringify(storedPricing(s.pricing)), s.taxRateBp, s.requiresPhoto, s.requiresSignature, s.active, !!s.invoiceShowsNotes]);
   return rows[0].id;
 }
 
@@ -43,14 +46,26 @@ export async function insertWorkflow(q: Q, companyId: string, userId: string | n
   return { workflowId: rows[0].id, versionId: v.rows[0].id };
 }
 
-export async function seedDefaultWorkflows(q: Q, companyId: string, userId: string | null) {
+/**
+ * The standard workflows. With `activate`, they start on, acting for the owner who created the
+ * company, so completed jobs are never left unbilled (R3-M3); issuing still needs approval.
+ */
+export async function seedDefaultWorkflows(q: Q, companyId: string, userId: string | null, opts: { activate?: boolean; note?: string } = {}) {
   const out = [];
-  for (const wf of defaultWorkflows()) out.push(await insertWorkflow(q, companyId, userId, wf, 'system'));
+  for (const wf of defaultWorkflows()) {
+    const w = await insertWorkflow(q, companyId, userId, wf, 'system');
+    if (opts.activate && userId) {
+      await q.query(`update rigo.workflow_versions set status = 'active', tested_hash = definition_hash, tested_at = now(), activated_at = now(), activated_by = $2, test_result = $3 where id = $1`,
+        [w.versionId, userId, JSON.stringify({ note: opts.note ?? 'Standard workflow, on from the start. Invoices still need approval before they are issued.' })]);
+      await q.query(`update rigo.workflows set active_version_id = $2 where id = $1`, [w.workflowId, w.versionId]);
+    }
+    out.push(w);
+  }
   return out;
 }
 
 export async function exportStructure(q: Q, companyId: string): Promise<Structure> {
-  const services = await q.query(`select name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature from rigo.services where company_id = $1 and active order by created_at`, [companyId]);
+  const services = await q.query(`select name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, invoice_shows_notes from rigo.services where company_id = $1 and active order by created_at`, [companyId]);
   const company = await q.query<{ settings: any }>(`select settings from rigo.companies where id = $1`, [companyId]);
   const roles = await q.query(`select key, name, description, permissions from rigo.roles where company_id = $1 and not is_owner order by key`, [companyId]);
   const wfs = await q.query(
@@ -63,8 +78,8 @@ export async function exportStructure(q: Q, companyId: string): Promise<Structur
     services: services.rows.map((s: any) => ({
       name: s.name, category: s.category, description: s.description, fields: s.fields,
       // Rates are company pricing decisions, not reusable structure; the receiving company sets its own.
-      pricing: (s.pricing as any[]).map((p) => ({ ...p, rateMinor: null })),
-      taxRateBp: null, requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, active: true,
+      pricing: readPricing(s.pricing).map(withoutRates),
+      taxRateBp: null, requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, active: true, invoiceShowsNotes: !!s.invoice_shows_notes,
     })),
     customFields: customFieldsSchema.parse(company.rows[0]?.settings?.customFields ?? {}),
     roles: roles.rows as any,
@@ -82,7 +97,7 @@ export async function applyStructure(q: Q, companyId: string, userId: string, co
   for (const raw of s.services) {
     const parsed = serviceInputSchema.safeParse(raw);
     if (!parsed.success) { summary.skipped.push(`Service "${(raw as any)?.name ?? '?'}" is not valid`); continue; }
-    await insertService(q, companyId, { ...parsed.data, pricing: parsed.data.pricing.map((p) => ({ ...p, rateMinor: null })), taxRateBp: null });
+    await insertService(q, companyId, { ...parsed.data, pricing: parsed.data.pricing.map(withoutRates), taxRateBp: null });
     summary.services++;
   }
   for (const r of s.roles) {

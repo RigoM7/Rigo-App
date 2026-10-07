@@ -2,7 +2,8 @@ import type { Q } from '../db/index.js';
 import type { CompanyCtx } from '../http/context.js';
 import { isEligibleApprover, type Actor } from '../automation/engine.js';
 import { quantityNote } from '../../shared/billing.js';
-import type { FieldDef, PriceLine } from '../../shared/services.js';
+import { readPricing, type FieldDef } from '../../shared/services.js';
+import { lineFromRow } from './invoicing.js';
 
 // What an approver sees before deciding, and which approvals count as waiting for them. The inbox
 // list, its counts and Home's "Needs you" all use visibleApprovals so they can never disagree.
@@ -45,16 +46,16 @@ export async function approvalSummary(q: Q, ap: { subject_type: string; subject_
         where i.id = $1 and i.company_id = $2`, [ap.subject_id, ap.company_id]);
     const i = rows[0];
     if (!i) return null;
-    const lines = (await q.query<any>(`select description, quantity, unit, rate_minor, amount_minor, kind from rigo.invoice_lines where invoice_id = $1 order by position`, [i.id])).rows;
+    const lines = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [i.id])).rows.map(lineFromRow);
     const values = { ...(i.details ?? {}), ...(i.completion?.values ?? {}) };
     return {
       kind: 'invoice' as const, invoiceId: i.id, number: i.number, status: i.status, customerName: i.customer_name, jobNumber: i.job_number, serviceName: i.service_name,
       currency: i.currency, dueDays: i.due_days,
       subtotalMinor: fin ? i.subtotal_minor : undefined, discountMinor: fin ? i.discount_minor : undefined, taxMinor: fin ? i.tax_minor : undefined, totalMinor: fin ? i.total_minor : undefined,
-      lines: lines.slice(0, 5).map((l) => ({ description: l.description, quantity: String(l.quantity), unit: l.unit, ...(fin ? { rateMinor: l.rate_minor, amountMinor: l.kind === 'discount' ? -Math.abs(l.amount_minor ?? 0) : l.amount_minor } : {}) })),
+      lines: lines.slice(0, 5).map((l) => ({ description: l.description, quantity: l.quantity, unit: l.unit, ...(fin ? { rateE4: l.rateE4, amountMinor: l.kind === 'discount' ? -Math.abs(l.amountMinor ?? 0) : l.amountMinor, note: l.note } : {}) })),
       moreLines: Math.max(0, lines.length - 5),
       holdReasons: (i.hold_reasons ?? []) as string[],
-      quantityNote: quantityNote((i.fields ?? []) as FieldDef[], (i.pricing ?? []) as PriceLine[], values),
+      quantityNote: quantityNote((i.fields ?? []) as FieldDef[], readPricing(i.pricing), values),
     };
   }
   if (ap.subject_type === 'job') {

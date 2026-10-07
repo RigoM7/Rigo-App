@@ -42,6 +42,26 @@ export const OUTCOMES = {
 } as const;
 export type Outcome = keyof typeof OUTCOMES;
 
+/** Quick reasons a visit couldn't be completed (R6-m5); "Other" needs a few words. */
+export const REASON_CODES = {
+  locked_gate: 'Locked gate',
+  dog: 'Dog on the property',
+  no_access: 'No access',
+  customer_cancelled: 'Customer cancelled on site',
+  tank_full: 'Tank full',
+  other: 'Other',
+} as const;
+export type ReasonCode = keyof typeof REASON_CODES;
+export const REASON_CODE_KEYS = Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]];
+
+/** The reason the office reads: the quick reason, then anything the driver added. */
+export function outcomeReason(code: ReasonCode | null | undefined, text: string) {
+  const t = text.trim();
+  if (!code || code === 'other') return t;
+  const label = REASON_CODES[code];
+  return t && !t.startsWith(label) ? `${label}: ${t}` : t || label;
+}
+
 const transitions: Record<JobStatus, JobStatus[]> = {
   draft: ['open', 'cancelled'],
   open: ['draft', 'in_progress', 'completed', 'partial', 'unsuccessful', 'cancelled'],
@@ -86,6 +106,7 @@ export interface CompletionInput {
   values: Record<string, unknown>;
   notes: string;
   reason: string;
+  reasonCode?: ReasonCode | null;
   photoCount: number;
   hasSignature: boolean;
   signerName: string;
@@ -93,7 +114,7 @@ export interface CompletionInput {
 
 export function completionProblems(c: CompletionInput, svc: { fields: FieldDef[]; requires_photo: boolean; requires_signature: boolean }) {
   const problems: Record<string, string> = {};
-  if (c.outcome !== 'completed' && !c.reason.trim()) problems.reason = 'Explain what happened so the office can follow up';
+  if (c.outcome !== 'completed' && !outcomeReason(c.reasonCode, c.reason)) problems.reason = c.reasonCode === 'other' ? 'Say what happened so the office can follow up' : 'Choose what happened, or describe it, so the office can follow up';
   if (c.outcome === 'completed') {
     for (const f of svc.fields) {
       if ((f.stage === 'completion' || f.stage === 'both') && f.required) {

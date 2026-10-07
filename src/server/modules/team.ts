@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, type Q } from '../db/index.js';
-import { type AppEnv, type CompanyCtx, need, audit, requireUser, can } from '../http/context.js';
+import { type AppEnv, type CompanyCtx, need, needAny, audit, requireUser, can } from '../http/context.js';
 import { body, normEmail, sha256, token } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { config } from '../config.js';
 import { sendSystemEmail } from '../adapters/index.js';
 import { ALL_PERMISSIONS } from '../../shared/permissions.js';
 import { notifyRoles, notifyUsers } from './inbox.js';
+import { warnOrphanedApprovals } from '../automation/engine.js';
 
 export const teamRoutes = new Hono<AppEnv>();
 export const invitationPublic = new Hono<AppEnv>();
@@ -29,10 +30,12 @@ async function activeOwnerCount(q: Q, companyId: string) {
 
 /** Ends a membership. Open work assigned to the person returns to the unassigned queue, with history. */
 export async function removeMember(q: Q, companyId: string, m: { id: string; user_id: string }, actorId: string, reason = 'Assignee was removed from the company') {
-  await q.query(`update rigo.memberships set status = 'removed', updated_at = now() where id = $1`, [m.id]);
+  await q.query(`update rigo.memberships set status = 'removed', removed_at = now(), updated_at = now() where id = $1`, [m.id]);
+  // Approval authority they gave or were given in this company ends with the membership.
+  await q.query(`update rigo.approval_delegations set ends_at = now() where company_id = $1 and (from_user_id = $2 or to_user_id = $2) and (ends_at is null or ends_at > now())`, [companyId, m.user_id]);
   const jobs = await q.query<{ id: string }>(`update rigo.jobs set assigned_user_id = null, version = version + 1, updated_at = now() where company_id = $1 and assigned_user_id = $2 and status in ('draft','open','in_progress') returning id`, [companyId, m.user_id]);
   for (const j of jobs.rows) {
-    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason })]);
+    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'unassigned',$3,$4)`, [companyId, j.id, actorId, JSON.stringify({ reason, from: m.user_id })]);
   }
   if (jobs.rows.length) await notifyRoles(q, companyId, ['dispatcher', 'owner'], { category: 'warning', title: `${jobs.rows.length} job(s) need a new driver`, body: 'A member was removed and their open jobs were unassigned.', link: 'jobs?assignee=none' });
   return jobs.rows.length;
@@ -44,7 +47,8 @@ teamRoutes.get('/members', async (c) => {
   const members = await cc.db.query(
     `select m.id, m.user_id, coalesce(m.display_name, u.name) as name, ${can(cc, 'customers.contact') || can(cc, 'members.manage') ? 'u.email' : 'null as email'},
             m.role_key, r.name as role_name, r.is_owner, m.is_fictional, m.created_at,
-            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status in ('open','in_progress')) as open_jobs
+            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status in ('open','in_progress')) as open_jobs,
+            (select count(*)::int from rigo.jobs j where j.company_id = m.company_id and j.assigned_user_id = m.user_id and j.status = 'in_progress') as started_jobs
        from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
       where m.company_id = $1 and m.status = 'active' order by r.is_owner desc, name`, [cc.company.id]);
   const invitations = can(cc, 'members.invite')
@@ -71,7 +75,10 @@ teamRoutes.patch('/members/:mid', async (c) => {
       throw conflict('A company must keep at least one active owner. Add another owner first.');
     }
     await q.query(`update rigo.memberships set role_key = $2, updated_at = now() where id = $1`, [m.id, input.role]);
+    // Authority delegated under the old role doesn't carry over to the new one.
+    if (m.role_key !== input.role) await q.query(`update rigo.approval_delegations set ends_at = now() where company_id = $1 and from_user_id = $2 and (ends_at is null or ends_at > now())`, [cc.company.id, m.user_id]);
     await audit(q, cc, 'member.role_changed', { memberId: m.id, from: m.role_key, to: input.role });
+    await warnOrphanedApprovals(q, cc.company.id);
   });
   return c.json({ ok: true });
 });
@@ -87,6 +94,7 @@ teamRoutes.delete('/members/:mid', async (c) => {
     if (m.is_owner && (await activeOwnerCount(q, cc.company.id)) <= 1) throw conflict('You cannot remove the last active owner. Add another owner first.');
     const unassigned = await removeMember(q, cc.company.id, m, cc.user.id);
     await audit(q, cc, 'member.removed', { memberId: m.id, unassignedJobs: unassigned });
+    await warnOrphanedApprovals(q, cc.company.id);
   });
   return c.json({ ok: true });
 });
@@ -182,8 +190,11 @@ teamRoutes.patch('/roles/:key', async (c) => {
   const { rows } = await cc.db.query<{ is_owner: boolean }>(`select is_owner from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, c.req.param('key')]);
   if (!rows[0]) throw notFound('Role');
   if (rows[0].is_owner) throw badRequest('The Owner role always has every permission.');
-  await cc.db.query(`update rigo.roles set permissions = $3, description = coalesce($4, description) where company_id = $1 and key = $2`, [cc.company.id, c.req.param('key'), input.permissions, input.description ?? null]);
-  await audit(cc.db, cc, 'role.updated', { key: c.req.param('key'), permissions: input.permissions });
+  await cc.db.tx(async (q) => {
+    await q.query(`update rigo.roles set permissions = $3, description = coalesce($4, description) where company_id = $1 and key = $2`, [cc.company.id, c.req.param('key'), input.permissions, input.description ?? null]);
+    await audit(q, cc, 'role.updated', { key: c.req.param('key'), permissions: input.permissions });
+    await warnOrphanedApprovals(q, cc.company.id);
+  });
   return c.json({ ok: true });
 });
 
@@ -264,16 +275,33 @@ teamRoutes.get('/delegations', async (c) => {
   return c.json({ delegations: rows });
 });
 
+/** Who can take over approvals (R4-M3): active members whose role can approve invoices or decide approvals. */
+const ELIGIBLE_DELEGATE = `(r.is_owner or 'approvals.decide' = any(r.permissions) or 'invoices.approve' = any(r.permissions))`;
+
+teamRoutes.get('/delegations/candidates', async (c) => {
+  const cc = c.get('cc');
+  needAny(cc, 'approvals.decide', 'invoices.approve');
+  const { rows } = await cc.db.query(`select m.user_id, coalesce(m.display_name, u.name) as name, r.name as role_name from rigo.memberships m join rigo.users u on u.id = m.user_id
+      join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+      where m.company_id = $1 and m.status = 'active' and not m.is_fictional and m.user_id <> $2 and ${ELIGIBLE_DELEGATE} order by name`, [cc.company.id, cc.user.id]);
+  return c.json({ candidates: rows });
+});
+
 teamRoutes.post('/delegations', async (c) => {
   const cc = c.get('cc');
-  need(cc, 'approvals.decide');
+  needAny(cc, 'approvals.decide', 'invoices.approve');
   const input = await body(c, z.object({ toUserId: z.string().uuid(), endsAt: z.string().datetime().nullable() }));
   if (input.toUserId === cc.user.id) throw badRequest('Choose someone else.');
-  const m = await cc.db.query(`select 1 from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
-      where m.company_id = $1 and m.user_id = $2 and m.status = 'active' and (r.is_owner or 'approvals.decide' = any(r.permissions))`, [cc.company.id, input.toUserId]);
-  if (!m.rows.length) throw badRequest('That person cannot act as an approver in this company.', { fields: { toUserId: 'Not an eligible approver' } });
-  await cc.db.query(`insert into rigo.approval_delegations (company_id, from_user_id, to_user_id, ends_at) values ($1,$2,$3,$4)`, [cc.company.id, cc.user.id, input.toUserId, input.endsAt]);
-  await audit(cc.db, cc, 'approval.delegated', input);
+  if (input.endsAt && new Date(input.endsAt) <= new Date()) throw badRequest('Choose an end date in the future.', { fields: { endsAt: 'Choose a later date' } });
+  await cc.db.tx(async (q) => {
+    const m = await q.query<{ name: string }>(`select coalesce(m.display_name, u.name) as name from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+        where m.company_id = $1 and m.user_id = $2 and m.status = 'active' and ${ELIGIBLE_DELEGATE}`, [cc.company.id, input.toUserId]);
+    if (!m.rows.length) throw badRequest('That person can\'t approve in this company. Choose someone whose role can approve invoices or decide approvals.', { fields: { toUserId: 'Not an eligible approver' } });
+    await q.query(`insert into rigo.approval_delegations (company_id, from_user_id, to_user_id, ends_at) values ($1,$2,$3,$4)`, [cc.company.id, cc.user.id, input.toUserId, input.endsAt]);
+    const until = input.endsAt ? ` until ${new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: cc.company.timezone }).format(new Date(input.endsAt))}` : '';
+    await notifyUsers(q, cc.company.id, [input.toUserId], { category: 'update', title: `${cc.user.name} asked you to approve for them${until}`, body: 'Their approvals now appear in your inbox too.', link: 'inbox', refType: 'delegation' });
+    await audit(q, cc, 'approval.delegated', input);
+  });
   return c.json({ ok: true });
 });
 
@@ -305,7 +333,7 @@ invitationPublic.get('/invitations/:token', async (c) => {
   });
 });
 
-export async function acceptInvitation(q: Q, user: { id: string; email: string }, where: { tokenHash?: string; id?: string }) {
+export async function acceptInvitation(q: Q, user: { id: string; email: string; name?: string }, where: { tokenHash?: string; id?: string }) {
   const { rows } = await q.query<any>(`select * from rigo.invitations where ${where.tokenHash ? 'token_hash = $1' : 'id = $1'} for update`, [where.tokenHash ?? where.id]);
   const inv = rows[0];
   if (!inv) throw notFound('Invitation');
@@ -323,10 +351,11 @@ export async function acceptInvitation(q: Q, user: { id: string; email: string }
   if (!upd.rows.length) throw conflict('This invitation has already been used.');
   const existing = await q.query<any>(`select id, status from rigo.memberships where company_id = $1 and user_id = $2`, [inv.company_id, user.id]);
   if (existing.rows[0]?.status === 'active') return { companyId: inv.company_id, already: true };
-  if (existing.rows[0]) await q.query(`update rigo.memberships set status = 'active', role_key = $2, updated_at = now() where id = $1`, [existing.rows[0].id, inv.role_key]);
+  if (existing.rows[0]) await q.query(`update rigo.memberships set status = 'active', removed_at = null, role_key = $2, updated_at = now() where id = $1`, [existing.rows[0].id, inv.role_key]);
   else await q.query(`insert into rigo.memberships (company_id, user_id, role_key) values ($1,$2,$3)`, [inv.company_id, user.id, inv.role_key]);
   await audit(q, { company: { id: inv.company_id }, user }, 'invitation.accepted', { invitationId: inv.id, role: inv.role_key });
-  await notifyRoles(q, inv.company_id, ['owner'], { category: 'update', title: `${user.email} joined the company`, body: `They accepted an invitation as ${inv.role_key}.`, link: 'team' });
+  const roleName = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [inv.company_id, inv.role_key])).rows[0]?.name ?? inv.role_key;
+  await notifyRoles(q, inv.company_id, ['owner'], { category: 'update', title: `${user.name || user.email} joined the company as ${roleName}`, body: `They accepted the invitation sent to ${user.email}.`, link: 'team' });
   return { companyId: inv.company_id, already: false };
 }
 

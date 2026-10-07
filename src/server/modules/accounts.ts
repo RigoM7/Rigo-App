@@ -50,11 +50,11 @@ async function attempts(q: Q, key: string, minutes: number) {
 }
 
 /** A limit that counts every call (account creation, recovery emails). */
-async function limitCalls(q: Q, key: string, max: number, minutes: number, what: string) {
+export async function limitCalls(q: Q, key: string, max: number, minutes: number, what: string) {
   const a = await attempts(q, key, minutes);
   if (a.n >= max) throw tooMany(`Too many ${what} from this device. Try again in ${minutesText(a.wait)}.`, a.wait);
 }
-const recordCall = (q: Q, key: string) => q.query(`insert into rigo.auth_attempts (key) values ($1)`, [key]);
+export const recordCall = (q: Q, key: string) => q.query(`insert into rigo.auth_attempts (key) values ($1)`, [key]);
 
 // Sign-in: only failures count, keyed by email + address so nobody can lock an owner out from
 // elsewhere, plus a wider per-address limit against trying one password on many accounts.

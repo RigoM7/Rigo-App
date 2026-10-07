@@ -68,7 +68,7 @@ export function occurrences(rule: VisitRule, startsOn: string, endsOn: string | 
   return out;
 }
 
-export type BillingFrequency = 'none' | 'per_visit' | 'weekly' | 'every_n_days' | 'monthly';
+export type BillingFrequency = 'none' | 'per_visit' | 'weekly' | 'every_n_days' | 'monthly' | 'event';
 
 /** Plain-language names for billing frequencies. */
 export const BILLING_FREQUENCIES = {
@@ -77,6 +77,7 @@ export const BILLING_FREQUENCIES = {
   weekly: () => 'Weekly',
   every_n_days: (days = 28) => (days === 28 ? 'Every 4 weeks (28 days)' : `Every ${days} days`),
   monthly: () => 'Monthly',
+  event: () => 'Once for the event',
 } as const;
 
 /**
@@ -86,6 +87,8 @@ export const BILLING_FREQUENCIES = {
  */
 export function billingPeriods(frequency: BillingFrequency, startsOn: string, endsOn: string | null, after: string | null, asOf: string, everyDays = 28) {
   if (frequency === 'none' || frequency === 'per_visit') return [];
+  // An event rental is one period from delivery to pickup, billed when it starts.
+  if (frequency === 'event') return startsOn <= asOf && (!after || startsOn > after) ? [{ start: startsOn, end: endsOn ?? startsOn }] : [];
   const out: { start: string; end: string }[] = [];
   let start = startsOn;
   let guard = 0;

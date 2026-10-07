@@ -3,7 +3,8 @@
 //   BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) node e2e/run.mjs
 // Uses the pre-installed Chromium (PLAYWRIGHT_CHROMIUM_EXECUTABLE or /opt/pw-browsers).
 import { createRequire } from 'node:module';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
@@ -17,7 +18,8 @@ const axeSource = readFileSync(require.resolve('axe-core/axe.min.js', { paths: [
 const results = [];
 const fail = (name, detail) => { results.push({ name, ok: false, detail }); console.log(`✗ ${name}: ${typeof detail === 'string' ? detail : JSON.stringify(detail).slice(0, 600)}`); };
 const pass = (name, detail = '') => { results.push({ name, ok: true, detail }); console.log(`✓ ${name}${detail ? ` (${detail})` : ''}`); };
-async function step(name, fn) { try { const d = await fn(); pass(name, d ?? ''); } catch (e) { fail(name, String(e?.message ?? e).split('\n')[0]); } }
+// E2E_VERBOSE=1 prints the locator a timeout was waiting for.
+async function step(name, fn) { try { const d = await fn(); pass(name, d ?? ''); } catch (e) { fail(name, String(e?.message ?? e).split('\n').slice(0, process.env.E2E_VERBOSE ? 4 : 1).join(' | ')); } }
 
 const browser = await chromium.launch({ executablePath: exe });
 const consoleErrors = [];
@@ -90,6 +92,422 @@ async function demoVisitor(label, vw = 1366, vh = 900, extra = {}) {
 const guideOf = (p) => p.getByRole('complementary', { name: 'Demo walkthrough' });
 const highlighted = (p, id) => p.locator(`[data-guide-active][data-guide-target="${id}"]`);
 
+// ---------------------------------------------------------------- Phase 1: money (pricing, billing, approvals)
+// Run only this section with E2E_ONLY=phase1.
+if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
+  for (const [vw, vh] of [[1366, 900], [390, 844]]) {
+    await step(`WP1 ${vw}px: the service editor's example bill charges only the lines a job would pay`, async () => {
+      const v = await demoVisitor(`wp1-bill-${vw}`, vw, vh);
+      const services = (await v.api.get('/services')).services;
+      const septic = services.find((s) => s.category === 'septic');
+      await v.p.goto(`${v.C}/services/${septic.id}`);
+      const bill = v.p.getByRole('region', { name: 'Example bill' });
+      await bill.waitFor({ timeout: 8000 });
+      const table = bill.getByRole('table', { name: 'Example bill' });
+      // Defaults: a pump-out of 1,250 gal, so the overage beyond the included 1,000 gal is billed.
+      await table.getByText('Pump-out (includes 1,000 gal)').waitFor();
+      await table.getByText('Pump-out: 250 gal over 1,000 included').waitFor();
+      if (!(await table.getByText('$462.50').count())) throw new Error('pump-out total is not $462.50');
+      await bill.getByLabel('Service details').selectOption('Grease trap');
+      await bill.getByLabel('Volume pumped (gal)').fill('150');
+      await table.getByText(/Minimum charge \$200\.00 applies/).waitFor();
+      if (await table.getByText('Pump-out', { exact: false }).count()) throw new Error('pump-out still charged on a grease trap job');
+      await bill.getByText(/Not charged on this job: .*Pump-out/).waitFor();
+      // A $0 rate is flagged before saving.
+      await v.p.locator('#f-rate-0').fill('0');
+      await v.p.getByText(/is priced at \$0\.00/).waitFor();
+      await noOverflow(v.p, `wp1-editor-${vw}`);
+      const a = await axe(v.p, `wp1-editor-${vw}`);
+      await v.c.close();
+      return a;
+    });
+  }
+  await step('WP1: fuel example bill charges one product and the delivery fee, not all four products (R3-C1)', async () => {
+    const v = await demoVisitor('wp1-fuel');
+    const fuel = (await v.api.get('/services')).services.find((s) => s.category === 'fuel');
+    await v.p.goto(`${v.C}/services/${fuel.id}`);
+    const bill = v.p.getByRole('region', { name: 'Example bill' });
+    await bill.waitFor({ timeout: 8000 });
+    await bill.getByLabel('Product').selectOption('Gasoline');
+    await bill.getByLabel('Delivered quantity (gal)').fill('100');
+    const rows = await bill.getByRole('table', { name: 'Example bill' }).locator('tbody tr').allInnerTexts();
+    if (rows.length !== 2 || !/Gasoline/.test(rows[0]) || !/Delivery fee/.test(rows[1])) throw new Error(`rows: ${JSON.stringify(rows)}`);
+    await bill.getByText(/Not charged on this job: Diesel, Dyed diesel, Heating oil/).waitFor();
+    await v.c.close();
+  });
+  await step('WP2: an issued invoice shows the due date and balance, prefills the payment, and prints only the document (R10-M2, R6-m2)', async () => {
+    const v = await demoVisitor('wp2-invoice');
+    const issued = (await v.api.get('/invoices?status=issued')).invoices.find((i) => i.paymentStatus !== 'paid');
+    if (!issued) throw new Error('no unpaid issued invoice in the demo');
+    await v.p.goto(`${v.C}/invoices/${issued.id}`);
+    await v.p.getByRole('article', { name: 'Invoice' }).getByText('Balance due').waitFor({ timeout: 8000 });
+    await v.p.getByRole('button', { name: 'Record payment' }).first().click();
+    const dlg = v.p.getByRole('dialog', { name: 'Record a payment received' });
+    const amount = await dlg.getByLabel(/Amount/).inputValue();
+    if (!/^\d+\.\d{2}$/.test(amount) || Number(amount) * 100 !== issued.balanceMinor) throw new Error(`amount not prefilled with the balance: ${amount} vs ${issued.balanceMinor}`);
+    await dlg.getByLabel('Date').waitFor();
+    await dlg.getByRole('button', { name: 'Cancel' }).click();
+    const a = await axe(v.p, 'wp2-invoice');
+    await v.p.emulateMedia({ media: 'print' });
+    const hidden = await v.p.evaluate(() => [...document.querySelectorAll('.no-print, .sidebar, .topbar')].every((e) => getComputedStyle(e).display === 'none'));
+    if (!hidden) throw new Error('app chrome is visible when printing');
+    await v.p.screenshot({ path: `${OUT}/wp2-invoice-print.png`, fullPage: true });
+    await v.c.close();
+    return a;
+  });
+  for (const [vw, vh] of [[1366, 900], [390, 844]]) {
+    await step(`WP2 ${vw}px: collections shows money owed by age and nothing overflows`, async () => {
+      const v = await demoVisitor(`wp2-collections-${vw}`, vw, vh);
+      await v.p.goto(`${v.C}/collections`);
+      await v.p.getByRole('group', { name: 'Amounts owed by age' }).waitFor({ timeout: 8000 });
+      await v.p.getByRole('heading', { name: 'Who owes what' }).waitFor();
+      await noOverflow(v.p, `wp2-collections-${vw}`);
+      const a = await axe(v.p, `wp2-collections-${vw}`);
+      await v.c.close();
+      return a;
+    });
+  }
+  await step('WP2: a hand-made invoice with a 10% discount, then the customer\'s view link (R8-M3, R15-m4)', async () => {
+    const v = await demoVisitor('wp2-manual');
+    const cust = (await v.api.get('/customers')).customers[0];
+    await v.p.goto(`${v.C}/invoices/new?customer=${cust.id}`);
+    await v.p.getByLabel('Description').first().fill('Tank inspection');
+    await v.p.locator('#f-lr-0').fill('200');
+    await v.p.getByRole('button', { name: 'Add line' }).click();
+    await v.p.getByLabel('Description').nth(1).fill('Loyal customer');
+    await v.p.locator('#f-lk-1').selectOption('discount_pct');
+    await v.p.locator('#f-lp-1').fill('10');
+    await v.p.getByText('Total: $180.00').waitFor();
+    await v.p.getByRole('button', { name: 'Create draft' }).click();
+    await v.p.waitForURL(/\/invoices\/[0-9a-f-]{36}$/, { timeout: 8000 });
+    const id = v.p.url().split('/').pop();
+    // Approve (with confirmation and the total) and issue as the demo owner.
+    await v.p.getByRole('button', { name: /^Approve · \$180\.00/ }).click();
+    await v.p.getByRole('dialog', { name: 'Approve this $180.00 invoice?' }).getByRole('button', { name: 'Approve' }).click();
+    await v.p.getByRole('button', { name: 'Issue', exact: true }).click();
+    await v.p.getByRole('dialog', { name: 'Issue this invoice?' }).getByRole('button', { name: 'Issue invoice' }).click();
+    await v.p.getByText(/Issued as /).waitFor({ timeout: 8000 });
+    const m = await v.api.post(`/invoices/${id}/email`);
+    const msg = (await v.api.get('/messages')).messages.find((x) => x.id === m.messageId);
+    const link = /(\/i\/[A-Za-z0-9_-]+)/.exec(msg.body)[1];
+    const anon = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const ap = await anon.newPage(); watch(ap, 'wp2-public');
+    await ap.goto(`${BASE}${link}`);
+    await ap.getByRole('article', { name: 'Invoice' }).getByText('Tank inspection').waitFor({ timeout: 8000 });
+    await ap.getByText('Balance due').waitFor();
+    await noOverflow(ap, 'wp2-public-390');
+    const a = await axe(ap, 'wp2-public');
+    await anon.close(); await v.c.close();
+    return a;
+  });
+  await step('WP3: changing the mode, deactivating a workflow and approving each ask first; a pause shows on every page (R14-m2, R18-m1, R14-m4)', async () => {
+    const v = await demoVisitor('wp3-confirm');
+    await v.p.goto(`${v.C}/automation`);
+    await v.p.getByText(/4 of 4 workflows on/).waitFor({ timeout: 8000 });
+    const before = (await v.api.get('/automation')).mode;
+    const target = before === 'automatic' ? 'Manual' : 'Automatic';
+    await v.p.locator('.radio-card', { hasText: target }).click();
+    const dlg = v.p.getByRole('dialog', { name: `Switch to ${target}?` });
+    await dlg.waitFor();
+    await dlg.getByRole('button', { name: 'Cancel' }).click();
+    if ((await v.api.get('/automation')).mode !== before) throw new Error('mode changed without confirmation');
+    // Deactivating the billing workflow says what stops.
+    const wf = (await v.api.get('/workflows')).workflows.find((w) => w.name === 'Completed job to invoice');
+    await v.p.goto(`${v.C}/workflows/${wf.id}`);
+    await v.p.getByRole('button', { name: 'Deactivate' }).click();
+    await v.p.getByRole('dialog', { name: 'Deactivate this workflow?' }).getByText(/Completed jobs will no longer be billed automatically/).waitFor();
+    await v.p.getByRole('dialog', { name: 'Deactivate this workflow?' }).getByRole('button', { name: 'Cancel' }).click();
+    // Approving from the inbox shows the total first.
+    await v.p.goto(`${v.C}/inbox`);
+    const approve = v.p.getByRole('button', { name: /^Approve and issue · \$/ }).first();
+    if (await approve.count()) {
+      const label = await approve.innerText();
+      await approve.click();
+      const total = /\$[\d,]+\.\d{2}/.exec(label)[0];
+      await v.p.getByRole('dialog', { name: `Approve ${total}?` }).waitFor();
+      await v.p.getByRole('dialog', { name: `Approve ${total}?` }).getByRole('button', { name: 'Cancel' }).click();
+    }
+    // Pause, then the banner is on another page with Resume.
+    await v.p.goto(`${v.C}/automation`);
+    await v.p.getByRole('button', { name: 'Pause all automation' }).click();
+    await v.p.getByRole('dialog', { name: 'Pause all automation?' }).getByRole('button', { name: 'Pause and hold' }).click();
+    await v.p.goto(`${v.C}/jobs`);
+    const banner = v.p.locator('.paused-banner');
+    await banner.waitFor({ timeout: 8000 });
+    await banner.getByRole('button', { name: 'Resume' }).click();
+    await banner.waitFor({ state: 'detached', timeout: 8000 });
+    const a = await axe(v.p, 'wp3-jobs');
+    await v.c.close();
+    return a;
+  });
+  await step('WP4: moving a job later in the form keeps its length; the plan form starts with no day ticked and asks billing for rates (R8-M4, R7-m2, R8-m1)', async () => {
+    const v = await demoVisitor('wp4');
+    const jobs = (await v.api.get('/jobs?status=active')).jobs.filter((j) => j.status === 'open' && j.scheduled_start && j.scheduled_end);
+    const j = jobs[0];
+    await v.p.goto(`${v.C}/jobs/${j.id}`);
+    const start = v.p.locator('#f-scheduledStart');
+    await start.waitFor({ timeout: 8000 });
+    const s0 = await start.inputValue(); const e0 = await v.p.locator('#f-scheduledEnd').inputValue();
+    const later = new Date(Date.parse(`${s0}:00Z`) + 3 * 3600_000).toISOString().slice(0, 16);
+    await start.fill(later);
+    const e1 = await v.p.locator('#f-scheduledEnd').inputValue();
+    const len = (a, b) => Date.parse(`${b}:00Z`) - Date.parse(`${a}:00Z`);
+    if (len(later, e1) !== len(s0, e0)) throw new Error(`end did not move with the start: ${s0}–${e0} became ${later}–${e1}`);
+    await v.p.getByRole('button', { name: 'Save assignment' }).click();
+    await v.p.getByText('Assignment saved').waitFor({ timeout: 8000 });
+    const after = (await v.api.get(`/jobs/${j.id}`)).job;
+    if (Date.parse(after.scheduled_end) - Date.parse(after.scheduled_start) !== Date.parse(j.scheduled_end) - Date.parse(j.scheduled_start)) throw new Error('saved length changed');
+    // The new plan form: no weekday pre-ticked, unit lines for rentals.
+    await v.p.goto(`${v.C}/recurring/new`);
+    const days = v.p.locator('#f-visitRule-weekdays input[type=checkbox]');
+    await days.first().waitFor({ timeout: 8000 });
+    if ((await days.evaluateAll((els) => els.filter((e) => e.checked).length)) !== 0) throw new Error('a weekday was pre-ticked');
+    await v.p.getByLabel('Unit type').first().waitFor();
+    await noOverflow(v.p, 'wp4-plan-form');
+    const a = await axe(v.p, 'wp4-plan-form');
+    await v.c.close();
+    return a;
+  });
+
+  // ---------------------------------------------------------------- WP5: driver app, offline and reassignment
+  // A real company (not the demo) with a real driver account, so membership and phones behave as in life.
+  async function fieldCompany(label) {
+    const owner = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
+    const om = `owner-${label}-${Date.now()}-${++accountN}@example.test`;
+    await owner.post('/api/auth/signup', { data: { name: 'Olga Owner', email: om, password: STRONG } });
+    const cid = (await (await owner.post('/api/companies', { data: { name: `Field ${label}`, timezone: 'America/Chicago', currency: 'USD', categories: ['fuel'], start: 'starter' } })).json()).id;
+    const o = {
+      get: async (path) => (await owner.get(`/api/c/${cid}${path}`)).json(),
+      post: async (path, data = {}) => { const r = await owner.post(`/api/c/${cid}${path}`, { data }); return { status: r.status(), body: await r.json() }; },
+      del: async (path) => (await owner.delete(`/api/c/${cid}${path}`)).status(),
+    };
+    const dm = `driver-${label}-${Date.now()}-${++accountN}@example.test`;
+    const driverApi = await pwRequest.newContext({ baseURL: BASE, extraHTTPHeaders: H });
+    await driverApi.post('/api/auth/signup', { data: { name: 'Luis Driver', email: dm, password: STRONG } });
+    const inv = await o.post('/invitations', { email: dm, role: 'driver' });
+    await driverApi.post(`/api/invitations/${inv.body.link.split('/invite/')[1]}/accept`);
+    const driverId = (await (await driverApi.get('/api/auth/me')).json()).user.id;
+    await driverApi.dispose();
+    const fuel = (await o.get('/services')).services.find((x) => x.category === 'fuel');
+    const cust = await o.post('/customers', { name: 'Acme Farms', email: 'acme@example.test', location: { address: '12 Barn Rd', accessInstructions: 'Gate code 4411' } });
+    const loc = (await o.get(`/customers/${cust.body.id}`)).locations[0].id;
+    const mkJob = async (startIso) => {
+      const r = await o.post('/jobs', { customerId: cust.body.id, locationId: loc, serviceId: fuel.id, details: { product: 'Diesel', requested_qty: '100' }, intent: 'open', clientRequestId: `e2e-${Math.random()}`, scheduledStart: startIso });
+      const j = (await o.get(`/jobs/${r.body.id}`)).job;
+      await o.post(`/jobs/${j.id}/assign`, { userId: driverId, resourceIds: [], version: j.version });
+      return (await o.get(`/jobs/${r.body.id}`)).job;
+    };
+    return { owner, o, cid, driver: { email: dm, name: 'Luis Driver' }, driverId, mkJob, C: `${BASE}/c/${cid}` };
+  }
+  const soon = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+  async function driverSignIn(p, f) {
+    await p.goto(`${BASE}/signin?next=${encodeURIComponent(`/c/${f.cid}/today`)}`);
+    await signInHere(p, f.driver);
+    await p.waitForURL(/\/today/);
+  }
+
+  for (const [vw, vh] of [[360, 640], [375, 667], [390, 844]]) {
+    await step(`WP5 ${vw}×${vh}: Start job is the sticky action, then Submit; nothing preselected; another day's job asks first (R9-M1, R6-m4)`, async () => {
+      const f = await fieldCompany(`small-${vw}`);
+      const tomorrow = await f.mkJob(soon(30));
+      const c = await browser.newContext({ viewport: { width: vw, height: vh }, hasTouch: true, isMobile: true });
+      const p = await c.newPage(); watch(p, `wp5-small-${vw}`);
+      await driverSignIn(p, f);
+      await p.goto(`${f.C}/today/${tomorrow.id}`);
+      const bar = p.locator('.sticky-actions');
+      const startBtn = bar.getByRole('button', { name: 'Start job' });
+      await startBtn.waitFor({ timeout: 8000 });
+      if (await bar.getByRole('button', { name: 'Submit to office' }).count()) throw new Error('Submit shown before the job is started');
+      // The primary action is fully on screen, not under the bottom navigation.
+      const box = await startBtn.boundingBox();
+      const nav = await p.locator('.bottomnav, nav[aria-label="Primary"]').last().boundingBox().catch(() => null);
+      if (!box || box.y + box.height > vh) throw new Error(`Start job is off screen (${JSON.stringify(box)})`);
+      if (nav && box.y + box.height > nav.y + 1) throw new Error('Start job is under the bottom bar');
+      if (await p.locator('input[name="outcome"]:checked').count()) throw new Error('an outcome is preselected');
+      await startBtn.click();
+      await p.getByRole('dialog', { name: /This job is for tomorrow\. Start anyway\?/ }).waitFor();
+      await p.getByRole('button', { name: 'Start anyway' }).click();
+      await bar.getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
+      // Could not complete: quick reasons, one notes field, consistent photo wording.
+      await p.getByLabel('Could not complete').check();
+      await p.getByLabel('Locked gate').check();
+      if (await p.locator('#f-details-notes').count()) throw new Error('two notes fields for an unsuccessful visit');
+      await p.getByText('Photos (optional)').waitFor();
+      await noOverflow(p, `wp5-small-${vw}`);
+      const a = await axe(p, `wp5-small-${vw}`);
+      await bar.getByRole('button', { name: 'Submit to office' }).click();
+      await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
+      await p.getByText('Sent. The office has your record.').waitFor({ timeout: 8000 });
+      const done = (await f.o.get(`/jobs/${tomorrow.id}`)).job;
+      if (done.status !== 'unsuccessful' || done.completion.reason !== 'Locked gate') throw new Error(`saved as ${done.status}: ${done.completion?.reason}`);
+      await c.close(); await f.owner.dispose();
+      return a;
+    });
+  }
+
+  await step('WP5: 200% text keeps the driver job usable at 390px', async () => {
+    const f = await fieldCompany('zoom');
+    const j = await f.mkJob(soon(1));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp5-zoom');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/today/${j.id}`);
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).waitFor({ timeout: 8000 });
+    await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+    await noOverflow(p, 'wp5-zoom');
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP5: offline save, close, reopen with no signal (jobs and record there), reconnect sends it exactly once (R13-C1, R13-M1, R13-m3)', async () => {
+    const f = await fieldCompany('offline');
+    const j = await f.mkJob(soon(1));
+    const dir = mkdtempSync(`${tmpdir()}/rigo-phone-`);
+    let c = await chromium.launchPersistentContext(dir, { executablePath: exe, viewport: { width: 390, height: 844 }, isMobile: true });
+    let p = c.pages()[0] ?? await c.newPage(); watch(p, 'wp5-offline-1');
+    await driverSignIn(p, f);
+    // A second visit lets the service worker keep the app and the driver screens for offline use.
+    await p.waitForFunction(() => navigator.serviceWorker?.controller || new Promise((r) => setTimeout(() => r(false), 3000)), null, { timeout: 8000 }).catch(() => {});
+    await p.reload(); await p.waitForLoadState('networkidle');
+    await p.getByRole('link', { name: /12 Barn Rd/ }).first().click();
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
+    await c.setOffline(true);
+    await p.getByLabel('Completed successfully').check();
+    await p.getByLabel(/Delivered quantity/).fill('95');
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
+    await p.getByText('Saved on this phone. It sends automatically when you have signal; you can close the app.').waitFor({ timeout: 8000 });
+    if (await p.locator('.sticky-actions').count()) throw new Error('Start/Submit still shown after an offline save');
+    await p.getByRole('button', { name: 'Edit record' }).waitFor();
+    await c.close();
+
+    // Reopen the installed app with no signal.
+    c = await chromium.launchPersistentContext(dir, { executablePath: exe, viewport: { width: 390, height: 844 }, isMobile: true, offline: true });
+    p = c.pages()[0] ?? await c.newPage(); watch(p, 'wp5-offline-2');
+    await p.goto(`${f.C}/today`);
+    await p.getByRole('heading', { name: 'My jobs' }).waitFor({ timeout: 10000 });
+    await p.getByText('No signal: showing the copy saved on this phone').waitFor();
+    await p.getByText(/1 record waiting to send/).waitFor();
+    await p.getByRole('link', { name: /12 Barn Rd/ }).first().click();
+    await p.getByText('Waiting for signal — will send automatically').first().waitFor();
+    // Pages that need the server say so instead of failing.
+    await p.goto(`${f.C}/invoices`);
+    await p.getByText('This page needs a connection').waitFor({ timeout: 8000 });
+    await p.goto(`${f.C}/today/${j.id}`);
+    await p.getByText('Waiting for signal — will send automatically').first().waitFor({ timeout: 8000 });
+    await c.setOffline(false);
+    await p.getByText('1 record sent to the office.').waitFor({ timeout: 20000 });
+    const d = (await f.o.get(`/jobs/${j.id}`));
+    if (d.job.status !== 'completed') throw new Error(`job is ${d.job.status}`);
+    const completions = d.events.filter((e) => e.type === 'completion').length;
+    if (completions !== 1) throw new Error(`${completions} completions recorded`);
+    await c.close(); await f.owner.dispose();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  await step('WP5: a removed driver\'s record reaches the office for review, then the phone forgets the company (R12-M1)', async () => {
+    const f = await fieldCompany('removed');
+    const j = await f.mkJob(soon(1));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp5-removed');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/today/${j.id}`);
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
+    await p.getByLabel('Completed successfully').check();
+    await p.getByLabel(/Delivered quantity/).fill('60');
+    await p.getByText(/Saved .*ago|Saved just now|Saved/).first().waitFor();
+    const member = (await f.o.get('/members')).members.find((m) => m.user_id === f.driverId);
+    if (member.started_jobs !== 1) throw new Error('the team list does not show the started job');
+    if ((await f.o.del(`/members/${member.id}`)) !== 200) throw new Error('remove failed');
+    await p.goto(`${f.C}/today`);
+    await p.getByRole('heading', { name: /You're no longer a member of Field removed/ }).waitFor({ timeout: 10000 });
+    await p.getByText('Your record was sent to the office for review.').waitFor({ timeout: 10000 });
+    const left = await p.evaluate(async (cid) => new Promise((res) => { const r = indexedDB.open('rigo-offline', 1); r.onsuccess = () => { const t = r.result.transaction('kv', 'readonly').objectStore('kv').getAllKeys(); t.onsuccess = () => res(t.result.map(String).filter((k) => k.includes(cid))); }; }), f.cid);
+    if (left.length) throw new Error(`still on the phone: ${left.join(', ')}`);
+    const recs = (await f.o.get('/pending-submissions')).records;
+    if (recs.length !== 1 || recs[0].reason !== 'removed') throw new Error(JSON.stringify(recs));
+    const a = await axe(p, 'wp5-removed');
+    await c.close(); await f.owner.dispose();
+    return a;
+  });
+
+  await step('WP5: reassigned mid-job, the record goes to review and the office accepts it (R9-M2, R13-m2)', async () => {
+    const f = await fieldCompany('race');
+    const j = await f.mkJob(soon(1));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp5-race');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/today/${j.id}`);
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
+    await p.getByLabel('Completed successfully').check();
+    await p.getByLabel(/Delivered quantity/).fill('70');
+    // Dispatch takes it away (confirming the warning) while the driver is still on site.
+    const v = (await f.o.get(`/jobs/${j.id}`)).job.version;
+    const warn = await f.o.post(`/jobs/${j.id}/assign`, { userId: null, resourceIds: [], version: v });
+    if (warn.status !== 409 || warn.body.error.details.needsConfirm !== 'started') throw new Error('no warning for a started job');
+    await f.o.post(`/jobs/${j.id}/assign`, { userId: null, resourceIds: [], version: v, confirmStarted: true });
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
+    await p.getByText('Sent to the office for review.').first().waitFor({ timeout: 8000 });
+    // The office reviews it in the browser.
+    const oc = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+    const op = await oc.newPage(); watch(op, 'wp5-race-office');
+    const state = await f.owner.storageState();
+    await oc.addCookies(state.cookies);
+    await op.goto(`${f.C}/jobs/records`);
+    await op.getByRole('heading', { name: 'Driver records to review' }).waitFor({ timeout: 8000 });
+    await op.getByText('The job was given to someone else first.').waitFor();
+    await op.getByText('70 gal').waitFor();
+    const a = await axe(op, 'wp5-records');
+    await op.getByRole('button', { name: 'Accept record' }).click();
+    await op.getByText(/recorded as completed/).waitFor({ timeout: 8000 });
+    if ((await f.o.get(`/jobs/${j.id}`)).job.status !== 'completed') throw new Error('not completed after accepting');
+    await oc.close(); await c.close(); await f.owner.dispose();
+    return a;
+  });
+
+  await step('WP5: Switch driver keeps unsent records for their owner only; the installed app opens at My jobs (R4-M4, R13-m4)', async () => {
+    const f = await fieldCompany('switch');
+    const j = await f.mkJob(soon(1));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const p = await c.newPage(); watch(p, 'wp5-switch');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/today/${j.id}`);
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Start job' }).click();
+    await p.locator('.sticky-actions').getByRole('button', { name: 'Submit to office' }).waitFor({ timeout: 8000 });
+    await p.getByLabel('Completed successfully').check();
+    await p.getByLabel(/Delivered quantity/).fill('44');
+    await p.goto(`${BASE}/account?signout=1`);
+    await p.getByText(/1 job record hasn't reached the office/).waitFor({ timeout: 8000 });
+    await p.getByRole('button', { name: 'Switch driver' }).click();
+    await p.waitForURL(/\/signin/);
+    const keys = await p.evaluate(async () => new Promise((res) => { const r = indexedDB.open('rigo-offline', 1); r.onsuccess = () => { const t = r.result.transaction('kv', 'readonly').objectStore('kv').getAllKeys(); t.onsuccess = () => res(t.result.map(String)); }; }));
+    if (!keys.some((k) => k.startsWith(`draft:${f.driverId}:`))) throw new Error('the draft was not kept');
+    if (keys.some((k) => k.startsWith('jobs:') || k.startsWith('boot:') || k === 'me:last')) throw new Error(`company data left after sign-out: ${keys.join(', ')}`);
+    // Signing in again brings the record back; the installed app's start page opens My jobs.
+    await signInHere(p, f.driver);
+    await p.waitForURL(/\/workspaces|\/c\//);
+    await p.goto(`${BASE}/open`);
+    await p.waitForURL(/\/today$/, { timeout: 8000 });
+    await p.goto(`${f.C}/today/${j.id}`);
+    if ((await p.getByLabel(/Delivered quantity/).inputValue()) !== '44') throw new Error('the draft did not come back');
+    const manifest = await (await p.request.get(`${BASE}/manifest.webmanifest`)).json();
+    const meta = await p.locator('meta[name="theme-color"]').getAttribute('content');
+    if (manifest.start_url !== '/open' || manifest.theme_color !== '#0A0A0B' || !meta) throw new Error(`manifest ${manifest.start_url} ${manifest.theme_color}, meta ${meta}`);
+    await c.close(); await f.owner.dispose();
+  });
+}
+if (process.env.E2E_ONLY === 'phase1') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-phase1.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
+
 if (process.env.E2E_ONLY !== 'auth') {
   await step('M1: from the driver view, the walkthrough reaches the simulated email using only its own buttons', async () => {
     const v = await demoVisitor('guide');
@@ -128,10 +546,11 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('button', { name: 'Start job' }).click();
     await p.getByText('Job started').waitFor();
     await highlighted(p, 'driver-record').waitFor();
+    await p.getByLabel('Completed successfully').check();
     await p.getByLabel(/Delivered quantity/).fill('187.4');
     await p.getByRole('button', { name: 'Submit to office' }).click();
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
-    await p.getByText('Accepted. The office has your record.').waitFor();
+    await p.getByText('Sent. The office has your record.').waitFor();
     await guide.getByText(/Done\. The office has the driver's record/).waitFor();
     await guide.getByRole('button', { name: 'Next step' }).click();
     // Step 5: back to the Owner, approve from a card that shows the bill.
@@ -155,6 +574,8 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p2.close();
     if (pageTotal !== '$773.99') throw new Error(`invoice page total ${pageTotal}`);
     await approve.click();
+    // Approving asks first, with the total (R14-m4).
+    await p.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
     await p.getByText(/Approved\. Rigo will continue/).waitFor();
     await guide.getByText(/Done\. The invoice for job #3 is approved and issued/).waitFor();
     await guide.getByRole('button', { name: 'Next step' }).click();
@@ -295,7 +716,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     if (!(await p.getByLabel('Bill', { exact: true }).locator('option:checked').innerText()).startsWith('Every 4 weeks (28 days)')) throw new Error('28-day billing is not offered first');
     await p.screenshot({ path: `${OUT}/r2-recurring-form-1366.png`, fullPage: true });
     await p.goto(`${v.C}/recurring`);
-    await p.getByText(/every 4 weeks \(28 days\)/).waitFor();
+    await p.getByText(/every 4 weeks/).first().waitFor();
     await p.goto(`${v.C}/jobs?status=all`);
     await p.locator('tr', { hasText: '#3' }).getByText('Urgent').waitFor();
     await p.goto(`${v.C}/invoices?status=all`);
@@ -303,7 +724,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     const inv = (await v.api.get(`/jobs/${em.id}`)).invoice;
     await p.goto(`${v.C}/invoices/${inv.id}`);
     await p.getByRole('cell', { name: 'After-hours visit' }).waitFor();
-    await p.getByRole('cell', { name: 'Pump-out' }).waitFor();
+    await p.getByRole('cell', { name: 'Pump-out (includes 1,000 gal)' }).waitFor();
     // A job whose window ended without a start is flagged, and counted on Home.
     const job1 = (await v.api.get('/jobs?status=all')).jobs.find((j) => j.number === 1);
     await v.api.post(`/jobs/${job1.id}/assign`, { userId: job1.assigned_user_id, resourceIds: [], scheduledStart: new Date(Date.now() - 3 * 3600_000).toISOString(), scheduledEnd: new Date(Date.now() - 2 * 3600_000).toISOString(), version: job1.version });
@@ -705,6 +1126,9 @@ async function scenarioS1(base, label) {
   await p.getByRole('button', { name: 'Sign out' }).click();
   await p.waitForURL(/\/signin/);
   await p.getByRole('link', { name: 'Forgot your password?' }).click();
+  // Wait for the reset page itself: the sign-in page also has an "Email" field.
+  await p.waitForURL(/\/forgot$/);
+  await p.getByRole('heading', { name: 'Reset your password' }).waitFor();
   let resetLink;
   if (label === 'local') {
     await p.getByLabel('Email').fill(fixed);
@@ -909,12 +1333,13 @@ await step('driver (simulated): completes a job with offline-capable draft and s
   await page.locator('a.driver-job', { hasText: 'Fuel delivery' }).first().click();
   await page.getByRole('button', { name: 'Start job' }).click();
   await page.getByText('Job started').waitFor();
+  await page.getByLabel('Completed successfully').check();
   await page.getByLabel(/Delivered quantity/).fill('432.5');
-  await page.getByText('Saved on this device').first().waitFor();
+  await page.getByText('Saved on this phone').first().waitFor();
   await page.screenshot({ path: `${OUT}/driver-job-390.png`, fullPage: true });
   await page.getByRole('button', { name: 'Submit to office' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
-  await page.getByText('Accepted. The office has your record.').waitFor();
+  await page.getByText('Sent. The office has your record.').waitFor();
   await page.getByText(/Recorded as completed successfully/i).waitFor();
 });
 
@@ -933,7 +1358,9 @@ await step('owner approves the prepared invoice from the inbox', async () => {
   const cards = page.locator('article.card');
   await cards.first().waitFor();
   const before = await cards.count();
-  await cards.first().getByRole('button', { name: 'Approve' }).click();
+  await cards.first().getByRole('button', { name: /^Approve/ }).first().click();
+  // Approving asks first, with the total (R14-m4).
+  await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
   await page.getByText(/Approved\. Rigo will continue/).waitFor();
   return `${before} approval(s) were waiting`;
 });
@@ -969,7 +1396,7 @@ await step('assistant: prepared response labeled, proposal stays separate', asyn
 await step('invoice preview renders branded document and print control', async () => {
   await page.goto(`${BASE}${cidPath()}/invoices?status=all`);
   await page.locator('a.row-link').first().click();
-  await page.getByRole('article', { name: 'Invoice preview' }).waitFor();
+  await page.getByRole('article', { name: 'Invoice' }).waitFor();
   await page.getByRole('button', { name: /Print/ }).waitFor();
   await page.screenshot({ path: `${OUT}/invoice.png`, fullPage: true });
 });

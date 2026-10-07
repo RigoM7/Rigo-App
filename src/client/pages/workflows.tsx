@@ -6,7 +6,7 @@ import { useCompany } from '../lib/session';
 import { get, post, put, patch } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { Button, Card, Field, Input, Select, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, Banner, Checkbox, Segmented, Dialog, LinkButton, useToast, useConfirm } from '../components/ui';
-import { relTime, fmtDateTime } from '../lib/format';
+import { relTime, fmtDateTime, minorToInput, parseMoney } from '../lib/format';
 import { ACTIONS, TRIGGERS, CONDITION_FIELDS, OPERATORS, type Definition, type Step, type Condition } from '../../shared/workflows';
 
 const VERSION_TONE: Record<string, any> = { draft: 'neutral', tested: 'info', active: 'success', retired: 'neutral', proposal: 'demo' };
@@ -60,25 +60,39 @@ function ConditionRow({ cnd, onChange, onRemove, idp }: { cnd: Condition; onChan
   return (
     <div className="row" style={{ alignItems: 'flex-end' }}>
       <Field label="Field" id={`${idp}-f`}>{(p) => <Select {...p} value={cnd.field} onChange={(e) => onChange({ ...cnd, field: e.target.value as any, value: '' })}>{Object.entries(CONDITION_FIELDS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select>}</Field>
-      <Field label="Comparison" id={`${idp}-o`}>{(p) => <Select {...p} value={cnd.op} onChange={(e) => onChange({ ...cnd, op: e.target.value as any })}>{Object.entries(OPERATORS).filter(([k]) => f.type === 'number' || ['eq', 'neq', 'contains'].includes(k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}</Field>
+      <Field label="Comparison" id={`${idp}-o`}>{(p) => <Select {...p} value={cnd.op} onChange={(e) => onChange({ ...cnd, op: e.target.value as any })}>{Object.entries(OPERATORS).filter(([k]) => f.type === 'number' || f.type === 'money' || (f.type === 'boolean' ? ['eq', 'neq'].includes(k) : ['eq', 'neq', 'contains'].includes(k))).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}</Field>
       <Field label="Value" id={`${idp}-v`}>{(p) => f.type === 'select' ? <Select {...p} value={String(cnd.value)} onChange={(e) => onChange({ ...cnd, value: e.target.value })}><option value="">Choose…</option>{f.options.map((o: string) => <option key={o} value={o}>{o.replace('_', ' ')}</option>)}</Select>
         : f.type === 'boolean' ? <Select {...p} value={String(cnd.value)} onChange={(e) => onChange({ ...cnd, value: e.target.value === 'true' })}><option value="true">Yes</option><option value="false">No</option></Select>
+        : f.type === 'money' ? <MoneyValue {...p} cents={typeof cnd.value === 'number' ? cnd.value : 0} onChange={(cents) => onChange({ ...cnd, value: cents })} />
         : <Input {...p} inputMode={f.type === 'number' ? 'numeric' : undefined} value={String(cnd.value)} onChange={(e) => onChange({ ...cnd, value: f.type === 'number' ? Number(e.target.value) || 0 : e.target.value })} />}</Field>
       <Button size="sm" variant="ghost" aria-label="Remove condition" onClick={onRemove}><Trash2 aria-hidden /></Button>
     </div>
   );
 }
 
-function RoleChecks({ value, onChange, legend, roles }: { value: string[]; onChange: (v: string[]) => void; legend: string; roles: { key: string; name: string }[] }) {
+/** Amounts are typed in dollars and stored in cents (R14-m1). */
+function MoneyValue({ cents, onChange, ...p }: { cents: number; onChange: (cents: number) => void; id: string }) {
+  const [text, setText] = useState(minorToInput(cents));
+  return <Input {...p} className="input num-input" inputMode="decimal" value={text} onChange={(e) => { setText(e.target.value); const v = parseMoney(e.target.value); if (v !== null) onChange(v); }} />;
+}
+
+function RoleChecks({ value, onChange, legend, roles, approvers }: { value: string[]; onChange: (v: string[]) => void; legend: string; roles: { key: string; name: string; canApprove?: boolean }[]; approvers?: boolean }) {
+  const c = useCompany();
   return (
-    <fieldset><legend className="small">{legend}</legend><div className="row">{roles.map((r) => <Checkbox key={r.key} label={r.name} checked={value.includes(r.key)} onChange={(e) => onChange(e.target.checked ? [...value, r.key] : value.filter((x) => x !== r.key))} />)}</div></fieldset>
+    <fieldset><legend className="small">{legend}</legend><div className="row">{roles.map((r) => (
+      <Checkbox key={r.key} label={approvers && !r.canApprove ? <>{r.name} <span className="muted">(can't approve)</span></> : r.name} disabled={approvers && !r.canApprove && !value.includes(r.key)}
+        checked={value.includes(r.key)} onChange={(e) => onChange(e.target.checked ? [...value, r.key] : value.filter((x) => x !== r.key))} />
+    ))}</div>
+    {approvers && roles.some((r) => !r.canApprove && r.key === 'office') ? <p className="hint" style={{ margin: '4px 0 0' }}>To let Office approve, give the role "Approve invoices" in <Link to={c.to('team')}>Team → Roles</Link>.</p> : null}
+    </fieldset>
   );
 }
 
 function StepEditor({ step, index, onChange }: { step: Step; index: number; onChange: (s: Step) => void }) {
   const c = useCompany();
   const meta = ACTIONS[step.action];
-  const approvers = c.members.filter((m) => ['owner', 'office', 'dispatcher'].includes(m.role_key));
+  // Only people whose role can approve are offered as approvers and backups (R14-C1).
+  const approvers = c.members.filter((m) => c.roles.find((r) => r.key === m.role_key)?.canApprove);
   const idp = `f-step-${index}`;
   return (
     <div className="stack">
@@ -100,7 +114,7 @@ function StepEditor({ step, index, onChange }: { step: Step; index: number; onCh
           </div>
         )}
         {step.approval.required !== 'never' && <div className="stack-sm" style={{ marginTop: 8 }}>
-          <RoleChecks legend="Approver roles" roles={c.roles} value={step.approval.approverRoles} onChange={(approverRoles) => onChange({ ...step, approval: { ...step.approval, approverRoles } })} />
+          <RoleChecks approvers legend="Approver roles" roles={c.roles} value={step.approval.approverRoles} onChange={(approverRoles) => onChange({ ...step, approval: { ...step.approval, approverRoles } })} />
           <fieldset><legend className="small">Named approvers</legend><div className="row">{approvers.map((m) => <Checkbox key={m.id} label={m.name} checked={step.approval.approverUserIds.includes(m.id)} onChange={(e) => onChange({ ...step, approval: { ...step.approval, approverUserIds: e.target.checked ? [...step.approval.approverUserIds, m.id] : step.approval.approverUserIds.filter((x) => x !== m.id) } })} />)}</div></fieldset>
           <fieldset><legend className="small">Backup approvers (after escalation)</legend><div className="row">{approvers.map((m) => <Checkbox key={m.id} label={m.name} checked={step.approval.backupUserIds.includes(m.id)} onChange={(e) => onChange({ ...step, approval: { ...step.approval, backupUserIds: e.target.checked ? [...step.approval.backupUserIds, m.id] : step.approval.backupUserIds.filter((x) => x !== m.id) } })} />)}</div></fieldset>
           <Field label="Escalate after (hours)" optionalText id={`${idp}-esc`} hint="Escalation alerts backups and owners. It never approves anything.">{(p) => <Input {...p} inputMode="numeric" value={step.approval.escalateAfterHours ?? ''} onChange={(e) => onChange({ ...step, approval: { ...step.approval, escalateAfterHours: e.target.value ? Math.max(1, Number(e.target.value) || 1) : null } })} />}</Field>
@@ -142,8 +156,16 @@ export function WorkflowEditor() {
     if (!(await ask({ title: `Activate version ${working.version}?`, body: <>It will start responding to “{TRIGGERS[def!.trigger.event].label.toLowerCase()}”. {runs ? `${runs} run(s) of the previous version are still open; their remaining steps will be blocked and you can finish them by hand.` : ''} Rigo acts on your behalf and rechecks your permissions every time.</>, confirm: 'Activate' }))) return;
     await post(`/c/${c.cid}/workflows/${id}/versions/${working.id}/activate`); toast('Workflow activated'); refresh();
   });
-  const deactivate = useSubmit(async () => { await post(`/c/${c.cid}/workflows/${id}/deactivate`); toast('Workflow deactivated. Nothing new will start.'); refresh(); });
-  const setWf = useSubmit(async (body: any) => { await patch(`/c/${c.cid}/workflows/${id}`, body); refresh(); });
+  // What stops happening when this workflow stops, said before it stops (R18-m1).
+  const stopsWhat = () => { const t = def ? TRIGGERS[def.trigger.event].label.toLowerCase() : 'its trigger'; return def?.steps.some((st) => st.action === 'invoice.prepare') ? `Completed jobs will no longer be billed automatically: nothing will respond to “${t}”.` : `Nothing will respond to “${t}”.`; };
+  const deactivate = useSubmit(async () => {
+    if (!(await ask({ title: 'Deactivate this workflow?', body: `${stopsWhat()} Runs already open stop at their next step. You can activate it again later.`, confirm: 'Deactivate', danger: true }))) return;
+    await post(`/c/${c.cid}/workflows/${id}/deactivate`); toast('Workflow deactivated. Nothing new will start.'); refresh();
+  });
+  const setWf = useSubmit(async (body: any) => {
+    if (body.paused === true && !(await ask({ title: 'Pause this workflow?', body: `${stopsWhat()} Steps already queued are held until you resume.`, confirm: 'Pause workflow' }))) return;
+    await patch(`/c/${c.cid}/workflows/${id}`, body); refresh();
+  });
   const accept = useSubmit(async () => { await post(`/c/${c.cid}/workflows/proposals/${proposal.id}/accept`); toast('Accepted as a draft. Test it, then activate when ready.'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;

@@ -12,8 +12,8 @@ async function setup() {
   await invite(owner, cid, dispatcher, 'dispatcher');
   const svcs = await services(owner, cid);
   const def = starterService('fuel');
-  for (const p of def.pricing) if (p.when?.field === 'product') p.rateMinor = p.when.equals === 'Gasoline' ? 389 : 419;
-  def.pricing.push({ id: 'delivery', label: 'Delivery fee', basis: 'flat', quantityField: '', unit: '', rateMinor: 4500, taxable: false, when: null });
+  for (const p of def.pricing) if (p.when?.field === 'product') p.rateE4 = p.when.equals === 'Gasoline' ? 38900 : 41900;
+  def.pricing.find((p) => p.id === 'delivery')!.rateE4 = 450000;
   await owner.put(`/c/${cid}/services/${svcs.fuel.id}`, { service: def, version: svcs.fuel.version });
   await activateAll(owner, cid);
   const { customerId, locationId } = await customer(owner, cid);
@@ -122,8 +122,8 @@ describe('approval summaries', () => {
     });
     expect(ap.summary.totalMinor).toBe(77399); // 187.4 gal x $3.89 = $728.99, plus the $45.00 delivery fee
     expect(ap.summary.lines).toEqual([
-      { description: 'Gasoline', quantity: '187.4', unit: 'gal', rateMinor: 389, amountMinor: 72899 },
-      { description: 'Delivery fee', quantity: '1', unit: '', rateMinor: 4500, amountMinor: 4500 },
+      { description: 'Gasoline', quantity: '187.4', unit: 'gal', rateE4: 38900, amountMinor: 72899, note: '' },
+      { description: 'Delivery fee', quantity: '1', unit: '', rateE4: 450000, amountMinor: 4500, note: '' },
     ]);
     expect(ap.actionType).toBe('invoice.issue');
     // The decided list keeps what was approved and for how much.
@@ -144,7 +144,7 @@ describe('approval summaries', () => {
     expect(ap.summary.kind).toBe('invoice');
     expect(ap.summary.jobNumber).toBeTypeOf('number');
     for (const k of ['totalMinor', 'taxMinor', 'subtotalMinor']) expect(ap.summary[k]).toBeUndefined();
-    expect(ap.summary.lines.every((l: any) => l.rateMinor === undefined && l.amountMinor === undefined)).toBe(true);
+    expect(ap.summary.lines.every((l: any) => l.rateE4 === undefined && l.amountMinor === undefined)).toBe(true);
     expect(JSON.stringify(res.body)).not.toMatch(/77399|72899|4500/);
   });
 
@@ -200,7 +200,7 @@ describe('demo visits', () => {
     await processAll();
     const svcs = (await v.get(`/c/${cid}/services`)).body.services;
     const fuel = svcs.find((x: any) => x.category === 'fuel');
-    expect(fuel.pricing.filter((p: any) => p.when?.field === 'product').map((p: any) => [p.label, p.rateMinor !== null])).toEqual([['Diesel', true], ['Gasoline', true], ['Heating oil', true]]);
+    expect(fuel.pricing.filter((p: any) => p.when?.field === 'product').map((p: any) => [p.label, p.rateE4 !== null])).toEqual([['Diesel', true], ['Dyed diesel', true], ['Gasoline', true], ['Heating oil', true]]);
     const invoices = (await v.get(`/c/${cid}/invoices?status=all`)).body.invoices;
     // The rental bills every 28 days and its first invoice is visible.
     const plan = (await v.get(`/c/${cid}/recurring`)).body.plans[0];
@@ -213,7 +213,7 @@ describe('demo visits', () => {
     const emInv = (await v.get(`/c/${cid}/jobs/${em.id}`)).body.invoice;
     const emDetail = (await v.get(`/c/${cid}/invoices/${emInv.id}`)).body;
     expect(emDetail.invoice.totalMinor).toBeGreaterThan(0);
-    expect(emDetail.lines.map((l: any) => l.description)).toEqual(['Pump-out', 'After-hours visit']);
+    expect(emDetail.lines.map((l: any) => l.description)).toEqual(['Pump-out (includes 1,000 gal)', 'Pump-out: 200 gal over 1,000 included', 'After-hours visit']);
     expect(invoices.filter((i: any) => i.status === 'held')).toHaveLength(1);
     expect(invoices.some((i: any) => i.status === 'issued' && i.paymentStatus === 'paid')).toBe(true);
     // Seeded notes describe the site, not a status that goes out of date.

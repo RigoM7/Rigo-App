@@ -5,17 +5,23 @@ import { Plus, Users, MapPin, Upload, Search, Pencil } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Dialog, JobStatus, InvoiceStatus, MessageStatus, LinkButton, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, Textarea, Checkbox, Pill, ErrorSummary, Banner, LoadingBlock, ErrorState, PageHeader, Empty, Dialog, JobStatus, InvoiceStatus, MessageStatus, LinkButton, useToast } from '../components/ui';
 import { formatMoney, fmtDate, fmtDateTime } from '../lib/format';
+import { formatRate, parseRate, rateToInput } from '../../shared/billing';
+import { termsLabel } from '../../shared/invoices';
+import { PaymentPill } from './invoices';
+import { CustomerAccount } from './customer-account';
 import { DynamicField } from './jobform';
 
 function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; onClose: () => void; existing?: any; onSaved: (id: string) => void }) {
   const c = useCompany();
   const defs = c.company.customFields?.customers ?? [];
-  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '' } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '' });
+  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '', taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote ?? '', terms: existing.paymentTermsDays === null || existing.paymentTermsDays === undefined ? '' : String(existing.paymentTermsDays), monthlyStatement: !!existing.monthlyStatement } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '', taxExempt: false, taxExemptNote: '', terms: '', monthlyStatement: false });
+  const billing = c.can('invoices.edit');
   const s = useSubmit(async () => {
     const body: any = { name: v.name, notes: v.notes, custom: v.custom };
     if (c.can('customers.contact')) Object.assign(body, { email: v.email, phone: v.phone, billingAddress: v.billingAddress });
+    if (billing) Object.assign(body, { taxExempt: v.taxExempt, taxExemptNote: v.taxExempt ? v.taxExemptNote : '', paymentTermsDays: v.terms === '' ? null : Number(v.terms), monthlyStatement: v.monthlyStatement });
     if (existing) { await patch(`/c/${c.cid}/customers/${existing.id}`, { ...body, version: existing.version }); onSaved(existing.id); }
     else { const r = await post(`/c/${c.cid}/customers`, { ...body, location: v.address ? { address: v.address, accessInstructions: v.access } : undefined }); onSaved(r.id); }
   });
@@ -34,6 +40,13 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
         {!existing && <>
           <Field label="First service address" optionalText id="f-address" error={s.fieldError('location.address')}>{(p) => <Input {...p} maxLength={300} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />}</Field>
           {v.address && <Field label="Access instructions" optionalText id="f-access">{(p) => <Textarea {...p} maxLength={1000} value={v.access} onChange={(e) => setV({ ...v, access: e.target.value })} />}</Field>}
+        </>}
+        {billing && <>
+          <Checkbox label="Tax exempt" hint="No tax is charged on this customer's invoices, whatever the service's tax rate." checked={v.taxExempt} onChange={(e) => setV({ ...v, taxExempt: e.target.checked })} />
+          {v.taxExempt && <Field label="Exemption certificate" optionalText id="f-taxExemptNote" hint="For example: Farm exemption certificate F-1029, expires 12/2027">{(p) => <Input {...p} maxLength={200} value={v.taxExemptNote} onChange={(e) => setV({ ...v, taxExemptNote: e.target.value })} />}</Field>}
+          <Field label="Payment terms" id="f-paymentTermsDays" hint="When their invoices are due. The company default is set in Settings.">{(p) => <Select {...p} value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>
+            <option value="">Company default ({termsLabel(c.company.invoiceDueDays)})</option>{[0, 7, 10, 15, 30, 45, 60, 90].map((n) => <option key={n} value={String(n)}>{termsLabel(n)}</option>)}</Select>}</Field>
+          <Checkbox label="Send a monthly statement" hint="Prepared on the 1st of each month for review before it's sent." checked={v.monthlyStatement} onChange={(e) => setV({ ...v, monthlyStatement: e.target.checked })} />
         </>}
         {defs.map((f: any) => <DynamicField key={f.key} f={f} idPrefix="custom" value={v.custom[f.key]} error={s.fieldError(`custom.${f.key}`)} onChange={(x) => setV({ ...v, custom: { ...v.custom, [f.key]: x } })} />)}
         <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={2000} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} />}</Field>
@@ -81,11 +94,12 @@ export function CustomerDetail() {
   const qc = useQueryClient();
   const toast = useToast();
   const [editing, setEditing] = useState(false);
-  const [loc, setLoc] = useState<null | { id?: string; label: string; address: string; accessInstructions: string; siteContact: string }>(null);
+  const [loc, setLoc] = useState<null | { id?: string; label: string; address: string; accessInstructions: string; siteContact: string; openJobs?: number; updateOpenJobs?: boolean }>(null);
   const q = useQuery({ queryKey: [c.cid, 'customer', id], queryFn: () => get(`/c/${c.cid}/customers/${id}`) });
   const saveLoc = useSubmit(async () => {
-    if (loc?.id) await patch(`/c/${c.cid}/locations/${loc.id}`, loc); else await post(`/c/${c.cid}/customers/${id}/locations`, loc);
-    setLoc(null); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Location saved');
+    const { openJobs, ...body } = loc!;
+    const r = loc?.id ? await patch(`/c/${c.cid}/locations/${loc.id}`, body) : await post(`/c/${c.cid}/customers/${id}/locations`, body);
+    setLoc(null); qc.invalidateQueries({ queryKey: [c.cid] }); toast(r?.updatedJobs ? `Location saved. ${r.updatedJobs} open job(s) updated and their drivers told.` : 'Location saved');
   });
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
@@ -106,6 +120,8 @@ export function CustomerDetail() {
                 <dt>Billing address</dt><dd>{customer.billingAddress || '—'}</dd>
               </>}
               {q.data.customFields.customers.map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{String(customer.custom?.[f.key] ?? '—')}</dd></div>)}
+              {customer.paymentTermsDays !== undefined && <><dt>Payment terms</dt><dd>{customer.paymentTermsDays === null ? `Company default (${termsLabel(c.company.invoiceDueDays)})` : termsLabel(customer.paymentTermsDays)}{customer.monthlyStatement ? ' · monthly statement' : ''}</dd></>}
+              <dt>Tax</dt><dd>{customer.taxExempt ? <><Pill tone="info">Tax exempt</Pill>{customer.taxExemptNote ? <div className="small muted">{customer.taxExemptNote}</div> : null}</> : 'Charged at each service\'s rate'}</dd>
               <dt>Notes</dt><dd className="pre">{customer.notes || '—'}</dd>
               <dt>Customer since</dt><dd>{fmtDate(customer.createdAt, c.company.timezone)}</dd>
             </dl>
@@ -115,15 +131,17 @@ export function CustomerDetail() {
               <ul className="list">{locations.map((l: any) => (
                 <li key={l.id} style={{ padding: '10px 0' }} className="row-between">
                   <span style={{ minWidth: 0 }}><strong>{l.label || 'Location'}</strong><div>{l.address}</div>{l.access_instructions && <div className="small muted">Access: {l.access_instructions}</div>}{l.site_contact && <div className="small muted">Contact: {l.site_contact}</div>}</span>
-                  {c.can('customers.edit') && <Button size="sm" variant="ghost" onClick={() => setLoc({ id: l.id, label: l.label, address: l.address, accessInstructions: l.access_instructions, siteContact: l.site_contact })}>Edit</Button>}
+                  {c.can('customers.edit') && <Button size="sm" variant="ghost" onClick={() => setLoc({ id: l.id, label: l.label, address: l.address, accessInstructions: l.access_instructions, siteContact: l.site_contact, openJobs: l.open_jobs ?? 0, updateOpenJobs: false })}>Edit</Button>}
                 </li>
               ))}</ul>
             )}
           </Card>
+          {c.can('finance.view') && customer.priceOverrides && <CustomerPrices customer={customer} />}
         </div>
         <div className="stack">
           <Card id="jobs" title="Jobs">{jobs.length === 0 ? <p className="muted">No jobs yet.</p> : <ul className="list">{jobs.map((j: any) => <li key={j.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`jobs/${j.id}`)}>#{j.number} {j.service_name}</Link><span className="row"><span className="small muted">{fmtDateTime(j.scheduled_start, c.company.timezone)}</span><JobStatus status={j.status} /></span></li>)}</ul>}</Card>
-          {invoices && <Card id="invs" title="Invoices">{invoices.length === 0 ? <p className="muted">No invoices yet.</p> : <ul className="list">{invoices.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`invoices/${i.id}`)}>{i.number ?? 'Draft'}</Link><span className="row">{i.total_minor !== null ? <span className="num">{formatMoney(i.total_minor, i.currency)}</span> : null}<InvoiceStatus status={i.status} /></span></li>)}</ul>}</Card>}
+          {c.can('finance.view') && c.can('invoices.view') && <CustomerAccount customerId={customer.id} />}
+          {invoices && <Card id="invs" title="Invoices" actions={c.can('invoices.edit') && c.can('finance.view') ? <LinkButton size="sm" to={c.to(`invoices/new?customer=${customer.id}`)} icon={<Plus aria-hidden />}>New invoice</LinkButton> : undefined}>{invoices.length === 0 ? <p className="muted">No invoices yet.</p> : <ul className="list">{invoices.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`invoices/${i.id}`)}>{i.number ?? 'Draft'}</Link><span className="row">{i.total_minor !== null ? <span className="num">{formatMoney(i.total_minor, i.currency)}</span> : null}{i.status === 'issued' || i.status === 'void' ? <PaymentPill payment={i.payment} /> : <InvoiceStatus status={i.status} />}</span></li>)}</ul>}</Card>}
           {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}<div className="small muted">{fmtDateTime(m.created_at, c.company.timezone)}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
         </div>
       </div>
@@ -135,9 +153,73 @@ export function CustomerDetail() {
           <Field label="Address" id="f-address" error={saveLoc.fieldError('address')}>{(p) => <Input {...p} maxLength={300} value={loc.address} onChange={(e) => setLoc({ ...loc, address: e.target.value })} />}</Field>
           <Field label="Access instructions" optionalText id="f-accessInstructions">{(p) => <Textarea {...p} maxLength={1000} value={loc.accessInstructions} onChange={(e) => setLoc({ ...loc, accessInstructions: e.target.value })} />}</Field>
           <Field label="Site contact" optionalText id="f-siteContact">{(p) => <Input {...p} maxLength={200} value={loc.siteContact} onChange={(e) => setLoc({ ...loc, siteContact: e.target.value })} />}</Field>
+          {loc.id && <Banner tone="info">Changes apply to new jobs. Finished jobs and issued invoices keep the address they had.</Banner>}
+          {loc.id && (loc.openJobs ?? 0) > 0 && <Checkbox label={`Also update the ${loc.openJobs} open job${loc.openJobs === 1 ? '' : 's'} at this location`} hint="Their drivers are told the address changed." checked={!!loc.updateOpenJobs} onChange={(e) => setLoc({ ...loc, updateOpenJobs: e.target.checked })} />}
           <p className="small muted">Addresses are stored as text. Maps and geocoding are not connected.</p>
         </div>}
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Prices agreed with this customer, replacing the service's rate line by line. Lines left empty use
+ * the standard rate. Only people who see finances and edit invoices can change them.
+ */
+function CustomerPrices({ customer }: { customer: any }) {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const svcs = useQuery({ queryKey: [c.cid, 'services'], queryFn: () => get(`/c/${c.cid}/services`) });
+  const canEdit = c.can('invoices.edit') && c.can('customers.edit');
+  const [edit, setEdit] = useState<Record<string, string> | null>(null);
+  const cur = c.company.currency;
+  const services: any[] = (svcs.data?.services ?? []).filter((s: any) => s.active || customer.priceOverrides[s.id]);
+  const custom = Object.values(customer.priceOverrides as Record<string, Record<string, number>>).reduce((n, o) => n + Object.keys(o).length, 0);
+  const save = useSubmit(async () => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const [k, raw] of Object.entries(edit ?? {})) {
+      if (raw.trim() === '') continue;
+      const rate = parseRate(raw);
+      const [sid, lid] = k.split('|');
+      const line = services.find((s) => s.id === sid)?.pricing.find((p: any) => p.id === lid);
+      if (rate === null) throw Object.assign(new Error(`Enter the price for "${line?.label ?? lid}" like 3.75 or 3.8995, or leave it empty.`), { status: 400 });
+      (out[sid] ??= {})[lid] = rate;
+    }
+    await patch(`/c/${c.cid}/customers/${customer.id}`, { priceOverrides: out, version: customer.version });
+    setEdit(null);
+    await qc.invalidateQueries({ queryKey: [c.cid, 'customer', customer.id] });
+    toast('Customer prices saved. They apply to invoices prepared from now on.');
+  });
+  const start = () => setEdit(Object.fromEntries(services.flatMap((s) => s.pricing.map((p: any) => [`${s.id}|${p.id}`, rateToInput(customer.priceOverrides[s.id]?.[p.id])]))));
+  return (
+    <Card id="prices" title="Customer prices" actions={canEdit && !edit ? <Button size="sm" icon={<Pencil aria-hidden />} onClick={start} disabled={!svcs.data}>Edit prices</Button> : undefined}>
+      {svcs.isLoading ? <LoadingBlock rows={2} /> : !edit ? (
+        custom === 0 ? <p className="muted">Standard prices. Set a price for this customer to replace a service's rate on their invoices.</p> : (
+          <ul className="list">{services.flatMap((s) => s.pricing.filter((p: any) => customer.priceOverrides[s.id]?.[p.id] !== undefined).map((p: any) => (
+            <li key={`${s.id}|${p.id}`} className="row-between" style={{ padding: '8px 0' }}>
+              <span>{p.label}<div className="small muted">{s.name} · standard {formatRate(p.rateE4, cur)}</div></span>
+              <span className="num">{formatRate(customer.priceOverrides[s.id][p.id], cur)}{p.basis === 'per_quantity' && p.unit ? ` / ${p.unit}` : ''}</span>
+            </li>
+          )))}</ul>
+        )
+      ) : (
+        <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); save.run(); }}>
+          <ErrorSummary error={save.error} />
+          <p className="small muted">Leave a price empty to use the standard rate.</p>
+          {services.map((s) => (
+            <fieldset key={s.id} className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+              <legend className="small" style={{ fontWeight: 600, marginBottom: 6 }}>{s.name}</legend>
+              {s.pricing.map((p: any) => (
+                <Field key={p.id} label={`${p.label}${p.basis === 'per_quantity' && p.unit ? ` (per ${p.unit})` : ''}`} optionalText id={`f-cp-${s.id}-${p.id}`} hint={`Standard: ${p.rateE4 === null ? 'not set' : formatRate(p.rateE4, cur)}`}>
+                  {(pp) => <Input {...pp} inputMode="decimal" value={edit[`${s.id}|${p.id}`] ?? ''} onChange={(e) => setEdit({ ...edit, [`${s.id}|${p.id}`]: e.target.value })} />}
+                </Field>
+              ))}
+            </fieldset>
+          ))}
+          <div className="form-actions"><Button type="submit" variant="primary" busy={save.busy}>Save prices</Button><Button onClick={() => setEdit(null)}>Cancel</Button></div>
+        </form>
+      )}
+    </Card>
   );
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Truck, Upload, Pencil } from 'lucide-react';
 import { useCompany } from '../lib/session';
@@ -31,7 +32,7 @@ export function Resources() {
           <tbody>{q.data.resources.map((r: any) => (
             <tr key={r.id}>
               <td data-primary><strong>{r.name}</strong>{r.notes ? <div className="small muted">{r.notes}</div> : null}</td>
-              <td data-label="Type">{r.kind === 'truck' ? 'Truck' : r.kind === 'unit' ? 'Rental unit' : 'Equipment'}</td>
+              <td data-label="Type">{r.kind === 'truck' ? 'Truck' : r.kind === 'unit' ? <>Rental unit<div className="small muted">{r.placement === 'on_site' ? <>On site{r.plan_name ? <> · <Link to={c.to(`recurring/${r.plan_id}`)}>{r.plan_name}</Link></> : null}</> : r.placement === 'missing' ? 'Missing' : 'In the yard'}</div></> : 'Equipment'}</td>
               <td data-label="Identifier">{r.identifier || '—'}</td>
               <td data-label="Capacity">{r.capacity || '—'}</td>
               <td data-label="Status"><Pill tone={STATUS[r.status][0]}>{STATUS[r.status][1]}</Pill></td>
@@ -51,7 +52,7 @@ export function Resources() {
           <Field label="Name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />}</Field>
           <div className="grid-2">
             <Field label="Identifier or plate" optionalText id="f-identifier">{(p) => <Input {...p} maxLength={60} value={edit.identifier} onChange={(e) => setEdit({ ...edit, identifier: e.target.value })} />}</Field>
-            <Field label="Capacity" optionalText id="f-capacity" hint="For example: 3,000 gal">{(p) => <Input {...p} maxLength={60} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
+            <Field label="Capacity" optionalText id="f-capacity" hint="A number and unit, like 3,000 gal. Rigo asks the driver to confirm any delivery larger than this.">{(p) => <Input {...p} maxLength={60} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} />}</Field>
           </div>
           <Field label="Notes" optionalText id="f-notes">{(p) => <Textarea {...p} maxLength={1000} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} />}</Field>
         </div>}

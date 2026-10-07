@@ -5,8 +5,10 @@ import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrenc
 import { useCompany } from '../lib/session';
 import { get, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, PriorityPill, LatePill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast } from '../components/ui';
-import { fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase } from '../lib/format';
+import { PaymentPill } from './invoices';
+import { PAYMENT_METHODS } from '../../shared/invoices';
+import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, JobStatus, InvoiceStatus, MessageStatus, Pill, PriorityPill, LatePill, Banner, Dialog, Checkbox, LinkButton, AskRigo, useToast, useConfirm } from '../components/ui';
+import { fmtDate, fmtDateTime, fmtTime, formatMoney, toLocalInput, titleCase, shiftEnd } from '../lib/format';
 import { zonedToUtc } from '../../shared/schedule';
 import { BILLING_STATUSES, OUTCOMES, isLate } from '../../shared/jobs';
 import { tzLabel } from '../../shared/timezones';
@@ -16,7 +18,8 @@ import { useUnsavedGuard } from '../lib/unsaved';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared',
+  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
+  handed_over: 'Handed over by driver', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
 };
 
 function eventText(e: any, members: Record<string, string>) {
@@ -24,11 +27,17 @@ function eventText(e: any, members: Record<string, string>) {
   switch (e.type) {
     case 'status': return `${titleCase(d.from ?? '')} → ${titleCase(d.to ?? '')}${d.reason ? `: ${d.reason}` : ''}`;
     case 'assigned': case 'reassigned': case 'unassigned': case 'rescheduled': return [d.to ? `Driver: ${members[d.to] ?? 'member'}` : d.from ? 'Driver removed' : '', d.resources?.length ? `Equipment: ${d.resources.join(', ')}` : '', d.reason ?? ''].filter(Boolean).join(' · ');
-    case 'completion': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}${d.reason ? `: ${d.reason}` : ''}${d.photos ? ` · ${d.photos} photo(s)` : ''}${d.signed ? ' · signed' : ''}`;
+    case 'completion': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}${d.reason ? `: ${d.reason}` : ''}${d.photos ? ` · ${d.photos} photo(s)` : ''}${d.signed ? (d.typedSignature ? ' · typed signature' : ' · signed') : ''}${d.acceptedFrom ? ' · sent late, accepted by the office' : ''}`;
+    case 'started': return d.implicit ? 'Not started on the app first; recorded with the outcome.' : '';
+    case 'handed_over': return `To ${d.toName ?? members[d.to] ?? 'another driver'}${d.note ? `: ${d.note}` : ''}`;
+    case 'record_held': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}. ${d.reason === 'finished' ? 'The job was already finished.' : d.reason === 'removed' ? 'The driver was no longer a member.' : 'The job had been given to someone else.'}`;
+    case 'late_record': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}${d.reason ? `: ${d.reason}` : ''}${d.photos ? ` · ${d.photos} photo(s)` : ''}`;
+    case 'record_dismissed': return d.note || '';
     case 'problem': case 'note': return d.text;
     case 'problem_resolved': return d.note || '';
     case 'correction': return `Reason: ${d.reason}`;
     case 'invoice_prepared': return d.held ? `On hold: ${(d.reasons ?? []).join(' ')}` : 'Draft ready';
+    case 'not_billed': return d.reason ?? '';
     case 'created': return d.followupOf ? `Follow-up to job #${d.followupOf}` : d.plan ? `From plan ${d.plan}` : '';
     default: return '';
   }
@@ -41,7 +50,14 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const [v, setV] = useState({ userId: j.assigned_user_id ?? '', resourceIds: data.resources.map((r: any) => r.id) as string[], start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone) });
   const toIso = (l: string) => (l ? zonedToUtc(l.slice(0, 10), l.slice(11, 16), c.company.timezone).toISOString() : null);
-  const s = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version }); toast('Assignment saved'); onDone(); return true; });
+  const confirm = useConfirm();
+  const takingStarted = j.status === 'in_progress' && !!j.assigned_user_id && v.userId !== (j.assigned_user_id ?? '');
+  const s = useSubmit(async () => {
+    // Taking a started job from its driver is a deliberate step (R9-M2).
+    if (takingStarted && !(await confirm.ask({ title: `${j.assignee_name ?? 'The driver'} has already started this job`, body: <p>They are no longer assigned once you save. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' }))) return false;
+    await post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version, confirmStarted: takingStarted });
+    toast('Assignment saved'); onDone(); return true;
+  });
   const drivers = c.members.filter((m) => ['driver', 'owner', 'dispatcher'].includes(m.role_key));
   // Driver, trucks and times are saved together here, so leaving with changes asks first.
   const saved = { userId: j.assigned_user_id ?? '', resourceIds: [...data.resources.map((r: any) => r.id)].sort().join(','), start: toLocalInput(j.scheduled_start, c.company.timezone), end: toLocalInput(j.scheduled_end, c.company.timezone) };
@@ -52,7 +68,7 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <div className="stack">
-          <Field label="Start" id="f-scheduledStart" hint={tzLabel(c.company.timezone)}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+          <Field label="Start" id="f-scheduledStart" hint={tzLabel(c.company.timezone)}>{(p) => <Input {...p} type="datetime-local" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value, end: shiftEnd(v.start, v.end, e.target.value) })} />}</Field>
           <Field label="End" id="f-scheduledEnd" error={s.fieldError('scheduledEnd')}>{(p) => <Input {...p} type="datetime-local" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
         </div>
         <Field label="Driver" id="f-userId" error={s.fieldError('userId')}>{(p) => <Select {...p} value={v.userId} onChange={(e) => setV({ ...v, userId: e.target.value })}><option value="">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>}</Field>
@@ -61,10 +77,10 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
             <Checkbox key={r.id} label={`${r.name}${r.capacity ? ` (${r.capacity})` : ''}${r.status === 'out_of_service' ? ' — out of service' : ''}`} disabled={r.status === 'out_of_service' && !v.resourceIds.includes(r.id)} checked={v.resourceIds.includes(r.id)} onChange={(e) => setV({ ...v, resourceIds: e.target.checked ? [...v.resourceIds, r.id] : v.resourceIds.filter((x) => x !== r.id) })} />
           ))}</fieldset>
         ) : null}
-        {j.status === 'in_progress' && v.userId !== (j.assigned_user_id ?? '') && <Banner tone="warning">This job is in progress. Reassigning tells the current driver it is no longer theirs; any unsynced draft on their device will be flagged as a conflict.</Banner>}
+        {takingStarted && <Banner tone="warning">This job is in progress. Reassigning tells the current driver it is no longer theirs; anything they record for it goes to the office for review.</Banner>}
         <div className="row"><Button type="submit" variant="primary" busy={s.busy}>Save assignment</Button>{dirty ? <span className="small" role="status"><strong>Unsaved changes.</strong> Save to keep them.</span> : null}</div>
       </form>
-      {guard}
+      {guard}{confirm.node}
     </Card>
   );
 }
@@ -86,11 +102,11 @@ export function JobDetail() {
   const status = useSubmit(async (to: string, r?: string) => { await post(`/c/${c.cid}/jobs/${id}/status`, { to, version: q.data.job.version, reason: r }); setCancelOpen(false); toast(to === 'open' ? 'Job opened for scheduling' : to === 'cancelled' ? 'Job cancelled' : 'Moved back to draft'); refresh(); });
   const report = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem`, { text: problem }); setProblemOpen(false); setProblem(''); toast('Problem reported to dispatch'); refresh(); });
   const resolve = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem/resolve`, { note: '' }); toast('Problem marked resolved'); refresh(); });
-  const prep = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/invoice`); toast(r.held ? 'Invoice prepared on hold. See the reasons on the invoice.' : 'Invoice draft prepared'); refresh(); });
+  const prep = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/invoice`); toast(r.covered ? r.covered : r.held ? 'Invoice prepared on hold. See the reasons on the invoice.' : 'Invoice draft prepared'); refresh(); });
   const correct = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/correct`, { ...corr, version: q.data.job.version }); setCorrectOpen(false); toast(r.invoiceNote || 'Correction saved with history'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock rows={8} /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
-  const { job, service, customer, location, resources, events, files, invoice, messages, can } = q.data;
+  const { job, service, customer, location, resources, events, files, invoice, voidedInvoices = [], collected = [], messages, can } = q.data;
   const members = Object.fromEntries(c.members.map((m) => [m.id, m.name]));
   const reqFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'completion');
   const compFields = (service?.fields ?? []).filter((f: any) => f.stage !== 'request');
@@ -131,7 +147,7 @@ export function JobDetail() {
             <dl className="kv">
               <dt>Customer</dt><dd>{customer ? (c.can('customers.view') ? <Link to={c.to(`customers/${customer.id}`)}>{customer.name}</Link> : customer.name) : '—'}</dd>
               {customer?.phone ? <><dt>Customer phone</dt><dd><a href={`tel:${customer.phone}`}>{customer.phone}</a></dd></> : null}
-              <dt>Address</dt><dd>{location?.address ?? '—'}</dd>
+              <dt>Address</dt><dd>{location?.address ?? '—'}{location?.current_address ? <div className="small muted">The location's address is now {location.current_address}. This job keeps the address it was booked for.</div> : null}</dd>
               <dt>Access</dt><dd className="pre">{job.access_instructions || location?.access_instructions || '—'}</dd>
               <dt>On-site contact</dt><dd>{job.contact_name || location?.site_contact || '—'}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</dd>
               <dt>Scheduled</dt><dd className="num">{fmtDateTime(job.scheduled_start, c.company.timezone)}</dd>
@@ -177,18 +193,20 @@ export function JobDetail() {
         </div>
         <div className="stack" style={{ minWidth: 0 }}>
           {can.assign && <AssignCard key={job.version} data={q.data} onDone={refresh} />}
-          {(invoice || can.prepareInvoice) && (
+          {(invoice || can.prepareInvoice || voidedInvoices.length > 0) && (
             <Card id="inv" title={<h2 className="row"><Receipt aria-hidden />Invoice</h2>}>
               {invoice ? (
                 <div className="stack-sm">
-                  <div className="row-between"><InvoiceStatus status={invoice.status} />{invoice.total_minor !== null ? <span className="num" style={{ fontSize: 'var(--fs-18)', fontWeight: 500 }}>{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
-                  {invoice.number ? <span className="num small muted">{invoice.number}</span> : null}
+                  <div className="row-between"><span className="row" style={{ gap: 6 }}><InvoiceStatus status={invoice.status} />{invoice.status === 'issued' ? <PaymentPill payment={invoice.payment} /> : null}</span>{invoice.total_minor !== null && invoice.total_minor !== undefined ? <span className="num" style={{ fontSize: 'var(--fs-18)', fontWeight: 500 }}>{formatMoney(invoice.total_minor, invoice.currency)}</span> : null}</div>
+                  {invoice.number ? <span className="num small muted">{invoice.number}{invoice.due_date ? ` · due ${fmtDate(invoice.due_date)}` : ''}</span> : null}
                   {invoice.hold_reasons?.length ? <Banner tone="warning" title="On hold">{invoice.hold_reasons.join(' ')}</Banner> : null}
                   <div className="row"><LinkButton size="sm" to={c.to(`invoices/${invoice.id}`)}>Open invoice</LinkButton>{invoice.hold_reasons?.length && c.can('assistant.use') ? <AskRigo to={c.to('assistant')} prompt={`Why is the invoice for job #${job.number} on hold?`} /> : null}</div>
                 </div>
-              ) : job.status === 'unsuccessful' ? <p className="muted">Unsuccessful visits are not billed automatically.</p> : (
-                <div className="stack-sm"><p className="muted">No invoice yet.</p><div><Button variant="primary" busy={prep.busy} onClick={() => prep.run()}>Prepare invoice</Button></div></div>
-              )}
+              ) : job.status === 'unsuccessful' ? <p className="muted">Unsuccessful visits are not billed automatically.</p> : can.prepareInvoice ? (
+                <div className="stack-sm"><p className="muted">{voidedInvoices.length ? 'The invoice was voided, so this job can be billed again.' : 'No invoice yet.'}</p><div><Button variant="primary" busy={prep.busy} onClick={() => prep.run()}>{voidedInvoices.length ? 'Prepare new invoice' : 'Prepare invoice'}</Button></div></div>
+              ) : <p className="muted">No active invoice.</p>}
+              {collected.length > 0 && <ul className="list" style={{ marginTop: 8 }}>{collected.map((p: any) => <li key={p.id} className="row-between small" style={{ padding: '6px 0' }}><span>Collected at the stop · {(PAYMENT_METHODS as any)[p.method] ?? p.method}{p.reference ? ` #${p.reference}` : ''}</span><span className="row" style={{ gap: 6 }}><span className="num">{formatMoney(p.amount_minor, c.company.currency)}</span>{p.state === 'unconfirmed' ? <Pill tone="warning">To confirm</Pill> : p.state === 'rejected' ? <Pill tone="danger">Rejected</Pill> : null}</span></li>)}</ul>}
+              {voidedInvoices.length > 0 && <p className="small muted" style={{ marginBottom: 0 }}>Voided: {voidedInvoices.map((v: any, n: number) => <Fragment key={v.id}>{n ? ', ' : ''}<Link to={c.to(`invoices/${v.id}`)}>{v.number ?? 'draft'}</Link></Fragment>)}</p>}
             </Card>
           )}
           {messages && messages.length > 0 && (

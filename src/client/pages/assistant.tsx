@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Send, Sparkles, FileText, Trash2, ShieldCheck, Eye, Workflow, ArrowUpRight } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
-import { Button, Pill, Banner, LoadingBlock, PageHeader, Card } from '../components/ui';
+import { Button, Pill, Banner, LoadingBlock, PageHeader, Card, useConfirm } from '../components/ui';
 import { relTime } from '../lib/format';
 
 const SUGGESTIONS = ['What needs my attention?', 'Why is an invoice on hold?', 'What is on today?', 'When a job is completed, prepare an invoice and ask me to approve it'];
@@ -40,7 +40,11 @@ export function AssistantChat({ compact, initial = '' }: { compact?: boolean; in
     try { await post(`/c/${c.cid}/assistant`, { text: t }); setText(''); await qc.invalidateQueries({ queryKey: [c.cid, 'assistant'] }); qc.invalidateQueries({ queryKey: [c.cid, 'workflows'] }); }
     catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); }
   };
-  const clear = async () => { await post(`/c/${c.cid}/assistant/clear`); qc.invalidateQueries({ queryKey: [c.cid, 'assistant'] }); };
+  const { ask, node: confirmNode } = useConfirm();
+  const clear = async () => {
+    if (!(await ask({ title: 'Clear this conversation?', body: 'Your questions and Rigo\'s answers are removed for you. Anything Rigo prepared (drafts, proposals) stays where it is.', confirm: 'Clear conversation', danger: true }))) return;
+    await post(`/c/${c.cid}/assistant/clear`); qc.invalidateQueries({ queryKey: [c.cid, 'assistant'] });
+  };
   const ai = q.data?.ai;
   return (
     <div className="chat-shell" style={compact ? { minHeight: 0 } : undefined}>
@@ -70,6 +74,7 @@ export function AssistantChat({ compact, initial = '' }: { compact?: boolean; in
         <Button type="submit" variant="primary" busy={busy} aria-label="Send"><Send aria-hidden /></Button>
       </form>
       {q.data?.messages.length ? <div style={{ padding: '0 12px 12px' }}><Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} onClick={clear}>Clear conversation</Button></div> : null}
+      {confirmNode}
     </div>
   );
 }

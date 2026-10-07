@@ -14,7 +14,8 @@ async function setup(mode: 'manual' | 'assisted' | 'automatic' = 'assisted', rat
   if (rates) {
     const fuel = svcs.fuel;
     const def = starterService('fuel');
-    def.pricing[0].rateMinor = 389;
+    def.pricing[0].rateE4 = 38900;
+    def.pricing = def.pricing.filter((p) => p.id !== 'delivery'); // this company charges no delivery fee
     await owner.put(`/c/${cid}/services/${fuel.id}`, { service: def, version: fuel.version });
   }
   await activateAll(owner, cid);
@@ -53,8 +54,9 @@ describe('jobs', () => {
     expect(list.body.jobs[0].billing_status).toBeUndefined();
     expect((await s.driver.get(`/c/${s.cid}/jobs/${other.body.id}`)).status).toBe(404);
     const svc = await s.driver.get(`/c/${s.cid}/services`);
-    expect(JSON.stringify(svc.body)).not.toContain('389');
-    expect(svc.body.services[0].pricing[0].rateMinor).toBeUndefined();
+    // Record ids are random and can contain any digits; look for the rate everywhere else.
+    expect(JSON.stringify(svc.body).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '')).not.toContain('389');
+    expect(svc.body.services[0].pricing[0].rateE4).toBeUndefined();
     expect((await s.driver.get(`/c/${s.cid}/invoices`)).status).toBe(403);
     expect((await s.driver.get(`/c/${s.cid}/customers`)).status).toBe(403);
     const detail = await s.driver.get(`/c/${s.cid}/jobs/${j.id}`);
@@ -84,8 +86,10 @@ describe('jobs', () => {
     const [a, b] = [await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, sub), await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, sub)];
     expect(a.status).toBe(200);
     expect(b.body.duplicate).toBe(true);
+    // A different record for the finished job never replaces the outcome: it goes to the office for review (WP5).
     const other = await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, { ...sub, submissionId: 'sub-different1' });
-    expect(other.status).toBe(409);
+    expect(other.status).toBe(200);
+    expect(other.body).toMatchObject({ accepted: false, pendingReview: true });
   });
 
   it('requires completion fields and treats unsuccessful visits differently', async () => {
@@ -109,13 +113,15 @@ describe('jobs', () => {
     expect(auto.body.waiting.some((a: any) => a.type === 'job.create_followup' && a.status === 'proposed')).toBe(true);
   });
 
-  it('a reassigned driver cannot submit, and their draft is reported as a conflict', async () => {
+  it('a reassigned driver cannot complete the job; their record goes to the office for review (R9-M2)', async () => {
     const s = await setup();
     const j = await openFuelJob(s);
     const job = (await s.owner.get(`/c/${s.cid}/jobs/${j.id}`)).body.job;
     await s.owner.post(`/c/${s.cid}/jobs/${j.id}/assign`, { userId: null, resourceIds: [], version: job.version });
     const r = await s.driver.post(`/c/${s.cid}/jobs/${j.id}/complete`, { submissionId: 'sub-reassign1', baseVersion: j.version, outcome: 'completed', values: { delivered_qty: '1' } });
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ accepted: false, pendingReview: true });
+    expect((await s.owner.get(`/c/${s.cid}/jobs/${j.id}`)).body.job.status).toBe('open');
   });
 });
 
@@ -131,8 +137,8 @@ describe('invoices and automation', () => {
     const approvals = (await s.owner.get(`/c/${s.cid}/approvals`)).body.approvals;
     expect(approvals).toHaveLength(1);
     expect(approvals[0].canDecide).toBe(true);
-    // Office cannot decide (no approval authority by default).
-    expect((await s.office.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve' })).status).toBe(403);
+    // A driver has no approval authority; Office does (owner decision D7), tested separately.
+    expect((await s.driver.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve' })).status).toBe(403);
     const d = await s.owner.post(`/c/${s.cid}/approvals/${approvals[0].id}/decide`, { decision: 'approve', note: '' });
     expect(d.body.status).toBe('approved');
     await processAll();
@@ -164,7 +170,7 @@ describe('invoices and automation', () => {
     expect((await s.owner.post(`/c/${s.cid}/invoices/${inv.id}/approve`, { version: inv.version })).status).toBe(409);
     // Setting the rate rebuilds the held draft; it then needs approval (automatic did not bypass it).
     const fuel = (await services(s.owner, s.cid)).fuel;
-    const def = starterService('fuel'); def.pricing[0].rateMinor = 400;
+    const def = starterService('fuel'); def.pricing[0].rateE4 = 40000; def.pricing = def.pricing.filter((p) => p.id !== 'delivery');
     await s.owner.put(`/c/${s.cid}/services/${fuel.id}`, { service: def, version: fuel.version });
     const fixed = (await s.owner.get(`/c/${s.cid}/invoices/${inv.id}`)).body.invoice;
     expect(fixed.status).toBe('draft');

@@ -33,6 +33,16 @@ overviewRoutes.get('/overview', async (c) => {
   if (can(cc, 'invoices.view')) {
     const h = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'held'`, [cid])).rows[0].n;
     if (h) attention.push({ key: 'held', label: 'Invoices on hold (missing rates or review)', count: h, link: 'invoices?status=held', tone: 'warning' });
+    // Completed work with no invoice, whatever the workflows are doing (R3-M3): nothing goes unbilled quietly.
+    const u = (await db.query<any>(`select count(*)::int n from rigo.jobs j where j.company_id = $1 and j.status in ('completed','partial') and coalesce(j.billing_status, '') <> 'not_billable'
+        and not exists (select 1 from rigo.invoices i where i.job_id = j.id and i.status <> 'void')`, [cid])).rows[0].n;
+    if (u) attention.push({ key: 'unbilled', label: 'Completed jobs not yet billed', count: u, link: 'jobs?status=unbilled', tone: 'action' });
+    const o = (await db.query<any>(`select count(*)::int n from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid' and due_date < $2`, [cid, today])).rows[0].n;
+    if (o) attention.push({ key: 'overdue', label: 'Overdue invoices', count: o, link: 'invoices?status=overdue', tone: 'warning' });
+  }
+  if (can(cc, 'payments.record') && can(cc, 'finance.view')) {
+    const u = (await db.query<any>(`select count(*)::int n from rigo.payments where company_id = $1 and state = 'unconfirmed'`, [cid])).rows[0].n;
+    if (u) attention.push({ key: 'collected', label: 'Payments collected at stops to confirm', count: u, link: 'collections', tone: 'action' });
   }
   if (can(cc, 'jobs.view_all')) {
     const j = (await db.query<any>(`select count(*) filter (where problem_open)::int problems,
@@ -48,6 +58,11 @@ overviewRoutes.get('/overview', async (c) => {
     if (j.unassigned_soon) attention.push({ key: 'unassigned', label: 'Jobs today or overdue without a driver', count: j.unassigned_soon, link: 'jobs?assignee=none', tone: 'action' });
     if (j.exceptions) attention.push({ key: 'exceptions', label: 'Partial or unsuccessful visits (last 3 days)', count: j.exceptions, link: 'jobs?status=finished', tone: 'warning' });
     if (j.drafts) attention.push({ key: 'drafts', label: 'Draft jobs missing information', count: j.drafts, link: 'jobs?status=draft', tone: 'action' });
+  }
+  if (can(cc, 'jobs.assign')) {
+    // Records drivers sent after their job moved on (reassigned, finished, or they were removed).
+    const r = (await db.query<{ n: number }>(`select count(*)::int n from rigo.pending_submissions where company_id = $1 and status = 'pending'`, [cid])).rows[0].n;
+    if (r) attention.unshift({ key: 'driver_records', label: 'Driver records to review', count: r, link: 'jobs/records', tone: 'action' });
   }
 
   let today_ops = null;
@@ -76,7 +91,7 @@ overviewRoutes.get('/overview', async (c) => {
         (select count(*)::int from rigo.jobs where company_id = $1 and status = 'completed' and completed_at > now() - interval '30 days') as completed_30,
         (select count(*)::int from rigo.jobs where company_id = $1 and status in ('partial','unsuccessful') and completed_at > now() - interval '30 days') as exceptions_30,
         (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and issued_at > now() - interval '30 days') as issued_30,
-        (select coalesce(sum(total_minor - paid_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid') as outstanding,
+        (select coalesce(sum(total_minor - paid_minor - credited_minor),0)::bigint from rigo.invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid') as outstanding,
         (select coalesce(sum(total_minor),0)::bigint from rigo.invoices where company_id = $1 and status in ('draft','pending_approval','approved')) as waiting,
         (select count(*)::int from rigo.customers where company_id = $1) as customers`, [cid])).rows[0];
     business = { completed30: b.completed_30, exceptions30: b.exceptions_30, customers: b.customers, issued30Minor: fin ? Number(b.issued_30) : undefined, outstandingMinor: fin ? Number(b.outstanding) : undefined,
