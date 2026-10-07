@@ -240,6 +240,7 @@ No third-party code or assets were copied in this round: patterns only (`THIRD_P
 | Support address for owners with no other owner | Set `RIGO_SUPPORT_EMAIL` (not set: the forgot page leaves that line out). |
 | Terms of service and privacy policy | Publish them and set `RIGO_TERMS_URL` and `RIGO_PRIVACY_URL` (not set: no agreement line at sign-up). |
 | Real AI answers | An Anthropic API key in `ANTHROPIC_API_KEY` with `RIGO_AI_PROVIDER=anthropic`. |
+| GitHub Actions can open pull requests | In GitHub → Settings → Actions → General → Workflow permissions, choose "Read and write permissions" and tick "Allow GitHub Actions to create and approve pull requests". The automation that opens revert PRs needs both. Claude sessions can't change Actions settings. (Auto-merge, deleting merged branches and the `main` ruleset are already on.) |
 
 ## Known limitations and next steps
 
@@ -290,5 +291,9 @@ No third-party code or assets were copied in this round: patterns only (`THIRD_P
   Rigo (a customer-facing report link would need the same token design as invoice links).
 - Customer search matches text (accents and phone formatting ignored); misspellings are caught when
   adding a customer, not while searching.
+- CI and revert automation: add `.github/workflows/` (a CI workflow running typecheck, tests and
+  the browser check, plus the automation that opens revert pull requests). Once CI has run once,
+  add its check to the required status checks in the `main` ruleset, which already requires a
+  pull request, requires status checks (none chosen yet) and blocks force pushes.
 - Next: configurable dashboard widgets and job stages, XLSX import, Spanish for office screens,
   map links/geocoding adapter (disabled by default), per-field permissions beyond contact/finance.
