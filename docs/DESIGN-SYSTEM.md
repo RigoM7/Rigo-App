@@ -205,7 +205,7 @@ Motion explains state and makes the business feel live; it never decorates.
 
 | Component | Rules |
 |---|---|
-| Button | 44px; primary (filled crimson), default (outlined), ghost, danger (outlined + icon). States: hover, focus, active (1px press), disabled (50%), busy (spinner, `aria-busy`). |
+| Button | 44px; primary (filled crimson), dark (filled black, near-white in dark mode; the landing page's "Try the demo"), default (outlined), ghost, danger (outlined + icon). States: hover, focus, active (1px press), disabled (50%), busy (spinner, `aria-busy`). |
 | Field | Visible label; "(optional)"; hint via `aria-describedby`; inline error with icon; invalid fields get a danger border and `aria-invalid`. Numeric fields use mono. |
 | ErrorSummary | After a failed multi-field submit: `role="alert"`, focused, links to each field. |
 | Pill (status) | Always icon + text. In progress uses a live dot. Priority pills: Urgent (warning, double chevron) and Emergency (danger, siren); "Late" (warning, hourglass). Normal priority shows no pill. |

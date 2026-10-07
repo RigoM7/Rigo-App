@@ -176,6 +176,9 @@ kbd { display: inline-flex; align-items: center; min-width: 20px; height: 20px; 
 .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--on-primary); }
 .btn-primary:active { background: var(--primary-press); }
+.btn-dark { background: var(--text); border-color: var(--text); color: var(--canvas); } /* black on light, inverts to near-white on dark so it stays visible */
+.btn-dark:hover { background: var(--text-2); border-color: var(--text-2); color: var(--canvas); }
+.btn-dark:active { background: var(--text-2); }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { background: var(--surface-2); }
 .btn-danger { background: var(--surface); border-color: var(--danger); color: var(--danger); }

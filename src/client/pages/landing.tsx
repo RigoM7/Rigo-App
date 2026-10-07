@@ -44,7 +44,7 @@ export function Landing() {
             <p className="lp-lead">Free to start. Plan the day, give drivers a simple phone screen, and send invoices built from what was delivered.</p>
             <div className="lp-ctas">
               <LinkButton variant="primary" size="lg" to="/signup">Create a free account</LinkButton>
-              <LinkButton size="lg" to="/signup?next=/start-demo" icon={<FlaskConical aria-hidden />}>Try the demo</LinkButton>
+              <LinkButton variant="dark" size="lg" to="/signup?next=/start-demo" icon={<FlaskConical aria-hidden />}>Try the demo</LinkButton>
             </div>
           </div>
           <Shot name="timeline" eager className="lp-hero-shot" />
@@ -103,7 +103,7 @@ export function Landing() {
           </ol>
           <div className="lp-ctas">
             <LinkButton variant="primary" size="lg" to="/signup">Create a free account</LinkButton>
-            <LinkButton size="lg" to="/signup?next=/start-demo" icon={<FlaskConical aria-hidden />}>Try the demo</LinkButton>
+            <LinkButton variant="dark" size="lg" to="/signup?next=/start-demo" icon={<FlaskConical aria-hidden />}>Try the demo</LinkButton>
           </div>
         </section>
       </main>

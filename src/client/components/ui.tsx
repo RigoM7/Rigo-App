@@ -5,7 +5,7 @@ import type { ApiError } from '../lib/api';
 import { useDocumentTitle } from '../lib/title';
 
 // ------------------------------------------------------------ buttons
-type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; block?: boolean; busy?: boolean; icon?: ReactNode };
+type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'dark' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; block?: boolean; busy?: boolean; icon?: ReactNode };
 export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button({ variant = 'default', size, block, busy, icon, className = '', children, disabled, type = 'button', ...rest }, ref) {
   const cls = ['btn', variant !== 'default' && `btn-${variant}`, size && `btn-${size}`, block && 'btn-block', className].filter(Boolean).join(' ');
   return (
@@ -16,7 +16,7 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button({ 
   );
 });
 
-export function LinkButton({ to, variant = 'default', size, icon, children, block }: { to: string; variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; icon?: ReactNode; children: ReactNode; block?: boolean }) {
+export function LinkButton({ to, variant = 'default', size, icon, children, block }: { to: string; variant?: 'primary' | 'dark' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; icon?: ReactNode; children: ReactNode; block?: boolean }) {
   const cls = ['btn', variant !== 'default' && `btn-${variant}`, size && `btn-${size}`, block && 'btn-block'].filter(Boolean).join(' ');
   return <Link to={to} className={cls}>{icon}{children}</Link>;
 }
