@@ -5,6 +5,7 @@ import { Plus, Trash2, ArrowUp, ArrowDown, Save, Wrench } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, put } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { Button, Card, Field, Input, Select, Textarea, ErrorSummary, LoadingBlock, ErrorState, PageHeader, Empty, Pill, Checkbox, Banner, useToast } from '../components/ui';
 import { formatMoney, parseMoney, minorToInput, fmtDate } from '../lib/format';
 import { parseRate, rateToInput, formatRate, buildLines, computeTotals, pricingWarnings, lineApplies } from '../../shared/billing';
@@ -93,6 +94,10 @@ export function ServiceEditor() {
   }, [svc, v]);
   const fin = c.can('finance.view');
   const cur = c.company.currency;
+  // The editor's state when loaded or last saved, to warn before leaving with changes (R11-m2).
+  const [snap, setSnap] = useState<string | null>(null);
+  const current = v ? JSON.stringify({ v, rates, tax }) : null;
+  useEffect(() => { if (current && snap === null) setSnap(current); }, [current, snap]);
   const s = useSubmit(async () => {
     const { pricing, bad } = readRates(v.pricing, rates);
     if (bad) throw Object.assign(new Error(bad), { status: 400 });
@@ -100,9 +105,10 @@ export function ServiceEditor() {
     if (taxBp !== null && (!Number.isFinite(taxBp) || taxBp < 0 || taxBp > 5000)) throw new Error('Tax rate must be a percentage between 0 and 50.');
     await put(`/c/${c.cid}/services/${id}`, { service: { ...v, pricing, taxRateBp: taxBp }, version: svc.version });
     await qc.invalidateQueries({ queryKey: [c.cid] });
-    setV(null);
+    setV(null); setSnap(null);
     toast('Service saved. Held invoices for this service were recalculated.');
   });
+  const guard = useUnsavedGuard(!!snap && !!current && current !== snap && !s.busy, { message: 'This service has changes that are not saved. Save or discard?', onSave: async () => { await s.run(); return true; } });
   if (q.isLoading || (svc && !v)) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
   if (!svc) return <div className="page"><ErrorState error={{ status: 404, message: 'Service not found.' }} /></div>;
@@ -149,6 +155,18 @@ export function ServiceEditor() {
                     <Field label="When" id={`f-fs-${i}`}>{(p) => <Select {...p} value={f.stage} onChange={(e) => setField(i, { stage: e.target.value as any })}><option value="request">Request (dispatch)</option><option value="completion">Completion (driver)</option><option value="both">Both</option></Select>}</Field>
                     {f.type === 'number' && <Field label="Unit" optionalText id={`f-fu-${i}`}>{(p) => <Input {...p} maxLength={20} value={f.unit} onChange={(e) => setField(i, { unit: e.target.value })} />}</Field>}
                     {f.type === 'select' && <Field label="Options (one per line)" id={`f-service-fields-${i}-options`} error={s.fieldError(`service.fields.${i}.options`)}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => setField(i, { options: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />}</Field>}
+                    {(() => {
+                      // "Ask only when Service details is Inspection" (R6-M4): conditions use choice and yes/no fields.
+                      const sources = v.fields.filter((o: FieldDef, x: number) => x !== i && (o.type === 'select' || o.type === 'boolean'));
+                      if (!sources.length && !f.when) return null;
+                      const src = sources.find((o: FieldDef) => o.key === f.when?.field);
+                      const values = src ? (src.type === 'boolean' ? ['true', 'false'] : src.options ?? []) : [];
+                      return <>
+                        <Field label="Ask only when" id={`f-fw-${i}`} hint="Leave on Always unless the field only applies to some visits.">{(p) => <Select {...p} value={f.when?.field ?? ''} onChange={(e) => { const o = sources.find((x: FieldDef) => x.key === e.target.value); setField(i, { when: o ? { field: o.key, equals: o.type === 'boolean' ? 'true' : o.options?.[0] ?? '' } : null }); }}>
+                          <option value="">Always</option>{sources.map((o: FieldDef) => <option key={o.key} value={o.key}>{o.label}</option>)}</Select>}</Field>
+                        {src && <Field label={`${src.label} is`} id={`f-fwv-${i}`}>{(p) => <Select {...p} value={f.when?.equals ?? ''} onChange={(e) => setField(i, { when: { field: src.key, equals: e.target.value } })}>{values.map((o: string) => <option key={o} value={o}>{o === 'true' ? 'Yes' : o === 'false' ? 'No' : o}</option>)}</Select>}</Field>}
+                      </>;
+                    })()}
                   </div>
                   <div className="row-between" style={{ marginTop: 8 }}>
                     <Checkbox label="Required" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} />
@@ -189,6 +207,7 @@ export function ServiceEditor() {
                     {(perUnit || included) && <Field label="Quantity field" id={`f-service-pricing-${i}-quantityField`} error={s.fieldError(`service.pricing.${i}.quantityField`)}>{(pp) => <Select {...pp} value={p.quantityField} onChange={(e) => setPrice(i, { quantityField: e.target.value, unit: unitOf(e.target.value) || p.unit })}><option value="">Choose…</option>{numberFields.map((f: FieldDef) => <option key={f.key} value={f.key}>{f.label}</option>)}</Select>}</Field>}
                     <Field label={`Rate (${cur})${perUnit ? ` per ${unit}` : ''}`} id={`f-rate-${i}`} hint={p.rateSince && fin ? `Current rate since ${fmtDate(p.rateSince)}. Empty means not set yet.` : 'Empty means not set yet.'}>{(pp) => <Input {...pp} inputMode="decimal" value={rates[p.id] ?? ''} onChange={(e) => setRates({ ...rates, [p.id]: e.target.value })} />}</Field>
                     {perUnit && <Field label={`Minimum charge (${cur})`} optionalText id={`f-service-pricing-${i}-minimumMinor`} error={s.fieldError(`service.pricing.${i}.minimumMinor`)} hint="The least this line charges, for small jobs.">{(pp) => <Input {...pp} inputMode="decimal" value={rates[`${p.id}:min`] ?? ''} onChange={(e) => setRates({ ...rates, [`${p.id}:min`]: e.target.value })} />}</Field>}
+                    {perUnit && <Field label="Price index note" optionalText id={`f-service-pricing-${i}-indexNote`} hint="Printed under the line, for example: OPIS rack Chicago + $0.35.">{(pp) => <Input {...pp} maxLength={120} value={p.indexNote ?? ''} onChange={(e) => setPrice(i, { indexNote: e.target.value })} />}</Field>}
                     {included && <Field label={`Included${p.quantityField ? ` (${unit})` : ''}`} id={`f-service-pricing-${i}-includedQuantity`} error={s.fieldError(`service.pricing.${i}.includedQuantity`)} hint="Covered by the flat rate.">{(pp) => <Input {...pp} inputMode="decimal" value={p.includedQuantity ?? ''} onChange={(e) => setPrice(i, { includedQuantity: e.target.value.trim().replace(/,/g, '') })} />}</Field>}
                     {included && <Field label={`Rate beyond that (${cur} per ${unit})`} id={`f-over-${i}`} hint="Empty holds jobs that go over.">{(pp) => <Input {...pp} inputMode="decimal" value={rates[`${p.id}:over`] ?? ''} onChange={(e) => setRates({ ...rates, [`${p.id}:over`]: e.target.value })} />}</Field>}
                   </div>
@@ -231,6 +250,7 @@ export function ServiceEditor() {
         {fin && <ExampleBill pricing={draft} fields={v.fields} taxRateBp={taxSet ? taxBp : null} currency={cur} sample={sample} setSample={setSample} />}
         {canEdit && <div className="form-actions"><Button type="submit" variant="primary" size="lg" icon={<Save aria-hidden />} busy={s.busy}>Save service</Button></div>}
       </form>
+      {guard}
     </div>
   );
 }

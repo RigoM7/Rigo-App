@@ -1,4 +1,4 @@
-import type { FieldDef } from './services.js';
+import { fieldApplies, type FieldDef } from './services.js';
 
 // Job status, assignment, billing status and message delivery are tracked separately.
 export const JOB_STATUSES = {
@@ -93,7 +93,7 @@ export function missingForOpen(job: JobLike, serviceFields: FieldDef[] | null) {
   if (!job.location_id) missing.push('Choose a service location');
   if (!job.service_id) missing.push('Choose a service');
   for (const f of serviceFields ?? []) {
-    if ((f.stage === 'request' || f.stage === 'both') && f.required) {
+    if ((f.stage === 'request' || f.stage === 'both') && f.required && fieldApplies(f, job.details ?? {})) {
       const v = job.details?.[f.key];
       if (v === undefined || v === null || v === '') missing.push(`Enter ${f.label.toLowerCase()}`);
     }
@@ -112,12 +112,12 @@ export interface CompletionInput {
   signerName: string;
 }
 
-export function completionProblems(c: CompletionInput, svc: { fields: FieldDef[]; requires_photo: boolean; requires_signature: boolean }) {
+export function completionProblems(c: CompletionInput, svc: { fields: FieldDef[]; requires_photo: boolean; requires_signature: boolean }, details: Record<string, unknown> = {}) {
   const problems: Record<string, string> = {};
   if (c.outcome !== 'completed' && !outcomeReason(c.reasonCode, c.reason)) problems.reason = c.reasonCode === 'other' ? 'Say what happened so the office can follow up' : 'Choose what happened, or describe it, so the office can follow up';
   if (c.outcome === 'completed') {
     for (const f of svc.fields) {
-      if ((f.stage === 'completion' || f.stage === 'both') && f.required) {
+      if ((f.stage === 'completion' || f.stage === 'both') && f.required && fieldApplies(f, { ...details, ...c.values })) {
         const v = c.values?.[f.key];
         if (v === undefined || v === null || v === '') problems[f.key] = `${f.label} is required`;
       }

@@ -110,7 +110,8 @@ export async function mePayload(db: Db | Q, user: User | null) {
       where lower(i.email) = $1 and i.status = 'pending' and i.expires_at > now() order by i.created_at desc`, [normEmail(user.email)]);
   return {
     user: { ...user, emailVerified: !!extra.rows[0]?.email_verified_at },
-    companies: companies.rows, invitations: invitations.rows,
+    // Unconfirmed addresses join through the invitation link, not from this list.
+    companies: companies.rows, invitations: invitations.rows.map((i) => ({ ...i, needsLink: !extra.rows[0]?.email_verified_at })),
     devMailbox: config.devMailbox, emailChannel: systemEmailChannel(),
   };
 }

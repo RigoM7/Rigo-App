@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Q } from '../db/index.js';
 import { config } from '../config.js';
-import { buildLines, computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, lineAmount, type DraftLine } from '../../shared/billing.js';
+import { buildDeliveryLines, type DeliveryLine } from '../../shared/deliveries.js';
+import { computeTotals, formatInvoiceNumber, formatMoney, formatRate, rateToMinor, resolveDiscounts, lineAmount, type DraftLine } from '../../shared/billing.js';
 import { readBillingRule, isPeriodic, PLAN_VISIT_LABEL, type PlanVisit } from '../../shared/rentals.js';
 import { balanceDue, dueDateFor, termsLabel } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
@@ -45,6 +46,8 @@ async function pricingContext(q: Q, job: any) {
     labels: Object.fromEntries(fields.map((f) => [f.key, f.label])),
     types: Object.fromEntries(fields.map((f) => [f.key, f.type])),
     values: { ...(job.details ?? {}), ...(job.completion?.values ?? {}) },
+    // Several products or tanks at one stop (R7-M1): one charge line each, the delivery fee once.
+    deliveries: (job.completion?.lines ?? []) as DeliveryLine[],
     overrides: (job.service_id && cust?.price_overrides?.[job.service_id]) || {},
     taxExempt: !!cust?.tax_exempt,
     // A confirmed quantity the driver flagged as over the truck's capacity or far over the request.
@@ -59,6 +62,9 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
       where j.id = $1 and j.company_id = $2 for update of j`, [jobId, companyId]);
   const job = rows[0];
   if (!job) throw notFound('Job');
+  // The invoice goes to whoever pays: a bill-to customer when the job has one (a realtor paying for an
+  // inspection), with their prices, tax exemption and terms; the service address stays the job's (R6-M4).
+  if (job.bill_to_customer_id) job.customer_id = job.bill_to_customer_id;
   const key = `job:${job.id}`;
   const existing = await q.query<any>(`select id, status from rigo.invoices where company_id = $1 and billable_key = $2`, [companyId, key]);
   if (existing.rows[0]) {
@@ -89,7 +95,7 @@ export async function prepareInvoiceForJob(q: Q, companyId: string, jobId: strin
   }
   if (!job.service_id && !planLines) throw conflict('The job has no service, so there is no pricing to use.');
   const ctx = await pricingContext(q, job);
-  const built = planLines ? { lines: planLines, holdReasons: [] as string[] } : buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
+  const built = planLines ? { lines: planLines, holdReasons: [] as string[] } : buildDeliveryLines(ctx.pricing, ctx.values, ctx.deliveries, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: job.booked_rates ?? undefined, currency: job.currency });
   const totals = computeTotals(built.lines, job.tax_rate_bp, [], { taxExempt: ctx.taxExempt });
   const reasons = [...built.holdReasons, ...totals.holdReasons.filter((r) => !r.startsWith('One or more lines'))];
   if (ctx.quantityHold) reasons.unshift(ctx.quantityHold);
@@ -134,12 +140,12 @@ export async function recalcInvoice(q: Q, invoiceId: string, opts: { taxRateBp?:
 
 /** Rebuild a held invoice's charge lines from its job and the service's current pricing. Manual discount lines are kept. */
 export async function rebuildHeldInvoice(q: Q, invoiceId: string) {
-  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, i.currency, i.free_confirmed, j.details, j.completion, j.status as job_status, j.customer_id, j.service_id, j.booked_rates, s.pricing, s.fields, s.tax_rate_bp
+  const { rows } = await q.query<any>(`select i.id, i.company_id, i.status, i.currency, i.free_confirmed, j.details, j.completion, j.status as job_status, coalesce(j.bill_to_customer_id, j.customer_id) as customer_id, j.service_id, j.booked_rates, s.pricing, s.fields, s.tax_rate_bp
       from rigo.invoices i join rigo.jobs j on j.id = i.job_id join rigo.services s on s.id = j.service_id where i.id = $1 for update of i`, [invoiceId]);
   const inv = rows[0];
   if (!inv || inv.status !== 'held') return;
   const ctx = await pricingContext(q, inv);
-  const built = buildLines(ctx.pricing, ctx.values, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: inv.booked_rates ?? undefined, currency: inv.currency });
+  const built = buildDeliveryLines(ctx.pricing, ctx.values, ctx.deliveries, ctx.labels, ctx.types, { overrides: ctx.overrides, bookedRates: inv.booked_rates ?? undefined, currency: inv.currency });
   const discounts = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 and kind = 'discount' order by position`, [invoiceId])).rows
     .map((l) => ({ ...lineFromRow(l), taxable: false, kind: 'discount' as const }));
   const all = resolveDiscounts([...built.lines, ...discounts], { allowFree: inv.free_confirmed }).lines;
@@ -249,7 +255,7 @@ export async function issueInvoice(q: Q, companyId: string, invoiceId: string, a
   const number = await nextNumber(q, companyId);
   const today = localDate(new Date(), inv.timezone);
   const terms = await termsFor(q, companyId, inv.customer_id);
-  const billTo = (await q.query<any>(`select c.name as customer_name, c.billing_address, c.email,
+  const billTo = (await q.query<any>(`select c.name as customer_name, c.billing_address, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as email,
         coalesce(j.location_snapshot->>'label', l.label) as location_label, coalesce(j.location_snapshot->>'address', l.address) as location_address,
         s.name as service_name, j.number as job_number, j.completed_at
       from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id
@@ -291,7 +297,7 @@ const EMAIL_LINE_LIMIT = 10;
  */
 export async function invoiceEmail(q: Q, invoiceId: string, viewUrl?: string) {
   const { rows } = await q.query<any>(
-    `select i.*, c.name as customer_name, c.email as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
+    `select i.*, c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id join rigo.companies co on co.id = i.company_id left join rigo.jobs j on j.id = i.job_id
       where i.id = $1`, [invoiceId]);
   const i = rows[0];

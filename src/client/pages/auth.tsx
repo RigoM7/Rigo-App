@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, MailCheck, Users } from 'lucide-react';
@@ -103,6 +103,12 @@ export function SignUp() {
   const next = sp.get('next');
   const [v, setV] = useState({ name: '', email: '', password: '' });
   const [emailTouched, setEmailTouched] = useState(false);
+  // Signing up from an invitation: the invited address is filled in and fixed, and the invitation is
+  // accepted right after (R4-m6).
+  const inviteToken = /^\/invite\/([A-Za-z0-9_-]+)/.exec(next ?? '')?.[1] ?? null;
+  const invite = useQuery({ queryKey: ['invite', inviteToken], queryFn: () => get<any>(`/invitations/${inviteToken}`), enabled: !!inviteToken });
+  const invitedEmail: string | null = invite.data?.email ?? null;
+  useEffect(() => { if (invitedEmail) setV((x) => ({ ...x, email: invitedEmail })); }, [invitedEmail]);
   const s = useSubmit(async () => { await post('/auth/signup', v); await refreshMe(qc); nav(safeNext(next), { replace: true }); });
   return (
     <AuthLayout title="Create your account" sub="It's free. Next you can try a sample company, set up your own, or join the one that invited you."
@@ -111,8 +117,8 @@ export function SignUp() {
         <ErrorSummary error={s.error} />
         <Field label="Your name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} autoComplete="name" maxLength={NAME_MAX} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
         <div className="stack-sm">
-          <Field label="Email" id="f-email" error={s.fieldError('email')} hint="If a company invited you, use the address the invitation went to.">{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={v.email} onBlur={() => setEmailTouched(true)} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
-          {emailTouched ? <EmailSuggestion email={v.email} onUse={(fixed) => setV({ ...v, email: fixed })} /> : null}
+          <Field label="Email" id="f-email" error={s.fieldError('email')} hint={invitedEmail ? `From your invitation to ${invite.data.companyName}.` : 'If a company invited you, use the address the invitation went to.'}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={v.email} readOnly={!!invitedEmail} onBlur={() => setEmailTouched(true)} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+          {emailTouched && !invitedEmail ? <EmailSuggestion email={v.email} onUse={(fixed) => setV({ ...v, email: fixed })} /> : null}
         </div>
         <Field label="Password" id="f-password" error={s.fieldError('password')} hint={PASSWORD_HINT}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />}</Field>
         <LegalNote />

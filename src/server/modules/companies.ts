@@ -197,6 +197,7 @@ companyRoutes.patch('/branding', async (c) => {
   }
   if (input.removeLogo) delete branding.logoFileId;
   await cc.db.query(`update rigo.companies set branding = $2 where id = $1`, [cc.company.id, JSON.stringify(branding)]);
+  await audit(cc.db, cc, 'branding.updated', { accent: input.accent, removedLogo: !!input.removeLogo });
   return c.json({ ok: true, accent: accentVariants(branding.accent) });
 });
 
@@ -216,6 +217,7 @@ companyRoutes.post('/branding/logo', async (c) => {
     await q.query(`insert into rigo.files (id, company_id, subject_type, name, mime, size, storage, storage_key, data, created_by) values ($1,$2,'company',$3,$4,$5,$6,$7,$8,$9)`,
       [id, cc.company.id, file.name.slice(0, 120), mime, buf.length, stored.storage, stored.storage_key, stored.data, cc.user.id]);
     await q.query(`update rigo.companies set branding = branding || jsonb_build_object('logoFileId', $2::text) where id = $1`, [cc.company.id, id]);
+    await audit(q, cc, 'branding.logo_uploaded', { fileId: id });
   });
   return c.json({ ok: true, fileId: id });
 });

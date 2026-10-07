@@ -91,7 +91,7 @@ importRoutes.post('/imports/:id/review', async (c) => {
   for (const h of Object.values(input.mapping)) if (h && !imp.headers.includes(h)) throw badRequest(`Column "${h}" is not in the file.`);
   const out: RowReview[] = [];
   if (kind === 'customers') {
-    const existing = (await cc.db.query<any>(`select id, name, lower(name) as lname, lower(coalesce(email,'')) as lemail from rigo.customers where company_id = $1`, [cc.company.id])).rows;
+    const existing = (await cc.db.query<any>(`select id, name, lower(name) as lname, lower(coalesce(email,'')) as lemail from rigo.customers where company_id = $1 and archived_at is null`, [cc.company.id])).rows;
     const byEmail = new Map(existing.filter((e) => e.lemail).map((e) => [e.lemail, e]));
     const byName = new Map<string, any[]>();
     for (const e of existing) byName.set(e.lname, [...(byName.get(e.lname) ?? []), e]);

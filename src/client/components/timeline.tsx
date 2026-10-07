@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, GanttChartSquare, ListOrdered, AlertTriangle, CircleDot, Clock, CheckCircle2, XCircle, PlayCircle, UserX, Truck, MapPin, ArrowUpRight, Pencil, Siren, ChevronsUp, Hourglass } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GanttChartSquare, ListOrdered, AlertTriangle, CircleDot, Clock, CheckCircle2, XCircle, PlayCircle, UserX, Truck, MapPin, ArrowUpRight, Pencil, Siren, ChevronsUp, Hourglass, Crosshair, ZoomIn, ZoomOut, ArrowRight } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get } from '../lib/api';
 import { fmtTime } from '../lib/format';
@@ -16,6 +16,7 @@ import { QuickAssign } from './assign';
 // jobs in time order. Day, view and filters live in the URL.
 
 type Job = any;
+const ROW_H = 68;
 const STATUS_ICON: Record<string, ReactElement> = {
   draft: <CircleDot aria-hidden />, open: <Clock aria-hidden />, in_progress: <PlayCircle aria-hidden />, completed: <CheckCircle2 aria-hidden />,
   partial: <AlertTriangle aria-hidden />, unsuccessful: <XCircle aria-hidden />,
@@ -71,6 +72,11 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
   const view = allowFeed && sp.get('tl') === 'feed' ? 'feed' : 'lanes';
   const svc = sp.get('svc') ?? '';
   const drv = sp.get('drv') ?? '';
+  // Density (R11-M3): the whole day at a glance, or a 4-hour window with room for every name.
+  const zoom = sp.get('zoom') === '4h';
+  const hourPx = zoom ? 240 : 96;
+  const BLOCK_MIN_PX = 120;
+  const feedBy = sp.get('by') === 'driver' ? 'driver' : 'time';
   const set = (k: string, v: string) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); setSp(n, { replace: true }); };
   const params = new URLSearchParams({ status: 'all', sort: 'schedule', from: zonedToUtc(day, '00:00', tz).toISOString(), to: zonedToUtc(addDays(day, 1), '00:00', tz).toISOString() });
   const q = useQuery({ queryKey: [c.cid, 'jobs', 'timeline', params.toString()], queryFn: () => get(`/c/${c.cid}/jobs?${params}`), refetchInterval: 30_000 });
@@ -88,6 +94,10 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
   const nowMin = isToday ? minutesInDay(new Date(now).toISOString(), day, tz) : null;
 
   const spans = jobs.map((j) => { const s = minutesInDay(j.scheduled_start, day, tz); const e = j.scheduled_end ? minutesInDay(j.scheduled_end, day, tz) : s + 60; return { job: j, s, e: Math.max(e, s + 30) }; });
+  // A block is never narrower than about 12 characters of the customer's name; rows are packed by
+  // that width, so short jobs side by side stack instead of covering each other.
+  const minMinutes = (BLOCK_MIN_PX / hourPx) * 60;
+  const [moreOpen, setMoreOpen] = useState(false);
   // Visible hours: an hour either side of the day's jobs and the current time, at least 8 hours.
   let lo = Infinity, hi = -Infinity;
   for (const x of spans) { lo = Math.min(lo, x.s); hi = Math.max(hi, x.e); }
@@ -109,7 +119,19 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
   const summary = { total: jobs.length, live: count(['in_progress']), done: count(['completed']), unassigned: jobs.filter((j) => !j.assigned_user_id && ['open', 'draft'].includes(j.status)).length, exceptions: count(['partial', 'unsuccessful']) };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  useScrollToNow(scrollRef, nowMin === null ? null : pct(nowMin) / 100, `${day}-${view}-${q.isSuccess}`);
+  useScrollToNow(scrollRef, nowMin === null ? null : pct(nowMin) / 100, `${day}-${view}-${q.isSuccess}-${zoom}`);
+  const [canScroll, setCanScroll] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const upd = () => setCanScroll({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+    upd();
+    el.addEventListener('scroll', upd, { passive: true });
+    window.addEventListener('resize', upd);
+    return () => { el.removeEventListener('scroll', upd); window.removeEventListener('resize', upd); };
+  }, [view, zoom, q.isSuccess, jobs.length]);
+  const scrollToNow = () => { const el = scrollRef.current; if (el && nowMin !== null) el.scrollTo({ left: Math.max(0, (pct(nowMin) / 100) * el.scrollWidth - el.clientWidth / 3), behavior: 'smooth' }); };
+  const scrollMore = () => { const el = scrollRef.current; if (el) el.scrollBy({ left: el.clientWidth * 0.6, behavior: 'smooth' }); };
   const label = (j: Job) => `#${j.number} ${j.service_name ?? 'Job'}, ${j.customer_name ?? 'no customer'}, ${fmtTime(j.scheduled_start, tz)}${j.scheduled_end ? ` to ${fmtTime(j.scheduled_end, tz)}` : ''}, ${STATUS_LABEL[j.status] ?? j.status}${isLate(j, now) ? ', late' : ''}${j.priority && j.priority !== 'normal' ? `, ${j.priority}` : ''}${j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}${j.problem_open ? ', problem reported' : ''}`;
 
   return (
@@ -131,7 +153,10 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
         <select id="tl-drv" className="select" value={drv} onChange={(e) => set('drv', e.target.value)}>
           <option value="">All drivers</option><option value="none">Unassigned</option>{memberLanes.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
-        {allowFeed && <Segmented label="Timeline view" value={view} onChange={(v) => set('tl', v === 'lanes' ? '' : v)} options={[{ key: 'lanes', label: 'Lanes', icon: <GanttChartSquare aria-hidden /> }, { key: 'feed', label: 'Feed', icon: <ListOrdered aria-hidden /> }]} />}
+        {view === 'lanes' && <Button size="sm" icon={zoom ? <ZoomOut aria-hidden /> : <ZoomIn aria-hidden />} aria-pressed={zoom} onClick={() => set('zoom', zoom ? '' : '4h')}>{zoom ? 'Whole day' : '4 hours'}</Button>}
+        {view === 'lanes' && isToday && <Button size="sm" icon={<Crosshair aria-hidden />} onClick={scrollToNow}>Now</Button>}
+        {view === 'feed' && <Segmented label="Group the feed" value={feedBy} onChange={(v) => set('by', v === 'time' ? '' : v)} options={[{ key: 'time', label: 'By time' }, { key: 'driver', label: 'By driver' }]} />}
+                {allowFeed && <Segmented label="Timeline view" value={view} onChange={(v) => set('tl', v === 'lanes' ? '' : v)} options={[{ key: 'lanes', label: 'Lanes', icon: <GanttChartSquare aria-hidden /> }, { key: 'feed', label: 'Feed', icon: <ListOrdered aria-hidden /> }]} />}
       </div>
       {q.isLoading ? <div style={{ padding: 16 }}><LoadingBlock rows={5} /></div> : q.error ? <div style={{ padding: 16 }}><ErrorState error={q.error} retry={() => q.refetch()} /></div> : (
         <>
@@ -149,31 +174,38 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
               {svc || drv ? 'Try another service or driver.' : 'Scheduled jobs appear here in driver lanes as soon as they have a time.'}
             </Empty>
           ) : view === 'lanes' ? (
+            <div className="tl-scroll-wrap">
+            {canScroll.right && <button type="button" className="tl-scroll-cue" onClick={scrollMore}>Later hours<ArrowRight aria-hidden /></button>}
             <div className="tl-scroll" ref={scrollRef}>
-              <div className="tl-grid" style={{ '--tl-hours': hours } as CSSProperties}>
+              <div className="tl-grid" style={{ '--tl-hours': hours, '--tl-hour-min': `${hourPx}px` } as CSSProperties}>
                 <div className="tl-hours" aria-hidden><span />{Array.from({ length: hours }, (_, i) => <span key={i}>{hourLabel(h0 + i)}</span>)}</div>
                 {lanes.map((lane) => {
-                  const items = packRows(spans.filter((s) => (s.job.assigned_user_id ?? '') === lane.id).sort((a, b) => a.s - b.s));
+                  const packed = packRows(spans.filter((s) => (s.job.assigned_user_id ?? '') === lane.id).sort((a, b) => a.s - b.s).map((it) => ({ ...it, e: Math.max(it.e, it.s + minMinutes) })));
+                  const unassignedLane = lane.id === '';
+                  // Many overlapping unassigned jobs fold into "+N more" (R11-M3).
+                  const hiddenN = unassignedLane && !moreOpen ? packed.filter((i) => i.row >= 2).length : 0;
+                  const items = hiddenN ? packed.filter((i) => i.row < 2) : packed;
                   const rowsN = Math.max(1, ...items.map((i) => i.row + 1));
                   const trucks = [...new Set(items.flatMap((i) => (i.job.resources ?? []).filter((r: any) => r.kind === 'truck').map((r: any) => r.name)))];
                   const unassigned = lane.id === '';
                   return (
-                    <div key={lane.id || 'none'} className={`tl-lane${unassigned ? ' unassigned' : ''}`} style={{ minHeight: 16 + rowsN * 64 }}>
+                    <div key={lane.id || 'none'} className={`tl-lane${unassigned ? ' unassigned' : ''}`} style={{ minHeight: 16 + rowsN * ROW_H + (hiddenN ? 36 : 0) }}>
                       <div className="tl-lane-head">
                         <span className="who">{unassigned ? <UserX aria-hidden /> : <span className="tl-avatar" aria-hidden>{initials(lane.name)}</span>}<span>{lane.name}</span></span>
-                        <span className="what">{unassigned ? (items.length ? `${items.length} job${items.length === 1 ? ' needs' : 's need'} a driver` : 'Every job has a driver') : trucks.length ? trucks.join(', ') : items.length ? 'No truck on these jobs' : 'No jobs this day'}</span>
+                        <span className="what">{unassigned ? (packed.length ? `${packed.length} job${packed.length === 1 ? ' needs' : 's need'} a driver` : 'Every job has a driver') : trucks.length ? trucks.join(', ') : items.length ? 'No truck on these jobs' : 'No jobs this day'}</span>
                       </div>
                       <div className="tl-track">
                         {nowMin !== null && <div className="past" style={{ width: x(nowMin) }} />}
                         <ul className="list" aria-label={`${lane.name}: ${items.length} job${items.length === 1 ? '' : 's'}`} style={{ position: 'absolute', inset: 0 }}>
                           {items.map(({ job: j, s, e, row }) => (
                             <li key={j.id} style={{ border: 0 }}>
-                              <button type="button" className={`tl-block st-${j.status}${j.problem_open ? ' problem' : ''}${(e - s) / (hours * 60) < 0.045 ? ' compact' : ''}`}
-                                style={{ left: x(s), width: `calc(${(pct(e) - pct(s)).toFixed(3)}% - 4px)`, top: 8 + row * 64 }}
+                              <button type="button" className={`tl-block st-${j.status}${j.problem_open ? ' problem' : ''}${((e - s) / 60) * hourPx < 180 ? ' compact' : ''}${j.priority === 'emergency' ? ' emergency' : ''}`}
+                                style={{ left: x(s), width: `calc(${(pct(e) - pct(s)).toFixed(3)}% - 4px)`, top: 8 + row * ROW_H }}
                                 title={label(j)} onClick={() => setOpenJob(j)}>
-                                <span className="t">{j.status === 'in_progress' ? <LiveDot /> : null}{fmtTime(j.scheduled_start, tz)}<span aria-hidden>·</span>#{j.number}</span>
                                 <span className="c">{j.customer_name ?? j.service_name ?? 'Job'}</span>
+                                <span className="t">{j.status === 'in_progress' ? <LiveDot /> : null}{fmtTime(j.scheduled_start, tz)}<span aria-hidden>·</span>#{j.number}</span>
                                 <span className="s">{j.problem_open ? <AlertTriangle aria-hidden style={{ color: 'var(--danger)' }} /> : isLate(j, now) ? <Hourglass aria-hidden style={{ color: 'var(--warning)' }} /> : STATUS_ICON[j.status]}{j.problem_open ? 'Problem' : isLate(j, now) ? 'Late' : STATUS_LABEL[j.status]} · {j.service_name ?? ''}</span>
+                                {(j.resources ?? []).some((r: any) => r.status === 'out_of_service' || r.status === 'retired') ? <span className="tl-oos"><Truck aria-hidden />Truck out of service</span> : null}
                                 {j.priority === 'emergency' || j.priority === 'urgent' ? <span className={`tl-prio prio-${j.priority}`}>{j.priority === 'emergency' ? <Siren aria-hidden /> : <ChevronsUp aria-hidden />}{j.priority === 'emergency' ? 'Emergency' : 'Urgent'}</span> : null}
                                 <span className="sr-only">{j.scheduled_end ? `, until ${fmtTime(j.scheduled_end, tz)}` : ''}{j.assigned_user_id ? `, ${j.assignee_name}` : ', no driver'}{j.problem_open ? `, ${STATUS_LABEL[j.status]}` : ''}{j.problem_open && isLate(j, now) ? ', late' : ''}</span>
                               </button>
@@ -181,6 +213,8 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                           ))}
                         </ul>
                         {items.length === 0 && !unassigned ? <span className="tl-empty-lane" aria-hidden>Free</span> : null}
+                        {hiddenN > 0 && <button type="button" className="tl-more" style={{ top: 8 + rowsN * ROW_H }} onClick={() => setMoreOpen(true)}>+{hiddenN} more without a driver</button>}
+                        {unassigned && moreOpen && packed.some((i) => i.row >= 2) && <button type="button" className="tl-more" style={{ top: 8 + rowsN * ROW_H }} onClick={() => setMoreOpen(false)}>Show fewer</button>}
                       </div>
                     </div>
                   );
@@ -192,8 +226,9 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                 )}
               </div>
             </div>
+            </div>
           ) : (
-            <Feed jobs={jobs} nowMin={nowMin} day={day} tz={tz} now={now} onOpen={setOpenJob} />
+            <Feed jobs={jobs} nowMin={nowMin} day={day} tz={tz} now={now} onOpen={setOpenJob} byDriver={feedBy === 'driver'} />
           )}
           <div className="tl-legend" aria-label="Legend">
             {(['open', 'in_progress', 'completed', 'partial', 'unsuccessful', 'draft'] as const).map((st) => <span key={st} className={`st-${st}`}><i aria-hidden style={{ background: `var(--tl-tone)` }} className={`tl-block-swatch st-${st}`} />{STATUS_LABEL[st]}</span>)}
@@ -205,7 +240,27 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
   );
 }
 
-function Feed({ jobs, nowMin, day, tz, now, onOpen }: { jobs: Job[]; nowMin: number | null; day: string; tz: string; now: number; onOpen: (j: Job) => void }) {
+function Feed({ jobs, nowMin, day, tz, now, onOpen, byDriver = false }: { jobs: Job[]; nowMin: number | null; day: string; tz: string; now: number; onOpen: (j: Job) => void; byDriver?: boolean }) {
+  if (byDriver) {
+    // One section per driver (unassigned first), each in time order (R11-M3).
+    const groups = new Map<string, { name: string; jobs: Job[] }>();
+    for (const j of [...jobs].sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start))) {
+      const k = j.assigned_user_id ?? '';
+      if (!groups.has(k)) groups.set(k, { name: j.assignee_name ?? 'No driver yet', jobs: [] });
+      groups.get(k)!.jobs.push(j);
+    }
+    const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (a === '' ? -1 : b === '' ? 1 : x.name.localeCompare(y.name)));
+    return (
+      <div className="feed-groups">
+        {ordered.map(([k, g]) => (
+          <section key={k || 'none'} aria-labelledby={`fg-${k || 'none'}`}>
+            <h3 id={`fg-${k || 'none'}`} className="feed-group-h">{g.name} <span className="muted num">{g.jobs.length}</span></h3>
+            <Feed jobs={g.jobs} nowMin={nowMin} day={day} tz={tz} now={now} onOpen={onOpen} />
+          </section>
+        ))}
+      </div>
+    );
+  }
   const sorted = [...jobs].sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
   const nowIdx = nowMin === null ? -1 : sorted.findIndex((j) => minutesInDay(j.scheduled_start, day, tz) > nowMin);
   const rows: ReactElement[] = [];

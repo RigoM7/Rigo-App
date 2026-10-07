@@ -22,8 +22,17 @@ export const fieldDefSchema = z.object({
   stage: z.enum(['request', 'completion', 'both']),
   required: z.boolean().default(false),
   help: z.string().max(200).optional().default(''),
+  /** Asked only when another field has this value ("Inspection findings" only for an inspection; R6-M4). */
+  when: z.object({ field: key, equals: z.string().max(60) }).nullable().optional(),
 });
 export type FieldDef = z.infer<typeof fieldDefSchema>;
+
+/** Whether a field is asked, given the job's request details and recorded values. */
+export function fieldApplies(f: { when?: { field: string; equals: string } | null }, values: Record<string, unknown> | null | undefined) {
+  if (!f.when) return true;
+  const v = values?.[f.when.field];
+  return String(v ?? '') === f.when.equals;
+}
 
 const decimal = z.string().regex(/^\d+(\.\d+)?$/, 'Enter a number like 1000 or 12.5');
 
@@ -55,6 +64,8 @@ export const priceLineSchema = z.preprocess(legacyRate, z.object({
   minimumMinor: z.number().int().min(0).max(1_000_000_000).nullable().optional().default(null),
   /** The date the current rate took effect (set by the server when the rate changes). */
   rateSince: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().default(null),
+  /** How the rate is set, printed under the line ("OPIS rack Chicago + $0.35"; R7-M4). */
+  indexNote: z.string().trim().max(120).optional().default(''),
 }));
 export type PriceLine = z.output<typeof priceLineSchema>;
 
@@ -121,7 +132,7 @@ export type ServiceInput = z.infer<typeof serviceInputSchema>;
 
 /** A price line with every optional setting at its default. */
 export function priceLine(p: Pick<PriceLine, 'id' | 'label' | 'basis'> & Partial<PriceLine>): PriceLine {
-  return { quantityField: '', unit: '', rateE4: null, taxable: false, when: null, includedQuantity: null, overageRateE4: null, minimumMinor: null, rateSince: null, ...p };
+  return { quantityField: '', unit: '', rateE4: null, taxable: false, when: null, includedQuantity: null, overageRateE4: null, minimumMinor: null, rateSince: null, indexNote: '', ...p };
 }
 
 // Built fresh on each call: a shared object here would carry one company's edits into the next starter.
@@ -129,6 +140,15 @@ const afterHoursField = (): FieldDef => ({ key: 'after_hours', label: 'After-hou
 const afterHoursLine = () => priceLine({ id: 'after_hours', label: 'After-hours visit', basis: 'flat', when: { field: 'after_hours', equals: 'true' } });
 export const FUEL_PRODUCTS = ['Diesel', 'Dyed diesel', 'Gasoline', 'Heating oil'];
 export const SEPTIC_DETAILS = ['Pump-out', 'Inspection', 'Grease trap', 'Repair visit'];
+/** A septic inspection's findings checklist; a starting point the owner can change in Services. */
+export const INSPECTION_FIELDS: FieldDef[] = [
+  { key: 'tank_condition', label: 'Tank condition', type: 'select', unit: '', options: ['Good', 'Fair', 'Poor', 'Failed'], stage: 'completion', required: true, help: '', when: null },
+  { key: 'sludge_depth', label: 'Sludge depth', type: 'number', unit: 'in', options: [], stage: 'completion', required: false, help: '', when: null },
+  { key: 'baffles_intact', label: 'Inlet and outlet baffles intact', type: 'boolean', unit: '', options: [], stage: 'completion', required: false, help: '', when: null },
+  { key: 'drainfield_ok', label: 'Drain field: no pooling, odor or wet spots', type: 'boolean', unit: '', options: [], stage: 'completion', required: false, help: '', when: null },
+  { key: 'lid_secure', label: 'Lids and risers secure', type: 'boolean', unit: '', options: [], stage: 'completion', required: false, help: '', when: null },
+  { key: 'recommendation', label: 'Findings and recommendation', type: 'longtext', unit: '', options: [], stage: 'completion', required: true, help: 'What was found and what the owner should do next. Printed on the report.', when: null },
+];
 const slugId = (s: string) => s.toLowerCase().replace(/\W+/g, '_');
 
 /**
@@ -173,6 +193,8 @@ export function starterService(category: ServiceCategory): ServiceInput {
           { key: 'service_detail', label: 'Service details', type: 'select', unit: '', options: [...SEPTIC_DETAILS], stage: 'request', required: true, help: '' },
           { key: 'volume_pumped', label: 'Volume pumped', type: 'number', unit: 'gal', options: [], stage: 'completion', required: false, help: 'Record the measurement your company uses.' },
           { key: 'condition_notes', label: 'Condition notes', type: 'longtext', unit: '', options: [], stage: 'completion', required: false, help: '' },
+          // The inspection report (R6-M4): asked only on inspection visits, printed on the job report.
+          ...INSPECTION_FIELDS.map((f) => ({ ...f, when: { field: 'service_detail', equals: 'Inspection' } })),
           afterHoursField(),
         ],
         pricing: [
@@ -194,13 +216,15 @@ export function starterService(category: ServiceCategory): ServiceInput {
   }
 }
 
-export interface CustomFieldDef { key: string; label: string; type: 'text' | 'number' | 'select' | 'boolean' | 'date'; options?: string[]; required?: boolean }
+export interface CustomFieldDef { key: string; label: string; type: 'text' | 'number' | 'select' | 'boolean' | 'date'; options?: string[]; required?: boolean; driverVisible?: boolean }
 export const customFieldSchema = z.object({
   key,
   label: z.string().trim().min(1).max(60),
   type: z.enum(['text', 'number', 'select', 'boolean', 'date']),
   options: z.array(z.string().trim().min(1).max(60)).max(30).optional().default([]),
   required: z.boolean().optional().default(false),
+  /** Location fields only: shown to the driver on the job (a gate code, a tank size; R5-M2). */
+  driverVisible: z.boolean().optional().default(false),
 });
 export const customFieldsSchema = z.object({
   customers: z.array(customFieldSchema).max(20).default([]),

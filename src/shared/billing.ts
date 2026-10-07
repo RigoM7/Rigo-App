@@ -161,6 +161,7 @@ export function buildLines(pricing: PriceLine[], values: Record<string, unknown>
         notes.unshift(`Minimum charge ${formatMoney(p.minimumMinor, currency)} applies (${fmtQty(quantity)} ${p.unit} × ${formatRate(rate, currency)} = ${formatMoney(amount, currency)})`);
         amount = p.minimumMinor;
       }
+      if (p.indexNote) notes.push(p.indexNote);
       lines.push({ ...base, description, quantity, rateE4: rate, amountMinor: amount, note: notes.filter(Boolean).join(' · ') });
       continue;
     }

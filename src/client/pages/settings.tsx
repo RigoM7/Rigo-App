@@ -1,26 +1,33 @@
 import { TimezoneSelect } from './workspaces';
 import { useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
+import { get } from '../lib/api';
+import { fmtDateTime } from '../lib/format';
+import { activityText } from '../../shared/activity';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { patch, api } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, useToast, useConfirm } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, LoadingBlock, useToast, useConfirm } from '../components/ui';
 import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding';
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
 import { CapabilityList } from './automation';
+import { useDirtySet, useReportDirty, useUnsavedGuard } from '../lib/unsaved';
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f_$1').slice(0, 40) || 'field';
 
-function CustomFieldsEditor() {
+function CustomFieldsEditor({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [v, setV] = useState<any>(() => structuredClone(c.company.customFields ?? { customers: [], jobs: [], locations: [] }));
   const [kind, setKind] = useState<'customers' | 'jobs' | 'locations'>('customers');
-  const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, { customFields: v }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Custom fields saved'); });
+  const [saved, setSaved] = useState(() => JSON.stringify(c.company.customFields ?? { customers: [], jobs: [], locations: [] }));
+  const s = useSubmit(async () => { await patch(`/c/${c.cid}/settings`, { customFields: v }); setSaved(JSON.stringify(v)); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Custom fields saved'); });
+  useReportDirty(onDirty, 'customFields', JSON.stringify(v) !== saved);
   const list = v[kind];
   const set = (i: number, p: any) => setV({ ...v, [kind]: list.map((f: any, x: number) => (x === i ? { ...f, ...p } : f)) });
   const mv = (i: number, d: number) => { const a = [...list]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; setV({ ...v, [kind]: a }); };
@@ -36,7 +43,8 @@ function CustomFieldsEditor() {
             <Field label="Type" id={`f-cft-${i}`}>{(p) => <Select {...p} value={f.type} onChange={(e) => set(i, { type: e.target.value })}><option value="text">Text</option><option value="number">Number</option><option value="select">Choice list</option><option value="boolean">Yes / no</option><option value="date">Date</option></Select>}</Field>
             {f.type === 'select' && <Field label="Options (one per line)" id={`f-cfo-${i}`}>{(p) => <Textarea {...p} value={(f.options ?? []).join('\n')} onChange={(e) => set(i, { options: e.target.value.split('\n').map((x: string) => x.trim()).filter(Boolean) })} />}</Field>}
           </div>
-          <div className="row-between"><Checkbox label="Required" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} />
+          <div className="row-between"><span className="row"><Checkbox label="Required" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} />
+            {kind === 'locations' && <Checkbox label="Show to drivers" hint="On the driver's job screen, for example a gate code or tank location." checked={!!f.driverVisible} onChange={(e) => set(i, { driverVisible: e.target.checked })} />}</span>
             <span className="row"><Button size="sm" variant="ghost" aria-label="Move up" disabled={i === 0} onClick={() => mv(i, -1)}><ArrowUp aria-hidden /></Button><Button size="sm" variant="ghost" aria-label="Move down" disabled={i === list.length - 1} onClick={() => mv(i, 1)}><ArrowDown aria-hidden /></Button><Button size="sm" variant="danger" icon={<Trash2 aria-hidden />} onClick={() => setV({ ...v, [kind]: list.filter((_: any, x: number) => x !== i) })}>Remove</Button></span></div>
         </li>
       ))}</ol>
@@ -45,12 +53,13 @@ function CustomFieldsEditor() {
   );
 }
 
-function Branding() {
+function Branding({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [accent, setAccent] = useState<string>(c.company.branding?.accent ?? '');
   const variants = accentVariants(accent || null);
+  useReportDirty(onDirty, 'branding', accent !== (c.company.branding?.accent ?? ''));
   const s = useSubmit(async () => { await patch(`/c/${c.cid}/branding`, { accent: accent || null }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Branding saved'); });
   const logo = useSubmit(async (file: File) => { const form = new FormData(); form.append('file', file); await api(`/c/${c.cid}/branding/logo`, { method: 'POST', form }); qc.invalidateQueries({ queryKey: [c.cid] }); toast('Logo uploaded'); });
   const removeLogo = useSubmit(async () => { await patch(`/c/${c.cid}/branding`, { removeLogo: true }); qc.invalidateQueries({ queryKey: [c.cid] }); });
@@ -97,7 +106,7 @@ function BrandPreview({ name, accent }: { name: string; accent: string }) {
 }
 
 /** Invoice settings (R3-m7): terms, numbering that continues from the previous system (D17), how to pay. */
-function InvoiceSettings() {
+function InvoiceSettings({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
@@ -113,6 +122,8 @@ function InvoiceSettings() {
     qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Invoice settings saved');
   });
   const preview = `${v.invoicePrefix}${String(Number(v.nextInvoiceNumber) || currentNext).padStart(5, '0')}`;
+  useReportDirty(onDirty, 'invoices', JSON.stringify(v) !== JSON.stringify({ invoiceDueDays: String(c.company.invoiceDueDays ?? 30), invoicePrefix: c.company.invoicePrefix ?? 'INV-', nextInvoiceNumber: String(currentNext),
+    paymentInstructions: c.company.paymentInstructions ?? '', remitTo: c.company.remitTo ?? '', taxId: c.company.taxId ?? '' }));
   return (
     <Card id="inv" title="Invoices and payments">
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
@@ -161,22 +172,58 @@ function ApprovalRule() {
   );
 }
 
+const ACTIVITY_GROUPS: [string, string][] = [['', 'Everything'], ['people', 'People and roles'], ['money', 'Invoices and payments'], ['settings', 'Settings and services'], ['automation', 'Automation'], ['jobs', 'Jobs, customers and trucks']];
+
+/** Who did what, newest first (R12-m2). Owners only; the server enforces it. */
+function ActivityLog() {
+  const c = useCompany();
+  const [group, setGroup] = useState('');
+  const [pages, setPages] = useState<string[]>(['']);
+  const results = useQueries({ queries: pages.map((before) => ({ queryKey: [c.cid, 'activity', group, before], queryFn: () => get<{ entries: any[]; more: boolean }>(`/c/${c.cid}/activity?${new URLSearchParams({ ...(group ? { group } : {}), ...(before ? { before } : {}) })}`) })) });
+  const entries = results.flatMap((r) => r.data?.entries ?? []);
+  const last = results[results.length - 1];
+  return (
+    <Card id="activity" title="Activity">
+      <div className="stack">
+        <p className="muted" style={{ margin: 0 }}>Who changed what, and when: roles and removals, voids and payments, settings and automation. Only owners see this.</p>
+        <Field label="Show" id="f-activity-group">{(p) => <Select {...p} value={group} onChange={(e) => { setGroup(e.target.value); setPages(['']); }}>{ACTIVITY_GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>}</Field>
+        {results[0]?.isLoading ? <LoadingBlock rows={4} /> : entries.length === 0 ? <p className="muted">Nothing recorded yet.</p> : (
+          <ol className="activity-list">
+            {entries.map((e) => (
+              <li key={e.id}>
+                <span className="small muted num">{fmtDateTime(e.created_at, c.company.timezone)}</span>
+                <span><strong>{e.actor}</strong> {activityText(e.action, e.detail, c.company.currency)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {last?.data?.more && <div><Button busy={last.isFetching} onClick={() => setPages([...pages, entries[entries.length - 1].created_at])}>Show older</Button></div>}
+      </div>
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const c = useCompany();
   const qc = useQueryClient();
   const toast = useToast();
   const [sp, setSp] = useSearchParams();
-  const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services';
+  const tab = (sp.get('tab') ?? 'company') as 'company' | 'invoices' | 'branding' | 'fields' | 'services' | 'activity';
   const [v, setV] = useState({ name: c.company.name, timezone: c.company.timezone, currency: c.company.currency, phone: c.company.phone ?? '', email: c.company.email ?? '', address: c.company.address ?? '', serviceCategories: c.company.service_categories,
     invoiceDueDays: c.company.invoiceDueDays ?? 30, paymentInstructions: c.company.paymentInstructions ?? '' });
+  const [savedDetails, setSavedDetails] = useState(() => JSON.stringify(v));
   const s = useSubmit(async () => {
     const { invoiceDueDays: _d, paymentInstructions: _p, ...details } = v;
-    await patch(`/c/${c.cid}/settings`, details); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved');
+    await patch(`/c/${c.cid}/settings`, details); setSavedDetails(JSON.stringify(v)); qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); toast('Company details saved');
   });
+  // One guard for the page: any section with unsaved changes asks before leaving or switching tabs (R11-m2).
+  const dirt = useDirtySet();
+  useReportDirty(dirt.report, 'company', JSON.stringify(v) !== savedDetails);
+  const guard = useUnsavedGuard(dirt.any, { message: 'Some settings are not saved. Leave without saving?' });
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" sub={c.company.name} />
-      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'invoices', label: 'Invoices' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }]} />
+      <Tabs label="Settings sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[{ key: 'company', label: 'Company' }, { key: 'invoices', label: 'Invoices' }, { key: 'branding', label: 'Branding' }, { key: 'fields', label: 'Custom fields' }, { key: 'services', label: 'Connected services' }, ...(c.role.isOwner ? [{ key: 'activity' as const, label: 'Activity' }] : [])]} />
       {tab === 'company' && (
         <Card id="co" title="Company details">
           <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
@@ -196,9 +243,11 @@ export function SettingsPage() {
           </form>
         </Card>
       )}
-      {tab === 'invoices' && <InvoiceSettings />}
-      {tab === 'branding' && <Branding />}
-      {tab === 'fields' && <CustomFieldsEditor />}
+      {tab === 'invoices' && <InvoiceSettings onDirty={dirt.report} />}
+      {tab === 'branding' && <Branding onDirty={dirt.report} />}
+      {tab === 'fields' && <CustomFieldsEditor onDirty={dirt.report} />}
+      {guard}
+      {tab === 'activity' && c.role.isOwner && <ActivityLog />}
       {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}
     </div>
   );

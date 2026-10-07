@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog } from 'lucide-react';
+import { MapPin, Clock, KeyRound, Phone, ChevronRight, ChevronLeft, CloudOff, CloudUpload, CheckCircle2, AlertTriangle, HardDrive, RefreshCw, Camera, Trash2, Play, Send, Copy, Truck, Eraser, Inbox, Pencil, UserRoundCog, Navigation, BellRing, Siren, Plus } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError, OFFLINE } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, syncPending, onDraftsChanged, isUnsent, needsAttention, WAITING_FOR_SIGNAL, type Draft, type DraftState, type JobSnapshot } from '../lib/offline';
 import { syncSummaryText } from '../lib/autosync';
+import { newerDraft } from '../lib/draft-rev';
 import { Button, Card, Field, Textarea, Input, Select, Checkbox, Dialog, Banner, LoadingBlock, Empty, JobStatus, PriorityPill, GuideTarget, useToast, useConfirm } from '../components/ui';
-import { fmtTime, fmtDate, relTime } from '../lib/format';
+import { fmtTime, fmtDate, relTime, mapsUrl } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
 import { OUTCOMES, REASON_CODES, completionProblems, outcomeReason, type ReasonCode } from '../../shared/jobs';
+import { fieldApplies } from '../../shared/services';
 import { quantityChecks } from '../../shared/billing';
+import { lineProblems, meterQuantity, totalQuantity } from '../../shared/deliveries';
 import { useDocumentTitle } from '../lib/title';
 
 interface MyJobs { jobs: any[]; userId: string; companyId: string; fetchedAt: string }
@@ -48,6 +51,8 @@ function useDrafts(uid: string, cid: string) {
   return drafts;
 }
 
+const finishedStatus = (s: string) => ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(s);
+
 const SYNC_LABEL: Record<DraftState, [React.ReactNode, string, string]> = {
   local: [<HardDrive key="l" aria-hidden />, 'Saved on this phone', 'var(--text-2)'],
   queued: [<CloudOff key="q" aria-hidden />, 'Waiting for signal — will send automatically', 'var(--info)'],
@@ -62,6 +67,24 @@ export function SyncState({ state, message }: { state: DraftState | null; messag
   if (!state) return null;
   const [icon, label, color] = SYNC_LABEL[state] ?? SYNC_LABEL.local;
   return <span className="sync-state" style={{ color }} role="status">{icon}{label}{message && state !== 'accepted' && message !== WAITING_FOR_SIGNAL ? <span className="sr-only">: {message}</span> : null}</span>;
+}
+
+/** A driver's first visit: three short cards on how a job works, dismissed for good once read (R9-m3). */
+function FirstDayGuide({ uid }: { uid: string }) {
+  const key = `rigo-driver-guide:${uid}`;
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) !== 'done'; } catch { return false; } });
+  if (!open) return null;
+  const close = () => { try { localStorage.setItem(key, 'done'); } catch { /* ignore */ } setOpen(false); };
+  return (
+    <section className="first-day" aria-labelledby="fd-h">
+      <div className="row-between"><h2 id="fd-h">How a job works</h2><Button size="sm" variant="ghost" onClick={close}>Got it, hide this</Button></div>
+      <ol className="first-day-cards">
+        <li><strong>1. Open it and start</strong><span>Tap a job below, check the address and access notes, then tap <b>Start job</b> when you begin.</span></li>
+        <li><strong>2. Record what you did</strong><span>Choose how it went, enter quantities, and add photos or a signature if the job asks for them.</span></li>
+        <li><strong>3. Submit to the office</strong><span>Tap <b>Submit to office</b>. No signal? It's saved on this phone and sends by itself later.</span></li>
+      </ol>
+    </section>
+  );
 }
 
 export function Today() {
@@ -85,16 +108,25 @@ export function Today() {
     const jobs = data?.jobs ?? [];
     const active = jobs.filter((j) => ['open', 'in_progress'].includes(j.status));
     const isToday = (j: any) => !j.scheduled_start || localDate(new Date(j.scheduled_start), c.company.timezone) <= today;
-    return { today: active.filter(isToday), upcoming: active.filter((j) => !isToday(j)), done: jobs.filter((j) => !['open', 'in_progress'].includes(j.status)) };
+    // Emergencies come first, whatever their day (R6-M1, D15).
+    const emergency = active.filter((j) => j.priority === 'emergency');
+    const rest = active.filter((j) => j.priority !== 'emergency');
+    return { emergency, today: rest.filter(isToday), upcoming: rest.filter((j) => !isToday(j)), done: jobs.filter((j) => !['open', 'in_progress'].includes(j.status)) };
   }, [data, today, c.company.timezone]);
+  const changed = (data?.jobs ?? []).filter((j) => j.driver_changes?.lines?.length && !j.driver_changes.isNew && ['open', 'in_progress'].includes(j.status));
+  const [acking, setAcking] = useState('');
+  const ack = async (id: string) => { setAcking(id); try { await post(`/c/${c.cid}/jobs/${id}/seen-changes`); await reload(); } catch { toast('Could not save that. Try again when you have signal.', 'error'); } finally { setAcking(''); } };
+  const town = (a: string | null) => (a ?? '').split(',').slice(1).join(',').trim() || (a ?? '');
   const card = (j: any) => (
     <li key={j.id}>
-      <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}`}>
+      <Link to={c.to(`today/${j.id}`)} className={`driver-job${j.status === 'in_progress' ? ' is-live' : ''}${j.priority === 'emergency' ? ' is-emergency' : ''}`}>
         <div className="row-between">
           <span className="time">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span>
           <span className="row" style={{ gap: 6 }}><PriorityPill priority={j.priority} /><JobStatus status={j.status} /></span>
         </div>
+        {j.priority === 'emergency' && <div className="emergency-tag"><Siren aria-hidden />Emergency</div>}
         <div className="addr">{j.address ?? 'No address'}</div>
+        {j.driver_changes?.lines?.length ? <div className="changed-tag">{j.driver_changes.isNew ? 'New' : 'Changed'}</div> : null}
         <div className="small"><span className="num muted">#{j.number}</span> · {j.service_name} · {j.customer_name}</div>
         {(j.access_instructions || j.location_access) && <div className="small muted row" style={{ gap: 6, alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>{j.access_instructions || j.location_access}</span></div>}
         {drafts[j.id] && <div style={{ marginTop: 6 }}><SyncState state={drafts[j.id].state} /></div>}
@@ -116,8 +148,31 @@ export function Today() {
         </Banner>
       )}
       {waiting.length > 0 && <Banner tone="info" title={`${waiting.length} record${waiting.length === 1 ? '' : 's'} waiting to send`} action={<Button size="sm" busy={syncing} onClick={sendNow}>{syncing ? 'Sending…' : 'Send now'}</Button>}>{WAITING_FOR_SIGNAL} Jobs are only completed once the office's system accepts them.</Banner>}
+      <FirstDayGuide uid={uid} />
+      {changed.length > 0 && (
+        <section className="banner banner-warning changes-banner" aria-labelledby="h-changes">
+          <BellRing aria-hidden />
+          <div className="stack-sm" style={{ flex: 1, minWidth: 0 }}>
+            <strong id="h-changes">The office changed {changed.length === 1 ? 'a job' : `${changed.length} jobs`}</strong>
+            {changed.map((j) => (
+              <div key={j.id} className="change-item">
+                <div><Link to={c.to(`today/${j.id}`)}>Job #{j.number}</Link>{j.scheduled_start ? `, ${fmtTime(j.scheduled_start, c.company.timezone)}` : ''}</div>
+                <ul>{j.driver_changes.lines.filter((l: string) => l !== 'New job for you').map((l: string) => <li key={l}>{l}</li>)}</ul>
+                <Button size="sm" busy={acking === j.id} onClick={() => ack(j.id)}>Got it</Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       {loading && !data ? <LoadingBlock /> : data && (
         <>
+          {groups.emergency.length > 0 && <section aria-labelledby="h-emergency" className="stack-sm"><h2 id="h-emergency" className="emergency-heading"><Siren aria-hidden />Emergency</h2><ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.emergency.map(card)}</ul></section>}
+          {groups.today.length > 1 && (
+            <details className="next-stops">
+              <summary>Today's stops in order ({groups.today.length})</summary>
+              <ol>{groups.today.map((j) => <li key={j.id}><span className="num">{j.scheduled_start ? fmtTime(j.scheduled_start, c.company.timezone) : 'Any time'}</span> {j.customer_name}{town(j.address) ? `, ${town(j.address)}` : ''}</li>)}</ol>
+            </details>
+          )}
           <section aria-labelledby="h-today" className="stack-sm"><h2 id="h-today">Today</h2>
             {groups.today.length ? <ul className="stack-sm" style={{ listStyle: 'none', padding: 0, margin: 0 }}>{groups.today.map(card)}</ul> : <Card><Empty icon={<CheckCircle2 />} title="No jobs for today">New assignments appear here. Tap Refresh to check.</Empty></Card>}
           </section>
@@ -174,7 +229,7 @@ function SignaturePad({ value, onChange }: { value: string | null; onChange: (v:
 function snapshot(job: any): JobSnapshot {
   return {
     address: job.address ?? null, scheduled_start: job.scheduled_start ?? null, access: job.access_instructions || job.location_access || null, notes: job.notes || null,
-    contact: [job.contact_name || job.site_contact, job.contact_phone].filter(Boolean).join(' · ') || null, details: job.details ?? {}, resources: (job.resources ?? []).map((r: any) => r.name).join(', '),
+    contact: [job.contact_name || job.site_contact, job.contact_phone || job.site_contact_phone].filter(Boolean).join(' · ') || null, details: job.details ?? {}, resources: (job.resources ?? []).map((r: any) => r.name).join(', '),
   };
 }
 interface Change { label: string; before: string; after: string }
@@ -211,8 +266,13 @@ export function DriverJob() {
   const [handover, setHandover] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
 
+  // Opening a new job is seeing it: the "New" mark goes (changes stay until "Got it").
   useEffect(() => {
-    const read = async () => setDraft((await getDraft(uid, c.cid, jobId)) ?? null);
+    if (job?.driver_changes?.isNew && job.driver_changes.lines.every((l: string) => l === 'New job for you') && !stale) void post(`/c/${c.cid}/jobs/${job.id}/seen-changes`).catch(() => {});
+  }, [job?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [acked, setAcked] = useState(false);
+  useEffect(() => {
+    const read = async () => { const stored = (await getDraft(uid, c.cid, jobId)) ?? null; setDraft((cur) => newerDraft(cur, stored)); };
     void read();
     return onDraftsChanged(() => { void read(); });
   }, [uid, c.cid, jobId]);
@@ -224,7 +284,8 @@ export function DriverJob() {
     outcome: null, values: prefill(), notes: '', reason: '', reasonCode: null, problem: '', photos: [], signature: null, signerName: '', state: 'local', updatedAt: new Date().toISOString(),
   };
   const update = (patch: Partial<Draft>) => {
-    const next = { ...ensureDraft(), ...patch, state: (draft?.state === 'accepted' ? 'accepted' : 'local') as DraftState, message: undefined };
+    const base = ensureDraft();
+    const next = { ...base, ...patch, rev: (base.rev ?? 0) + 1, state: (draft?.state === 'accepted' ? 'accepted' : 'local') as DraftState, message: undefined };
     setDraft(next);
     void saveDraft(next);
   };
@@ -251,8 +312,17 @@ export function DriverJob() {
     );
   }
   const finished = ['completed', 'partial', 'unsuccessful', 'cancelled'].includes(job.status);
-  const compFields = (job.fields ?? []).filter((f: any) => f.stage !== 'request');
   const d = draft ?? ensureDraft();
+  const compFields = (job.fields ?? []).filter((f: any) => f.stage !== 'request' && fieldApplies(f, { ...job.details, ...d?.values }));
+  // Fuel stops: one line per product or tank (R7-M1); their total is the delivered quantity.
+  const dl: { choice: string; quantity: string } | null = job.delivery_lines ?? null;
+  const lineMode = !!dl && d.outcome !== 'unsuccessful';
+  const qtyField = dl ? (job.fields ?? []).find((f: any) => f.key === dl.quantity) : null;
+  const choiceField = dl ? (job.fields ?? []).find((f: any) => f.key === dl.choice) : null;
+  const tanks: any[] = job.location_tanks ?? [];
+  const blankLine = () => ({ product: String(job.details?.[dl?.choice ?? ''] ?? ''), tank: '', quantity: '', meterStart: '', meterEnd: '', ticket: '' });
+  const lines = d.lines?.length ? d.lines : dl ? [blankLine()] : [];
+  const setLines = (next: typeof lines) => { const t = totalQuantity(next); update({ lines: next, values: { ...d.values, [dl!.quantity]: t === '0' ? '' : t } }); };
   const access = job.access_instructions || job.location_access;
   const started = job.status === 'in_progress' || !!d.startedOffline;
   // Once submitted, the record is out of the driver's hands until it sends (R13-m3).
@@ -304,10 +374,23 @@ export function DriverJob() {
   const submit = async () => {
     const probs: Record<string, string> = {};
     if (!d.outcome) probs.outcome = 'Choose how the job went';
-    else Object.assign(probs, completionProblems({ ...d, outcome: d.outcome, photoCount: d.photos.length, hasSignature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature }));
+    else Object.assign(probs, completionProblems({ ...d, outcome: d.outcome, photoCount: d.photos.length, hasSignature }, { fields: job.fields ?? [], requires_photo: job.requires_photo, requires_signature: job.requires_signature }, job.details ?? {}));
     if (typed && d.outcome === 'completed' && job.requires_signature && !d.signatureTyped) probs.signature = 'Tick the box to confirm the customer agreed to a typed signature';
     for (const f of compFields) { const e = numberError(f); if (e) probs[f.key] = e; }
+    if (lineMode) {
+      lines.forEach((l, i) => {
+        if (!l.product) probs[`lines.${i}.product`] = `Delivery ${i + 1}: choose the ${(choiceField?.label ?? 'product').toLowerCase()}`;
+        for (const [k, v] of Object.entries(lineProblems(l, qtyField?.unit ?? '').errors)) probs[`lines.${i}.${k}`] = `Delivery ${i + 1}: ${v.charAt(0).toLowerCase()}${v.slice(1)}`;
+      });
+      // The total comes from the lines: point at them rather than at a hidden field.
+      if (probs[dl!.quantity] && Object.keys(probs).some((k) => k.startsWith('lines.'))) delete probs[dl!.quantity];
+    }
     for (const q of unconfirmed) probs[q.field] ??= `${q.message} Type it again to confirm, or correct it.`;
+    if (lineMode && probs[dl!.quantity]) {
+      // The quantity field is hidden on fuel stops: link the message to the confirm box or the first line.
+      const msg = probs[dl!.quantity]; delete probs[dl!.quantity];
+      if (unconfirmed.some((q) => q.field === dl!.quantity)) probs[`confirm-${dl!.quantity}`] = msg; else probs['lines.0.quantity'] ??= msg;
+    }
     if (d.collected) {
       if (!/^\d+(\.\d{1,2})?$/.test(d.collected.amount.trim()) || Number(d.collected.amount) <= 0) probs.collectedAmount = 'Enter the amount collected, like 250.00';
       if (d.collected.method === 'check' && !d.collected.reference.trim()) probs.collectedReference = 'Enter the check number';
@@ -346,15 +429,22 @@ export function DriverJob() {
       <div className="stack-sm">
         <div className="row-between" style={{ alignItems: 'flex-start' }}><h1 style={{ fontSize: 'var(--fs-22)' }}><span className="num muted" style={{ fontSize: 'var(--fs-16)', display: 'block', fontWeight: 500 }}>#{job.number}</span>{job.service_name}</h1><span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}><PriorityPill priority={job.priority} /><JobStatus status={job.status} /></span></div>
         {stale && <Banner tone="warning">No signal: this is the copy saved on this phone {relTime(stale)}. Details may have changed.</Banner>}
+        {!acked && job.driver_changes?.lines?.some((l: string) => l !== 'New job for you') && (
+          <Banner tone="warning" title="The office changed this job" action={<Button size="sm" onClick={async () => { setAcked(true); await post(`/c/${c.cid}/jobs/${job.id}/seen-changes`).catch(() => setAcked(false)); }}>Got it</Button>}>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>{job.driver_changes.lines.filter((l: string) => l !== 'New job for you').map((l: string) => <li key={l}>{l}</li>)}</ul>
+          </Banner>
+        )}
+        {job.priority === 'emergency' && !finishedStatus(job.status) && <Banner tone="danger" title="Emergency">Go as soon as you can. Call the office if you can't.</Banner>}
         {jobDay && jobDay > today && !finished && <Banner tone="info">Scheduled for {fmtDate(job.scheduled_start, c.company.timezone)}, not today.</Banner>}
       </div>
       <Card id="essentials">
         <div className="stack">
           <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><MapPin aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 'var(--fs-18)', letterSpacing: '-0.01em' }}>{job.address ?? 'No address'}</div><div className="muted">{job.customer_name}{job.location_label ? ` · ${job.location_label}` : ''}</div></div>
-            {job.address && <Button size="sm" icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button>}</div>
+            {job.address && <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}><a className="btn btn-sm" href={mapsUrl(job.address)} target="_blank" rel="noreferrer"><Navigation aria-hidden />Open in Maps</a><Button size="sm" icon={<Copy aria-hidden />} aria-label="Copy address" onClick={() => navigator.clipboard?.writeText(job.address).then(() => toast('Address copied'), () => toast('Could not copy', 'error'))}>Copy</Button></div>}</div>
           <div className="row"><Clock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDate(job.scheduled_start, c.company.timezone)}, ${fmtTime(job.scheduled_start, c.company.timezone)}` : 'Any time'}</span></div>
           {access && <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><KeyRound aria-hidden style={{ flex: 'none', marginTop: 3 }} /><div><strong>Access:</strong> {access}</div></div>}
-          {(job.contact_name || job.site_contact || job.contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact}{job.contact_phone ? <> · <a href={`tel:${job.contact_phone}`}>{job.contact_phone}</a></> : null}</span></div>}
+          {(job.contact_name || job.site_contact || job.contact_phone || job.site_contact_phone) && <div className="row"><Phone aria-hidden /><span>{job.contact_name || job.site_contact || 'Site contact'}{(job.contact_phone || job.site_contact_phone) ? <> · <a href={`tel:${job.contact_phone || job.site_contact_phone}`}>{job.contact_phone || job.site_contact_phone}</a></> : null}</span></div>}
+          {job.site_fields?.length > 0 && <dl className="kv">{job.site_fields.map((f: any) => <div key={f.label} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>}
           {job.resources?.length ? <div className="row"><Truck aria-hidden /><span>{job.resources.map((r: any) => r.name).join(', ')}</span></div> : null}
           {Object.keys(job.details ?? {}).length > 0 && <dl className="kv">{(job.fields ?? []).filter((f: any) => f.stage !== 'completion' && job.details[f.key]).map((f: any) => <div key={f.key} style={{ display: 'contents' }}><dt>{f.label}</dt><dd>{f.type === 'boolean' ? (job.details[f.key] === true || job.details[f.key] === 'true' ? 'Yes' : 'No') : job.details[f.key]}{f.unit ? ` ${f.unit}` : ''}</dd></div>)}</dl>}
           {job.notes && <p className="pre" style={{ margin: 0 }}><strong>Notes:</strong> {job.notes}</p>}
@@ -412,7 +502,54 @@ export function DriverJob() {
               {d.outcome && d.outcome !== 'completed'
                 ? <Field label={reasonRequired ? 'Describe what happened' : 'Anything to add'} optionalText={!reasonRequired} id="f-details-reason" error={localErrors.reason} hint={!reasonRequired ? `The office sees "${outcomeReason(reasonCode, d.reason)}".` : undefined}>{(p) => <Textarea {...p} maxLength={2000} value={d.reason} onChange={(e) => update({ reason: e.target.value })} />}</Field>
                 : null}
-              {compFields.map((f: any) => {
+              {lineMode && (
+                <fieldset className="stack-sm" id="f-details-lines"><legend>What was delivered</legend>
+                  {lines.map((l, i) => {
+                    const lp = lineProblems(l, qtyField?.unit ?? '');
+                    const meterQ = meterQuantity(l.meterStart, l.meterEnd);
+                    const unit = qtyField?.unit ? ` ${qtyField.unit}` : '';
+                    const set = (patch: Partial<typeof l>) => setLines(lines.map((x, n) => (n === i ? { ...x, ...patch } : x)));
+                    const err = (k: string) => localErrors[`lines.${i}.${k}`];
+                    const num = (v: string) => v.replace(',', '.').trim();
+                    const tank = tanks.find((t) => t.name === l.tank);
+                    return (
+                      <div key={i} className="delivery-line stack-sm" role="group" aria-labelledby={`dl-${i}`}>
+                        <div className="row-between"><strong id={`dl-${i}`}>Delivery {i + 1}</strong>
+                          {lines.length > 1 && <Button size="sm" variant="ghost" icon={<Trash2 aria-hidden />} aria-label={`Remove delivery ${i + 1}`} onClick={() => setLines(lines.filter((_, n) => n !== i))}>Remove</Button>}</div>
+                        <div className="grid-2">
+                          <Field label={choiceField?.label ?? 'Product'} id={`f-details-lines.${i}.product`} error={err('product')}>{(p) => <Select {...p} value={l.product} onChange={(e) => set({ product: e.target.value })}><option value="">Choose…</option>{(choiceField?.options ?? []).map((o: string) => <option key={o}>{o}</option>)}</Select>}</Field>
+                          <Field label="Tank or machine" optionalText id={`f-details-lines.${i}.tank`}>{(p) => tanks.length
+                            ? <Select {...p} value={l.tank} onChange={(e) => { const t = tanks.find((x) => x.name === e.target.value); set({ tank: e.target.value, ...(t?.product && choiceField?.options?.includes(t.product) ? { product: t.product } : {}) }); }}><option value="">Not a listed tank</option>{tanks.map((t) => <option key={t.id} value={t.name}>{t.name}{t.size ? ` (${t.size})` : ''}{t.product ? ` · ${t.product}` : ''}</option>)}</Select>
+                            : <Input {...p} maxLength={80} placeholder="For example: Generator day tank" value={l.tank} onChange={(e) => set({ tank: e.target.value })} />}</Field>
+                        </div>
+                        {tank?.notes && <p className="small muted" style={{ margin: 0 }}>{tank.notes}</p>}
+                        <div className="grid-3">
+                          <Field label="Meter start" optionalText id={`f-details-lines.${i}.meterStart`} error={err('meterStart')}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.meterStart} onChange={(e) => set({ meterStart: num(e.target.value) })} />}</Field>
+                          <Field label="Meter end" optionalText id={`f-details-lines.${i}.meterEnd`} error={err('meterEnd')}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" value={l.meterEnd} onChange={(e) => set({ meterEnd: num(e.target.value) })} />}</Field>
+                          <Field label={`Quantity${unit ? ` (${unit.trim()})` : ''}`} id={`f-details-lines.${i}.quantity`} error={err('quantity')} hint={meterQ && !l.quantity ? `From the meter: ${meterQ}${unit}` : undefined}>{(p) => <Input {...p} className="input num-input" inputMode="decimal" placeholder={meterQ ?? ''} value={l.quantity} onChange={(e) => set({ quantity: num(e.target.value) })} />}</Field>
+                        </div>
+                        <Field label="Ticket number" optionalText id={`f-details-lines.${i}.ticket`}>{(p) => <Input {...p} maxLength={40} autoComplete="off" value={l.ticket} onChange={(e) => set({ ticket: e.target.value })} />}</Field>
+                        {lp.warning && <p className="qty-confirm-msg" role="status"><AlertTriangle aria-hidden />{lp.warning} The office checks it before invoicing.</p>}
+                      </div>
+                    );
+                  })}
+                  <div><Button icon={<Plus aria-hidden />} onClick={() => setLines([...lines, blankLine()])}>Another tank or product</Button></div>
+                  {lines.length > 1 && <p className="small" style={{ margin: 0 }}>Total {totalQuantity(lines)}{qtyField?.unit ? ` ${qtyField.unit}` : ''} at this stop · one delivery fee</p>}
+                  {(() => {
+                    const check = checks.find((q) => q.field === dl!.quantity);
+                    if (!check) return null;
+                    return (
+                      <div className="qty-confirm" role="group" aria-labelledby="qc-lines">
+                        <p id="qc-lines" className="qty-confirm-msg"><AlertTriangle aria-hidden />{check.message}</p>
+                        <Field label={`Type ${d.values[dl!.quantity]}${qtyField?.unit ? ` ${qtyField.unit}` : ''} again to confirm`} id={`f-details-confirm-${dl!.quantity}`} hint="The office checks it before the invoice goes out.">
+                          {(p) => <Input {...p} className="input num-input" inputMode="decimal" autoComplete="off" value={d.confirmQuantities?.[dl!.quantity] ?? ''} onChange={(e) => update({ confirmQuantities: { ...d.confirmQuantities, [dl!.quantity]: e.target.value.replace(',', '.') } })} />}
+                        </Field>
+                      </div>
+                    );
+                  })()}
+                </fieldset>
+              )}
+              {compFields.filter((f: any) => !(lineMode && f.key === dl?.quantity)).map((f: any) => {
                 const check = checks.find((q) => q.field === f.key);
                 const fieldError = numberError(f) ?? localErrors[f.key];
                 return (

@@ -3,8 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Repeat, PauseCircle, PlayCircle, CalendarX, AlertTriangle, Trash2, CalendarRange, PiggyBank, Package, Pencil } from 'lucide-react';
 import { useCompany } from '../lib/session';
+import { CustomerPicker } from '../components/customer-picker';
 import { get, post, put, newId } from '../lib/api';
 import { useSubmit } from '../lib/form';
+import { useUnsavedGuard } from '../lib/unsaved';
 import { BILLING_FREQUENCIES, localDate, addDays } from '../../shared/schedule';
 import { tzLabel } from '../../shared/timezones';
 import { parseRate, rateToInput } from '../../shared/billing';
@@ -99,7 +101,6 @@ export function RecurringNew() {
   const c = useCompany();
   const nav = useNavigate();
   const fin = c.can('finance.view');
-  const customers = useQuery({ queryKey: [c.cid, 'customers', ''], queryFn: () => get(`/c/${c.cid}/customers`) });
   const services = useQuery({ queryKey: [c.cid, 'services'], queryFn: () => get(`/c/${c.cid}/services`) });
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const today = localDate(new Date(), c.company.timezone);
@@ -131,15 +132,18 @@ export function RecurringNew() {
       startsOn: v.startsOn, endsOn: v.endsOn || null, details: v.details, visitRule: rule, billingRule, defaultUserId: v.defaultUserId || null, defaultResourceIds: v.truckId ? [v.truckId] : [], createDelivery: rental && v.createDelivery });
     nav(c.to(`recurring/${r.id}`));
   });
+  // Leaving a half-filled plan asks first (R11-m2).
+  const guard = useUnsavedGuard(!!(v.name || v.customerId || v.serviceId) && !s.busy, { message: 'This plan is not saved yet. Leave without saving?' });
   return (
     <div className="page page-narrow">
       <PageHeader back={{ to: c.to('recurring'), label: 'Recurring' }} title="New recurring plan" />
+      {guard}
       <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(); }}>
         <ErrorSummary error={s.error} />
         <Card id="b" title="What and where"><div className="stack">
           <Field label="Plan name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} maxLength={80} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
           <Field label="Type" id="f-kind">{(p) => <Select {...p} value={v.kind} onChange={(e) => { setV({ ...v, kind: e.target.value }); setBilling(e.target.value === 'rental' ? { frequency: 'every_n_days', everyDays: 28 } : { frequency: 'per_visit', everyDays: 28 }); }}><option value="rental">Rental (units on site, serviced and billed on a schedule)</option><option value="service">Recurring service (each visit billed)</option></Select>}</Field>
-          <Field label="Customer" id="f-customerId" error={s.fieldError('customerId')}>{(p) => <Select {...p} value={v.customerId} onChange={(e) => setV({ ...v, customerId: e.target.value, locationId: '' })}><option value="">Choose…</option>{customers.data?.customers.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>}</Field>
+          <Field label="Customer" id="f-customerId" error={s.fieldError('customerId')}>{(p) => <CustomerPicker id={p.id} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} value={v.customerId} onChange={(id) => setV({ ...v, customerId: id, locationId: '' })} />}</Field>
           <Field label="Location" id="f-locationId">{(p) => <Select {...p} value={v.locationId} disabled={!v.customerId} onChange={(e) => setV({ ...v, locationId: e.target.value })}><option value="">Choose…</option>{cust.data?.locations.map((l: any) => <option key={l.id} value={l.id}>{l.label ? `${l.label}: ` : ''}{l.address}</option>)}</Select>}</Field>
           <Field label="Service for each visit" id="f-serviceId" error={s.fieldError('serviceId')}>{(p) => <Select {...p} value={v.serviceId} onChange={(e) => setV({ ...v, serviceId: e.target.value, details: {} })}><option value="">Choose…</option>{services.data?.services.filter((x: any) => x.active).map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>}</Field>
           {svc?.fields.filter((f: any) => f.stage !== 'completion' && f.key !== 'units' && f.key !== 'visit_type').map((f: any) => <DynamicField key={f.key} f={{ ...f, required: false }} value={v.details[f.key]} onChange={(x) => setV({ ...v, details: { ...v.details, [f.key]: x } })} />)}

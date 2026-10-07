@@ -50,11 +50,15 @@ export interface Draft {
   signatureTyped?: boolean;
   /** Quantities the driver typed a second time to confirm an unusual amount (more than the truck holds). */
   confirmQuantities?: Record<string, string>;
+  /** Fuel stops: one line per product or tank, with meter readings and a ticket (R7-M1, R7-M4). */
+  lines?: { product: string; tank: string; quantity: string; meterStart: string; meterEnd: string; ticket: string }[];
   /** Payment taken at the stop (D21): the driver sees only the amount they typed. */
   collected?: { method: 'check' | 'cash' | 'card_terminal'; amount: string; reference: string; photo: string | null } | null;
   /** Start was tapped without signal: the record is sent with an implicit start, which history flags. */
   startedOffline?: boolean;
   base?: JobSnapshot;
+  /** Goes up with each edit on this phone, so an older stored copy never replaces newer typing. */
+  rev?: number;
   state: DraftState; message?: string; fields?: Record<string, string>; updatedAt: string; attempts?: number;
 }
 
@@ -115,6 +119,7 @@ function payload(d: Draft) {
   return {
     submissionId: d.submissionId, baseVersion: d.baseVersion, outcome: d.outcome, values: d.values, notes: d.notes, reason: d.reason, reasonCode: d.reasonCode ?? null,
     photos: d.photos, signature: d.signatureMode === 'type' ? null : d.signature, signatureTyped: d.signatureMode === 'type' && !!d.signatureTyped, signerName: d.signerName, problem: d.problem, confirmQuantities: d.confirmQuantities ?? {},
+    lines: d.outcome === 'unsuccessful' ? [] : d.lines ?? [],
     collected: d.collected && d.collected.amount ? { method: d.collected.method, amountMinor: parseMoney(d.collected.amount), reference: d.collected.reference, photo: d.collected.photo } : null,
   };
 }

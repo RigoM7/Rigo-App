@@ -61,7 +61,8 @@ export function Workspaces() {
                 {me.data.invitations.map((i) => (
                   <li key={i.id} className="row-between" style={{ padding: '12px 0' }}>
                     <span className="row"><MailOpen aria-hidden /><span><strong>{i.company_name}</strong><br /><span className="muted small">Join as {i.role_name}</span></span></span>
-                    <Button variant="primary" busy={accept.busy} onClick={() => accept.run(i.id)}>Accept and open</Button>
+                    {i.needsLink ? <span className="small muted" style={{ maxWidth: 260, textAlign: 'right' }}>Open the invitation link you were sent to join. It shows this email address is yours.</span>
+                      : <Button variant="primary" busy={accept.busy} onClick={() => accept.run(i.id)}>Accept and open</Button>}
                   </li>
                 ))}
               </ul>
@@ -77,7 +78,7 @@ export function Workspaces() {
                   <li key={c.id} style={{ minWidth: 0 }}>
                     <Link to={`/c/${c.id}`} className="workspace">
                       <CompanyChip cid={c.id} name={c.name} logo={c.branding?.logoFileId} accent={c.branding?.accent} />
-                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at ? '' : ' · setup in progress'}</span></span>
+                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at || !c.is_owner ? '' : ' · setup in progress'}</span></span>
                       <ChevronRight aria-hidden />
                     </Link>
                   </li>

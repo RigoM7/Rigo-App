@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBlocker } from 'react-router-dom';
 import { Button, Dialog } from '../components/ui';
 
@@ -6,8 +6,8 @@ import { Button, Dialog } from '../components/ui';
  * Warn before leaving a screen with unsaved changes: in-app navigation shows a dialog (Save, Discard
  * or Keep editing); closing or reloading the tab uses the browser's own prompt.
  */
-export function useUnsavedGuard(dirty: boolean, opts: { message: string; onSave?: () => Promise<boolean> }) {
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search));
+export function useUnsavedGuard(dirty: boolean, opts: { message: string; onSave?: () => Promise<boolean>; ignoreSearch?: boolean }) {
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && (currentLocation.pathname !== nextLocation.pathname || (!opts.ignoreSearch && currentLocation.search !== nextLocation.search)));
   const [saving, setSaving] = useState(false);
   // The latest blocker: saving is async, and proceed/reset are only valid while it is still blocked.
   const latest = useRef(blocker);
@@ -32,4 +32,20 @@ export function useUnsavedGuard(dirty: boolean, opts: { message: string; onSave?
     </Dialog>
   );
   return node;
+}
+
+/**
+ * Several editable sections on one page share one guard (React Router allows one blocker at a time):
+ * each section reports whether it has unsaved changes, and the page guards when any does.
+ */
+export function useDirtySet() {
+  const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  const report = useCallback((key: string, value: boolean) => setDirty((d) => (d[key] === value ? d : { ...d, [key]: value })), []);
+  return { any: Object.values(dirty).some(Boolean), report };
+}
+
+/** A section tells its page whether it has unsaved changes. */
+export function useReportDirty(report: ((key: string, v: boolean) => void) | undefined, key: string, dirty: boolean) {
+  useEffect(() => { report?.(key, dirty); }, [report, key, dirty]);
+  useEffect(() => () => report?.(key, false), [report, key]);
 }

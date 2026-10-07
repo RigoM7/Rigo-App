@@ -38,3 +38,13 @@ export function shiftEnd(oldStart: string, oldEnd: string, newStart: string) {
   if (!Number.isFinite(len) || len <= 0 || !Number.isFinite(ms(newStart))) return oldEnd;
   return new Date(ms(newStart) + len).toISOString().slice(0, 16);
 }
+
+/**
+ * "Open in Maps" for an address (R9-M3, D9): Apple Maps on iPhone and iPad, Google Maps elsewhere
+ * (it opens the Maps app on Android). A link only; no key, no embedded map.
+ */
+export function mapsUrl(address: string) {
+  const q = encodeURIComponent(address);
+  const apple = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && 'ontouchend' in (globalThis as any).document;
+  return apple ? `https://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`;
+}

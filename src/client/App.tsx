@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme, refreshMe, safeNext } from './lib/session';
@@ -14,12 +14,14 @@ import { InvitePage } from './pages/invite';
 import { Account } from './pages/account';
 import { DevMailbox } from './pages/devmailbox';
 import { ApiError } from './lib/api';
+import type { Permission } from '../shared/permissions';
 
 const Dashboard = lazy(() => import('./pages/dashboard').then((m) => ({ default: m.Dashboard })));
 const Jobs = lazy(() => import('./pages/jobs').then((m) => ({ default: m.Jobs })));
 const JobForm = lazy(() => import('./pages/jobform').then((m) => ({ default: m.JobForm })));
 const DriverRecords = lazy(() => import('./pages/driver-records').then((m) => ({ default: m.DriverRecords })));
 const JobDetail = lazy(() => import('./pages/jobdetail').then((m) => ({ default: m.JobDetail })));
+const JobReport = lazy(() => import('./pages/job-report').then((m) => ({ default: m.JobReport })));
 const Today = lazy(() => import('./pages/driver').then((m) => ({ default: m.Today })));
 const DriverJob = lazy(() => import('./pages/driver').then((m) => ({ default: m.DriverJob })));
 const Customers = lazy(() => import('./pages/customers').then((m) => ({ default: m.Customers })));
@@ -112,6 +114,15 @@ function CompanyRoot() {
   const qc = useQueryClient();
   const boot = useCompanyBoot(cid, uid);
   useDocumentTitle(boot.error ? 'No access' : null);
+  // Removed while a page is open (R12-m1): any request answered "not a member" checks the company
+  // again, which then shows "You no longer have access" instead of errors inside the app.
+  const lastName = useRef<string | null>(null);
+  if (boot.data?.company.name) lastName.current = boot.data.company.name;
+  useEffect(() => qc.getQueryCache().subscribe((ev) => {
+    const err = ev.type === 'updated' ? (ev.query.state.error as ApiError | null) : null;
+    if (!err || ev.query.queryKey[0] !== cid || ev.query.queryKey[1] === 'boot') return;
+    if (err.code === 'not_member' || (err.status === 404 && /^Company was not found/.test(err.message))) void qc.invalidateQueries({ queryKey: [cid, 'boot'] });
+  }), [cid, qc]);
   useEffect(() => { try { localStorage.setItem('rigo-last-company', cid); } catch { /* ignore */ } }, [cid]);
   // Back online after starting from the device copy: check again straight away.
   useEffect(() => {
@@ -122,14 +133,14 @@ function CompanyRoot() {
   if (boot.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
   if (boot.error) {
     const e = boot.error as ApiError;
-    if (e.code === 'not_member' && uid) return <NoLongerMember cid={cid} uid={uid} until={e.details?.lateRecordsUntil ?? null} />;
+    if (e.code === 'not_member' && uid) return <NoLongerMember cid={cid} uid={uid} until={e.details?.lateRecordsUntil ?? null} knownName={lastName.current} />;
     return (
       <div className="auth-wrap"><main className="auth-card" id="main">
         <Wordmark to="/workspaces" />
         <div className="auth-panel stack">
           {e.status === 404 ? <>
             <span className="empty-icon" aria-hidden><Lock /></span>
-            <h1>You don't have access to this company</h1>
+            <h1>{lastName.current ? `You no longer have access to ${lastName.current}` : "You don't have access to this company"}</h1>
             <p className="muted" style={{ margin: 0 }}>You are not a member of this company, or it no longer exists. Being signed in does not give access to a company; you need an invitation.</p>
           </> : <ErrorState error={e} retry={() => boot.refetch()} />}
           <LinkButton variant="primary" to="/workspaces">Go to my workspaces</LinkButton>
@@ -153,7 +164,7 @@ function CompanyRoot() {
  * Removed from the company (R12-M1): records still on this phone go to the office for review (for
  * 7 days, D12), then everything this phone kept for that company is deleted.
  */
-function NoLongerMember({ cid, uid, until }: { cid: string; uid: string; until: string | null }) {
+function NoLongerMember({ cid, uid, until, knownName }: { cid: string; uid: string; until: string | null; knownName: string | null }) {
   const qc = useQueryClient();
   const [done, setDone] = useState<null | { name: string | null; sent: number; removed: number; waiting: number }>(null);
   useDocumentTitle('No longer a member');
@@ -161,7 +172,7 @@ function NoLongerMember({ cid, uid, until }: { cid: string; uid: string; until: 
     let alive = true;
     (async () => {
       const off = await import('./lib/offline');
-      const name = ((await off.cachedBoot<any>(uid, cid))?.boot?.company?.name as string | undefined) ?? null;
+      const name = knownName ?? ((await off.cachedBoot<any>(uid, cid))?.boot?.company?.name as string | undefined) ?? null;
       const open = !!until && new Date(until) > new Date();
       let sent = 0, removed = 0, waiting = 0;
       for (const d of (await off.listDrafts(uid, cid)).filter(off.isUnsent)) {
@@ -184,7 +195,7 @@ function NoLongerMember({ cid, uid, until }: { cid: string; uid: string; until: 
       <Wordmark to="/workspaces" />
       <div className="auth-panel stack">
         <span className="empty-icon" aria-hidden><Lock /></span>
-        <h1>You're no longer a member{done?.name ? ` of ${done.name}` : ' of this company'}</h1>
+        <h1>You no longer have access to {done?.name ?? knownName ?? 'this company'}</h1>
         {!done ? <LoadingBlock rows={1} /> : <>
           {done.sent > 0 && <p style={{ margin: 0 }}>{done.sent === 1 ? 'Your record was' : `${done.sent} records were`} sent to the office for review.</p>}
           {done.waiting > 0 && <p style={{ margin: 0 }}>{done.waiting === 1 ? 'One record' : `${done.waiting} records`} couldn't be sent yet. Open this page again when you have signal.</p>}
@@ -230,7 +241,8 @@ function OpenApp() {
   let last: string | null = null;
   try { last = localStorage.getItem('rigo-last-company'); } catch { /* ignore */ }
   const real = list.filter((x) => x.kind === 'real');
-  const target = real.length === 1 ? real[0].id : list.some((x) => x.id === last) ? last : list.length === 1 ? list[0].id : null;
+  // Someone in exactly one real company goes straight to it (My jobs for drivers); the demo alone doesn't count.
+  const target = real.length === 1 ? real[0].id : real.some((x) => x.id === last) ? last : null;
   return <Navigate to={target ? `/c/${target}` : '/workspaces'} replace />;
 }
 
@@ -252,42 +264,55 @@ function RoleHome() {
   return <Dashboard />;
 }
 
+/** A page someone's role doesn't allow says so, instead of loading and failing (R4-m4). */
+function Need({ any, children }: { any: Permission[]; children: ReactNode }) {
+  const c = useCompany();
+  useDocumentTitle(any.some((p) => c.can(p)) ? null : 'No access');
+  if (any.some((p) => c.can(p))) return <>{children}</>;
+  return (
+    <div className="page page-narrow">
+      <div className="card"><Empty icon={<Lock />} title="Your role doesn't include this page" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>Ask an owner if you need it. You are signed in as {c.role.name}.</Empty></div>
+    </div>
+  );
+}
+
 function CompanyRoutes() {
   return (
     <Routes>
       <Route index element={<RoleHome />} />
-      <Route path="today" element={<Today />} />
-      <Route path="today/:jobId" element={<DriverJob />} />
-      <Route path="jobs" element={<Jobs />} />
-      <Route path="jobs/new" element={<JobForm />} />
-      <Route path="jobs/records" element={<DriverRecords />} />
-      <Route path="jobs/:id" element={<JobDetail />} />
-      <Route path="jobs/:id/edit" element={<JobForm />} />
-      <Route path="customers" element={<Customers />} />
-      <Route path="customers/:id" element={<CustomerDetail />} />
-      <Route path="team" element={<Team />} />
-      <Route path="resources" element={<Resources />} />
+      <Route path="today" element={<Need any={['jobs.work']}><Today /></Need>} />
+      <Route path="today/:jobId" element={<Need any={['jobs.work']}><DriverJob /></Need>} />
+      <Route path="jobs" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><Jobs /></Need>} />
+      <Route path="jobs/new" element={<Need any={['jobs.create']}><JobForm /></Need>} />
+      <Route path="jobs/records" element={<Need any={['jobs.assign']}><DriverRecords /></Need>} />
+      <Route path="jobs/:id" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobDetail /></Need>} />
+      <Route path="jobs/:id/edit" element={<Need any={['jobs.edit']}><JobForm /></Need>} />
+      <Route path="jobs/:id/report" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobReport /></Need>} />
+      <Route path="customers" element={<Need any={['customers.view']}><Customers /></Need>} />
+      <Route path="customers/:id" element={<Need any={['customers.view']}><CustomerDetail /></Need>} />
+      <Route path="team" element={<Need any={['members.view']}><Team /></Need>} />
+      <Route path="resources" element={<Need any={['resources.view']}><Resources /></Need>} />
       <Route path="services" element={<Services />} />
       <Route path="services/:id" element={<ServiceEditor />} />
-      <Route path="invoices" element={<Invoices />} />
-      <Route path="invoices/new" element={<NewInvoice />} />
-      <Route path="invoices/:id" element={<InvoiceDetail />} />
-      <Route path="collections" element={<Collections />} />
-      <Route path="statements/:id" element={<StatementView />} />
+      <Route path="invoices" element={<Need any={['invoices.view']}><Invoices /></Need>} />
+      <Route path="invoices/new" element={<Need any={['invoices.edit']}><NewInvoice /></Need>} />
+      <Route path="invoices/:id" element={<Need any={['invoices.view']}><InvoiceDetail /></Need>} />
+      <Route path="collections" element={<Need any={['finance.view']}><Collections /></Need>} />
+      <Route path="statements/:id" element={<Need any={['finance.view']}><StatementView /></Need>} />
       <Route path="inbox" element={<InboxPage />} />
-      <Route path="automation" element={<Automation />} />
-      <Route path="workflows" element={<Workflows />} />
-      <Route path="workflows/:id" element={<WorkflowEditor />} />
-      <Route path="recurring" element={<Recurring />} />
-      <Route path="recurring/new" element={<RecurringNew />} />
-      <Route path="recurring/:id" element={<RecurringDetail />} />
-      <Route path="imports" element={<Imports />} />
-      <Route path="templates" element={<Templates />} />
-      <Route path="messages" element={<Messages />} />
-      <Route path="settings" element={<SettingsPage />} />
-      <Route path="setup" element={<Setup />} />
+      <Route path="automation" element={<Need any={['workflows.view']}><Automation /></Need>} />
+      <Route path="workflows" element={<Need any={['workflows.view']}><Workflows /></Need>} />
+      <Route path="workflows/:id" element={<Need any={['workflows.view']}><WorkflowEditor /></Need>} />
+      <Route path="recurring" element={<Need any={['jobs.view_all']}><Recurring /></Need>} />
+      <Route path="recurring/new" element={<Need any={['jobs.create']}><RecurringNew /></Need>} />
+      <Route path="recurring/:id" element={<Need any={['jobs.view_all']}><RecurringDetail /></Need>} />
+      <Route path="imports" element={<Need any={['imports.run']}><Imports /></Need>} />
+      <Route path="templates" element={<Need any={['templates.manage']}><Templates /></Need>} />
+      <Route path="messages" element={<Need any={['messages.view']}><Messages /></Need>} />
+      <Route path="settings" element={<Need any={['company.settings']}><SettingsPage /></Need>} />
+      <Route path="setup" element={<Need any={['company.settings']}><Setup /></Need>} />
       <Route path="setup-company" element={<SetupFromDemo />} />
-      <Route path="assistant" element={<AssistantPage />} />
+      <Route path="assistant" element={<Need any={['assistant.use']}><AssistantPage /></Need>} />
       <Route path="more" element={<MorePage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>

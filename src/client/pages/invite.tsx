@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MailOpen } from 'lucide-react';
@@ -8,6 +9,8 @@ import { fmtDate } from '../lib/format';
 import { refreshMe, signOutAndForget } from '../lib/session';
 import { useDocumentTitle } from '../lib/title';
 
+const GO_KEY = 'rigo-invite-accept';
+
 export function InvitePage() {
   const { token = '' } = useParams();
   const nav = useNavigate();
@@ -17,6 +20,17 @@ export function InvitePage() {
   const signOut = async () => { await signOutAndForget(qc); nav(`/signin?next=/invite/${token}`); };
   const d = q.data;
   useDocumentTitle(d?.companyName ? `Join ${d.companyName}` : 'Invitation');
+  // Straight after signing up or in from this page, the invitation is accepted without another click
+  // (R4-m6). The mark is set by those buttons in this tab, never by the link itself, so a crafted
+  // link can't make someone join a company on page load (security review).
+  const auto = useRef(false);
+  const markGo = () => { try { sessionStorage.setItem(GO_KEY, token); } catch { /* storage off: they press Accept */ } };
+  useEffect(() => {
+    if (!(d?.state === 'pending' && d.signedIn && d.emailMatches) || auto.current) return;
+    let go = false;
+    try { go = sessionStorage.getItem(GO_KEY) === token; sessionStorage.removeItem(GO_KEY); } catch { /* storage off */ }
+    if (go) { auto.current = true; void accept.run(); }
+  }, [d]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="auth-wrap">
       <main className="auth-card" id="main">
@@ -36,8 +50,8 @@ export function InvitePage() {
               {d.state === 'pending' && !d.signedIn && (
                 <div className="stack-sm">
                   <p className="muted">Sign in or create an account with the invited email address. You don't need to create a company or try the demo first.</p>
-                  <LinkButton variant="primary" to={`/signup?next=/invite/${token}`}>Create an account</LinkButton>
-                  <LinkButton to={`/signin?next=/invite/${token}`}>I already have an account</LinkButton>
+                  <LinkButton variant="primary" onClick={markGo} to={`/signup?next=${encodeURIComponent(`/invite/${token}`)}`}>Create an account</LinkButton>
+                  <LinkButton onClick={markGo} to={`/signin?next=${encodeURIComponent(`/invite/${token}`)}`}>I already have an account</LinkButton>
                 </div>
               )}
               {d.state === 'pending' && d.signedIn && d.emailMatches === false && (
