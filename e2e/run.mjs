@@ -1789,6 +1789,33 @@ await step('command menu: Ctrl+K finds a job by number and opens it', async () =
   }
 });
 
+// Newer Chrome (153) reports a dialog's "close" later than Chrome 141. When that late report arrived
+// after Ctrl+K had reopened the menu, the menu shut again. This holds every browser's report back
+// 150 ms, so the case is checked on any Chromium.
+await step('command menu: a late "closed" report from the browser does not shut the reopened menu', async () => {
+  await page.goto(`${BASE}${cidPath()}/inbox`);
+  await page.locator('main h1').first().waitFor();
+  await page.evaluate(() => {
+    window.addEventListener('close', (e) => {
+      const d = e.target;
+      if (!(d instanceof HTMLDialogElement) || !d.classList.contains('cmdk') || !e.isTrusted) return;
+      e.stopImmediatePropagation();
+      setTimeout(() => d.dispatchEvent(new Event('close')), 150);
+    }, true);
+  });
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await page.keyboard.press('Control+k');
+  await menu.getByRole('combobox').fill('3');
+  await menu.getByRole('option', { name: /#3 Fuel delivery/ }).click();
+  await page.waitForURL(/\/jobs\/[0-9a-f-]+$/);
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(400);
+  if (!(await page.evaluate(() => document.querySelector('dialog.cmdk')?.open))) throw new Error('the menu reopened by Ctrl+K was shut by the late report');
+  await menu.getByRole('combobox').fill('invoices');
+  await page.keyboard.press('Enter');
+  await page.waitForURL(/\/invoices$/);
+});
+
 await step('sidebar collapses to icons and remembers it', async () => {
   await page.getByRole('button', { name: 'Collapse sidebar' }).click();
   await page.reload();

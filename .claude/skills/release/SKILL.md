@@ -30,7 +30,8 @@ stop and say so.
 ## merge
 1. Confirm every check on the PR's latest commit is green. If not, stop and say what is red.
 2. Mark the PR ready for review (a draft can't merge), then turn on auto-merge.
-3. While `main` has no required check, auto-merge merges at once, so step 1 is the guard.
+3. "PR check" is required on `main`, so auto-merge waits for it. Step 1 still matters: if that
+   rule is ever removed, auto-merge would merge at once.
 4. After it merges, confirm the production deployment succeeded and the post-deploy check
    passed. If it failed, follow "First aid".
 

@@ -106,9 +106,9 @@ listed against it and flag it in the PR.
   never use it on a release, so the preview builds.
 - Commits that only touch docs, `.claude/`, `.github/` or `CLAUDE.md` skip Vercel builds.
 - Open a draft PR from the PR template. Never merge into `main` without the owner saying "merge".
-- A draft PR can't merge: mark it ready for review, then turn on auto-merge. While `main` has no
-  required check, confirm the checks are green yourself first, because auto-merge would merge at
-  once.
+- A draft PR can't merge: mark it ready for review, then turn on auto-merge (squash). "PR check" is
+  required on `main`, so auto-merge waits for it; if that rule is ever removed, confirm the checks
+  are green yourself first, because auto-merge would merge at once.
 
 ## Checklist
 Every PR answers each line (the PR template has the table):

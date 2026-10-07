@@ -16,8 +16,11 @@ passed on embedded PostgreSQL (PGlite) and 261/261 on PostgreSQL 16 (a fresh dat
 8 Phase 3 checks (page not found, a driver's office link and "On my way", "Message customer" with
 Send off, a Windows/Excel import, a long customer list, the driver screen in Spanish, a scan of 22
 pages for machine words and serious accessibility problems, 200% text on the driver screens and
-Reschedule). One earlier full run failed once on the Ctrl K check and passed on its own and in the
-next full run. `npm run typecheck` clean. Reviews before shipping: the review checklist (now "Checklist" in `docs/PROCESS.md`) and a
+Reschedule). The Ctrl K check that once failed intermittently had a real cause, found when the
+browser check first ran on GitHub's newer Chromium (153): the browser reports a dialog's close after
+the fact, and a late report shut the command menu that Ctrl K had just reopened. The menu now ignores
+reports of closes it asked for itself; a new check holds the report back to reproduce it on any
+browser (it failed before the fix and passes after). `npm run typecheck` clean. Reviews before shipping: the review checklist (now "Checklist" in `docs/PROCESS.md`) and a
 security review of authentication, approvals, permissions, removed members, templates and
 messages; every finding is fixed with a test except the two listed under Known limitations.
 Phase 1 and 2 results are in their PRs.
@@ -229,7 +232,7 @@ in `docs/AREAS.md` and the tables in `docs/SCHEMA.md`.
 |---|---|---|
 | `/change` and `/release` skills | Implemented | `.claude/skills/change/SKILL.md`, `.claude/skills/release/SKILL.md`; they run only when typed. The first real use is the trial (a one-word wording change through the whole flow) |
 | Area map, schema map, process guide, PR template | Verified | `npm run check:docs`: 16 areas plus `platform` cover every file in `src/`, `test/`, `e2e/`, `scripts/`, `migrations/`, `static/`, `.github/`; all 30 test files belong to an area; 47 tables match the migrations and server code. The check was shown to fail on an unmapped file and a misnamed table |
-| PR check (GitHub Actions) | Implemented | `.github/workflows/ci.yml`: docs check always; typecheck, build and tests in four shards unless the PR is docs-only; browser check when client files change. "PR check" is the one job to require on `main`. `actionlint` clean; first run is on this PR |
+| PR check (GitHub Actions) | Implemented | `.github/workflows/ci.yml`: docs check always; typecheck, build and tests in four shards unless the PR is docs-only; browser check when client files change. "PR check" is required on `main` (set by the owner in the `main` ruleset). `actionlint` clean. Build, docs and all four test shards pass on GitHub; the browser check (about 13 minutes) found the command-menu bug fixed in the same PR |
 | Post-deploy check | Implemented | `.github/workflows/post-deploy.yml`: after a production deployment it loads `/`, `/api/health` and `/signin` (all three respond today); on failure it opens an issue and prepares a revert PR, never merging it. Run by hand with "test_failure" ticked, it also probes a page that doesn't exist, so it fails on purpose and labels its issue and PR "[Test]". Not yet seen running against a real deployment |
 | Docs-only changes skip Vercel builds; quiet Vercel comments | Implemented | `scripts/vercel-ignore.sh`, run by `vercel.json`'s `ignoreCommand` (simulated on a docs-only and a code commit, on and off `main`) and `github.silent` (deprecated by Vercel but still read; the trial confirms it) |
 | Session start-up hook and push/migration guards | Implemented | `.claude/settings.json` (approved by the owner): a SessionStart hook runs a quiet `npm ci` only when packages are missing or the lockfile changed (tested: no-op in 0 s, reinstall in 9 s); deny rules for pushing to `main`; a PreToolUse hook blocks editing a migration already on `main` while new ones stay editable (tested on an applied migration, a new one and another file) |
@@ -256,7 +259,6 @@ in `docs/AREAS.md` and the tables in `docs/SCHEMA.md`.
 | Terms of service and privacy policy | Publish them and set `RIGO_TERMS_URL` and `RIGO_PRIVACY_URL` (not set: no agreement line at sign-up). |
 | Real AI answers | An Anthropic API key in `ANTHROPIC_API_KEY` with `RIGO_AI_PROVIDER=anthropic`. |
 | Revert PRs from the post-deploy check | GitHub → Settings → Actions → General → Workflow permissions: "Read and write permissions" and "Allow GitHub Actions to create and approve pull requests". Claude sessions can't change Actions settings. Without it the check still opens an issue. |
-| Requiring the PR check on `main` | After the check has run once, add "PR check" to the `main` ruleset's required checks (Claude can do this). Until then `/release merge` confirms green checks itself. |
 
 ## Known limitations and next steps
 
