@@ -339,7 +339,8 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
   for (const [vw, vh] of [[360, 640], [375, 667], [390, 844]]) {
     await step(`WP5 ${vw}×${vh}: Start job is the sticky action, then Submit; nothing preselected; another day's job asks first (R9-M1, R6-m4)`, async () => {
       const f = await fieldCompany(`small-${vw}`);
-      const tomorrow = await f.mkJob(soon(30));
+      // Tomorrow at 10:00 in the company's time zone, whatever the time of day the check runs.
+      const tomorrow = await f.mkJob(new Date(Date.parse(chicagoAt(10, 0)) + 86_400_000).toISOString());
       const c = await browser.newContext({ viewport: { width: vw, height: vh }, hasTouch: true, isMobile: true });
       const p = await c.newPage(); watch(p, `wp5-small-${vw}`);
       await driverSignIn(p, f);
@@ -451,7 +452,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase1') {
     if (member.started_jobs !== 1) throw new Error('the team list does not show the started job');
     if ((await f.o.del(`/members/${member.id}`)) !== 200) throw new Error('remove failed');
     await p.goto(`${f.C}/today`);
-    await p.getByRole('heading', { name: /You're no longer a member of Field removed/ }).waitFor({ timeout: 10000 });
+    await p.getByRole('heading', { name: /You no longer have access to Field removed/ }).waitFor({ timeout: 10000 });
     await p.getByText('Your record was sent to the office for review.').waitFor({ timeout: 10000 });
     const left = await p.evaluate(async (cid) => new Promise((res) => { const r = indexedDB.open('rigo-offline', 1); r.onsuccess = () => { const t = r.result.transaction('kv', 'readonly').objectStore('kv').getAllKeys(); t.onsuccess = () => res(t.result.map(String).filter((k) => k.includes(cid))); }; }), f.cid);
     if (left.length) throw new Error(`still on the phone: ${left.join(', ')}`);
@@ -1163,6 +1164,9 @@ for (const [vw, vh] of [[1440, 900], [390, 844]]) {
     const p = await c.newPage(); watch(p, `c1-switch-${vw}`);
     await p.goto(`${BASE}/signin`);
     await signInHere(p, a);
+    // One real company: sign-in goes straight to it (R4-m4); the workspaces page lists it too.
+    await p.waitForURL(/\/c\/[^/]+/, { timeout: 8000 });
+    await p.goto(`${BASE}/workspaces`);
     await p.getByRole('heading', { name: 'Hello, Alma' }).waitFor({ timeout: 8000 });
     await p.getByText(`Alma Fuel ${vw}`).waitFor();
     await p.getByRole('button', { name: 'Sign out' }).click();
@@ -1331,7 +1335,7 @@ for (const theme of ['light', 'dark']) {
     const owner = await apiAccount('Rosa Owner', { company: `Rosa Septic ${theme}` });
     await p.goto(`${BASE}/signin`);
     await signInHere(p, owner);
-    await p.waitForURL(/\/workspaces$/);
+    await p.waitForURL(/\/c\/[^/]+/); // one company: straight into it
     for (const path of ['/workspaces', '/account']) {
       await p.goto(`${BASE}${path}`);
       await p.waitForLoadState('networkidle');
@@ -1606,7 +1610,11 @@ await step('dispatcher: assign the unassigned fuel job to Dana from the list', a
 
 await step('create a job through the form (draft explains missing info)', async () => {
   await page.goto(`${BASE}${cidPath()}/jobs/new`);
-  await page.getByLabel('Customer', { exact: true }).selectOption({ index: 1 });
+  // The customer picker: open it and take the first customer with the keyboard.
+  const box = page.getByRole('combobox', { name: 'Customer' });
+  await box.click();
+  await page.getByRole('option').first().waitFor();
+  await box.press('Enter');
   await page.getByRole('button', { name: 'Save as draft' }).click();
   await page.waitForURL(/\/jobs\/[0-9a-f-]+$/);
   await page.getByText('This draft still needs information').waitFor();
