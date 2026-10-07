@@ -153,7 +153,8 @@ tests' helpers and fixtures, the browser check, builds and GitHub workflows.
   `src/client/components/shell.tsx`, `src/client/components/ui.tsx`, `src/client/lib/api.ts`,
   `src/client/lib/form.ts`, `src/client/lib/format.ts`, `src/client/lib/i18n.tsx`,
   `src/client/lib/theme.ts`, `src/client/lib/title.ts`, `src/client/lib/unsaved.tsx`,
-  `static/`, `migrations/`, `scripts/vercel-output.mjs`, `scripts/check-docs.mjs`,
+  `static/`, `migrations/`, `scripts/vercel-output.mjs`, `scripts/vercel-ignore.sh`,
+  `scripts/check-docs.mjs`,
   `e2e/run.mjs`, `test/helpers.ts`, `test/fixtures/`, `.github/`
 - **Tests:** `test/access.test.ts`, `test/language-phase3.test.ts`,
   `test/field-filtering.test.ts`, `test/privacy-phase3.test.ts`, `test/security-review.test.ts`

@@ -231,7 +231,7 @@ in `docs/AREAS.md` and the tables in `docs/SCHEMA.md`.
 | Area map, schema map, process guide, PR template | Verified | `npm run check:docs`: 16 areas plus `platform` cover every file in `src/`, `test/`, `e2e/`, `scripts/`, `migrations/`, `static/`, `.github/`; all 30 test files belong to an area; 47 tables match the migrations and server code. The check was shown to fail on an unmapped file and a misnamed table |
 | PR check (GitHub Actions) | Implemented | `.github/workflows/ci.yml`: docs check always; typecheck, build and tests in four shards unless the PR is docs-only; browser check when client files change. "PR check" is the one job to require on `main`. `actionlint` clean; first run is on this PR |
 | Post-deploy check | Implemented | `.github/workflows/post-deploy.yml`: after a production deployment it loads `/`, `/api/health` and `/signin` (all three respond today); on failure it opens an issue and prepares a revert PR, never merging it. Not yet seen running against a real deployment |
-| Docs-only changes skip Vercel builds; quiet Vercel comments | Implemented | `vercel.json` `ignoreCommand` (simulated on a docs-only and a code commit) and `github.silent` (deprecated by Vercel but still read; the trial confirms it) |
+| Docs-only changes skip Vercel builds; quiet Vercel comments | Implemented | `scripts/vercel-ignore.sh`, run by `vercel.json`'s `ignoreCommand` (simulated on a docs-only and a code commit, on and off `main`) and `github.silent` (deprecated by Vercel but still read; the trial confirms it) |
 | Old commands and unused design skills removed | Verified | Six commands and 8 skills deleted; a repo-wide search finds no remaining mentions outside history notes |
 
 ## Simulated or disabled by design
