@@ -11,7 +11,8 @@ export const structureSchema = z.object({
   services: z.array(z.any()).max(30).default([]),
   customFields: customFieldsSchema.optional(),
   roles: z.array(z.object({ key: z.string().max(40), name: z.string().max(60), description: z.string().max(300).default(''), permissions: z.array(z.string()) })).max(20).default([]),
-  workflows: z.array(z.object({ name: z.string().max(80), description: z.string().max(300).default(''), definition: z.any() })).max(20).default([]),
+  // `draft`: a tested workflow that wasn't switched on in the source company. Never part of a published copy.
+  workflows: z.array(z.object({ name: z.string().max(80), description: z.string().max(300).default(''), definition: z.any(), draft: z.boolean().optional() })).max(20).default([]),
 });
 export type Structure = z.infer<typeof structureSchema>;
 
@@ -64,16 +65,31 @@ export async function seedDefaultWorkflows(q: Q, companyId: string, userId: stri
   return out;
 }
 
-export async function exportStructure(q: Q, companyId: string): Promise<Structure> {
+/** Approvers and backups are people in the source company: never part of a template (R16-m4). */
+function withoutPeople(definition: any) {
+  if (!definition?.steps) return definition;
+  return { ...definition, steps: definition.steps.map((st: any) => ({ ...st, approval: st.approval ? { ...st.approval, approverUserIds: [], backupUserIds: [] } : st.approval })) };
+}
+
+/**
+ * A company's structure as a template. Only workflows that are switched on are included, plus
+ * tested drafts when asked for; test runs, untested drafts and the people who approve are left out.
+ */
+export async function exportStructure(q: Q, companyId: string, opts: { includeTestedDrafts?: boolean } = {}): Promise<Structure> {
   const services = await q.query(`select name, category, description, fields, pricing, tax_rate_bp, requires_photo, requires_signature, invoice_shows_notes from rigo.services where company_id = $1 and active order by created_at`, [companyId]);
   const company = await q.query<{ settings: any }>(`select settings from rigo.companies where id = $1`, [companyId]);
   const roles = await q.query(`select key, name, description, permissions from rigo.roles where company_id = $1 and not is_owner order by key`, [companyId]);
   const wfs = await q.query(
-    `select w.name, w.description, coalesce(av.definition, lv.definition) as definition
+    `select w.name, w.description, av.definition as active, lv.definition as latest, lv.status as latest_status
        from rigo.workflows w
        left join rigo.workflow_versions av on av.id = w.active_version_id
-       left join lateral (select definition from rigo.workflow_versions where workflow_id = w.id and status <> 'proposal' order by version desc limit 1) lv on true
+       left join lateral (select definition, status from rigo.workflow_versions where workflow_id = w.id and status <> 'proposal' order by version desc limit 1) lv on true
       where w.company_id = $1 order by w.created_at`, [companyId]);
+  const workflows = wfs.rows.flatMap((w: any) => {
+    if (w.active) return [{ name: w.name, description: w.description, definition: withoutPeople(w.active) }];
+    if (opts.includeTestedDrafts && w.latest && w.latest_status === 'tested') return [{ name: w.name, description: w.description, definition: withoutPeople(w.latest), draft: true }];
+    return [];
+  });
   return {
     services: services.rows.map((s: any) => ({
       name: s.name, category: s.category, description: s.description, fields: s.fields,
@@ -83,38 +99,96 @@ export async function exportStructure(q: Q, companyId: string): Promise<Structur
     })),
     customFields: customFieldsSchema.parse(company.rows[0]?.settings?.customFields ?? {}),
     roles: roles.rows as any,
-    workflows: wfs.rows.filter((w: any) => w.definition).map((w: any) => ({ name: w.name, description: w.description, definition: w.definition })),
+    workflows,
+  };
+}
+
+/** What a published template shows other people (D11): structure only, never drafts or people. */
+export function blankCopy(content: unknown): Structure {
+  const s = structureSchema.parse(content);
+  return { ...s, workflows: s.workflows.filter((w) => !w.draft).map((w) => ({ name: w.name, description: w.description, definition: withoutPeople(w.definition) })) };
+}
+
+export type PlanAction = 'add' | 'skip' | 'copy';
+export interface StructurePlan {
+  services: { name: string; action: PlanAction; as?: string }[];
+  workflows: { name: string; action: PlanAction; as?: string }[];
+  roles: { name: string; action: 'update' | 'same' | 'keep' | 'missing' }[];
+  customFields: { label: string; action: 'add' | 'skip' }[];
+}
+
+const nameKey = (n: string) => n.trim().toLowerCase().replace(/\s+/g, ' ');
+function copyName(name: string, taken: Set<string>) {
+  for (let i = 2; i < 100; i++) { const n = `${name} (${i})`.slice(0, 80); if (!taken.has(nameKey(n))) return n; }
+  return `${name} (copy)`.slice(0, 80);
+}
+
+/**
+ * What applying a template would do (R16-M4): anything this company already has by name is
+ * skipped, or added as a copy named "… (2)" when asked. Applying the same template twice adds nothing.
+ */
+export async function planStructure(q: Q, companyId: string, content: unknown, duplicates: 'skip' | 'copy' = 'skip'): Promise<StructurePlan> {
+  const s = structureSchema.parse(content);
+  const svcNames = new Set((await q.query<{ name: string }>(`select name from rigo.services where company_id = $1 and active`, [companyId])).rows.map((r) => nameKey(r.name)));
+  const wfNames = new Set((await q.query<{ name: string }>(`select name from rigo.workflows where company_id = $1`, [companyId])).rows.map((r) => nameKey(r.name)));
+  const roles = new Map((await q.query<{ key: string; name: string; permissions: string[] }>(`select key, name, permissions from rigo.roles where company_id = $1 and not is_owner`, [companyId])).rows.map((r) => [r.key, r]));
+  const cur = customFieldsSchema.parse((await q.query<{ settings: any }>(`select settings from rigo.companies where id = $1`, [companyId])).rows[0]?.settings?.customFields ?? {});
+  const named = (items: { name: string }[], taken: Set<string>) => items.map((x) => {
+    if (!taken.has(nameKey(x.name))) { taken.add(nameKey(x.name)); return { name: x.name, action: 'add' as const }; }
+    if (duplicates === 'skip') return { name: x.name, action: 'skip' as const };
+    const as = copyName(x.name, taken); taken.add(nameKey(as));
+    return { name: x.name, action: 'copy' as const, as };
+  });
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  return {
+    services: named(s.services.map((x: any) => ({ name: String(x?.name ?? '?') })), svcNames),
+    workflows: named(s.workflows, wfNames),
+    // A role this company already set up is kept as it is; the template never changes someone's access silently.
+    roles: s.roles.map((r) => {
+      const mine = roles.get(r.key);
+      const perms = r.permissions.filter((p) => (ALL_PERMISSIONS as string[]).includes(p));
+      return { name: mine?.name ?? r.name, action: !mine ? 'missing' as const : sameSet(perms, mine.permissions) ? 'same' as const : 'keep' as const };
+    }),
+    customFields: s.customFields ? (['customers', 'jobs', 'locations'] as const).flatMap((k) => s.customFields![k].map((f) => ({ label: f.label, action: cur[k].some((x) => x.key === f.key) ? 'skip' as const : 'add' as const }))) : [],
   };
 }
 
 /**
- * Copy structure into a company as its own configuration. Workflows always arrive as drafts so
- * nothing activates without the owner testing and activating it.
+ * Copy structure into a company as its own configuration, following the plan. Workflows always
+ * arrive as drafts so nothing activates without the owner testing and activating it.
  */
-export async function applyStructure(q: Q, companyId: string, userId: string, content: unknown) {
+export async function applyStructure(q: Q, companyId: string, userId: string, content: unknown, opts: { duplicates?: 'skip' | 'copy'; updateRoles?: boolean } = {}) {
   const s = structureSchema.parse(content);
-  const summary = { services: 0, workflows: 0, roles: 0, customFields: 0, skipped: [] as string[] };
-  for (const raw of s.services) {
+  const plan = await planStructure(q, companyId, s, opts.duplicates ?? 'skip');
+  const summary = { services: 0, workflows: 0, roles: 0, customFields: 0, skipped: [] as string[], copied: [] as string[] };
+  for (const [i, raw] of s.services.entries()) {
+    const step = plan.services[i];
+    if (step.action === 'skip') { summary.skipped.push(`Service "${step.name}": you already have one with this name`); continue; }
     const parsed = serviceInputSchema.safeParse(raw);
     if (!parsed.success) { summary.skipped.push(`Service "${(raw as any)?.name ?? '?'}" is not valid`); continue; }
-    await insertService(q, companyId, { ...parsed.data, pricing: parsed.data.pricing.map(withoutRates), taxRateBp: null });
+    await insertService(q, companyId, { ...parsed.data, name: step.as ?? parsed.data.name, pricing: parsed.data.pricing.map(withoutRates), taxRateBp: null });
+    if (step.as) summary.copied.push(`Service "${step.name}" added as "${step.as}"`);
     summary.services++;
   }
-  for (const r of s.roles) {
-    const perms = r.permissions.filter((p) => (ALL_PERMISSIONS as string[]).includes(p));
-    const res = await q.query(`update rigo.roles set permissions = $3, description = $4 where company_id = $1 and key = $2 and not is_owner`, [companyId, r.key, perms, r.description]);
-    if ((res as any).rowCount ?? (res as any).affectedRows) summary.roles++;
-  }
+  // A brand-new company built from another one's structure takes its role permissions too.
+  if (opts.updateRoles) {
+    for (const r of s.roles) {
+      const perms = r.permissions.filter((p) => (ALL_PERMISSIONS as string[]).includes(p));
+      const res = await q.query(`update rigo.roles set permissions = $3, description = $4 where company_id = $1 and key = $2 and not is_owner`, [companyId, r.key, perms, r.description]);
+      if ((res as any).rowCount ?? (res as any).affectedRows) summary.roles++;
+    }
+  } else for (const r of plan.roles) if (r.action === 'keep') summary.skipped.push(`Role "${r.name}": your own permissions are kept`);
   const roleKeys = (await q.query<{ key: string }>(`select key from rigo.roles where company_id = $1`, [companyId])).rows.map((r) => r.key);
-  for (const w of s.workflows) {
+  for (const [i, w] of s.workflows.entries()) {
+    const step = plan.workflows[i];
+    if (step.action === 'skip') { summary.skipped.push(`Workflow "${step.name}": you already have one with this name`); continue; }
     const d = definitionSchema.safeParse(w.definition);
     if (!d.success) { summary.skipped.push(`Workflow "${w.name}" is not valid`); continue; }
     const referenced = d.data.steps.flatMap((st) => [...(st.params.roles ?? []), ...st.approval.approverRoles, ...st.onException.notifyRoles]);
     const usesUnknownRole = referenced.some((r) => !roleKeys.includes(r));
-    // Approver user ids belong to the source company and are never carried over.
-    const def = { ...d.data, steps: d.data.steps.map((st) => ({ ...st, approval: { ...st.approval, approverUserIds: [], backupUserIds: [] } })) };
-    await insertWorkflow(q, companyId, userId, { name: w.name, description: w.description, definition: def }, 'template');
+    await insertWorkflow(q, companyId, userId, { name: step.as ?? w.name, description: w.description, definition: withoutPeople(d.data) }, 'template');
     if (usesUnknownRole) summary.skipped.push(`Workflow "${w.name}" refers to a role this company does not have; fix it before testing.`);
+    if (step.as) summary.copied.push(`Workflow "${step.name}" added as "${step.as}"`);
     summary.workflows++;
   }
   if (s.customFields) {

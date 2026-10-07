@@ -221,38 +221,45 @@ billingRoutes.put('/invoices/:id/lines', async (c) => {
   return c.json(out);
 });
 
-/** An invoice without a job (R8-M3): custom lines for a customer and, optionally, one of their sites. */
+const manualInvoiceInput = z.object({
+  customerId: z.string().uuid(), locationId: z.string().uuid().nullable().optional(), lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).default(''),
+  taxRateBp: z.number().int().min(0).max(5000).nullable().default(null), allowFree: z.boolean().default(false), clientRequestId: z.string().min(8).max(80),
+});
+
+/**
+ * An invoice without a job (R8-M3): custom lines for a customer and, optionally, one of their sites.
+ * Imported opening balances use it too, `quiet` so they don't start invoice workflows.
+ */
+export async function manualInvoice(q: Q, cc: CompanyCtx, input: z.input<typeof manualInvoiceInput>, opts: { quiet?: boolean } = {}) {
+  const i = manualInvoiceInput.parse(input);
+  const cust = (await q.query<any>(`select id, tax_exempt from rigo.customers where id = $1 and company_id = $2`, [i.customerId, cc.company.id])).rows[0];
+  if (!cust) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
+  if (i.locationId) {
+    const l = await q.query(`select 1 from rigo.locations where id = $1 and company_id = $2 and customer_id = $3`, [i.locationId, cc.company.id, cust.id]);
+    if (!l.rows.length) throw badRequest('Choose one of this customer\'s locations.', { fields: { locationId: 'Belongs to another customer' } });
+  }
+  const key = `manual:${i.clientRequestId}`;
+  const dup = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and billable_key = $2`, [cc.company.id, key])).rows[0];
+  if (dup) return { id: dup.id as string, duplicate: true };
+  const lines = await editedLines(q, null, i.lines, i.allowFree, cc.company.currency);
+  const totals = computeTotals(lines, i.taxRateBp, [], { taxExempt: !!cust.tax_exempt });
+  const held = totals.totalMinor === null;
+  const { rows } = await q.query<{ id: string }>(
+    `insert into rigo.invoices (company_id, billable_key, customer_id, location_id, kind, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, notes, due_days, tax_rate_bp, free_confirmed)
+     values ($1,$2,$3,$4,'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
+    [cc.company.id, key, cust.id, i.locationId ?? null, held ? 'held' : 'draft', cc.company.currency, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor,
+      JSON.stringify(totals.holdReasons), i.notes, await termsFor(q, cc.company.id, cust.id), i.taxRateBp, i.allowFree]);
+  await persistLines(q, cc.company.id, rows[0].id, lines);
+  await audit(q, cc, 'invoice.created_manually', { id: rows[0].id });
+  if (!opts.quiet) await emit(q, cc.company.id, 'invoice.prepared', { type: 'invoice', id: rows[0].id }, { held, manual: true }, { actorUserId: cc.user.id });
+  return { id: rows[0].id, duplicate: false };
+}
+
 billingRoutes.post('/invoices', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.edit', 'finance.view');
-  const input = await body(c, z.object({
-    customerId: z.string().uuid(), locationId: z.string().uuid().nullable().optional(), lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).default(''),
-    taxRateBp: z.number().int().min(0).max(5000).nullable().default(null), allowFree: z.boolean().default(false), clientRequestId: z.string().min(8).max(80),
-  }));
-  const out = await cc.db.tx(async (q) => {
-    const cust = (await q.query<any>(`select id, tax_exempt from rigo.customers where id = $1 and company_id = $2`, [input.customerId, cc.company.id])).rows[0];
-    if (!cust) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
-    if (input.locationId) {
-      const l = await q.query(`select 1 from rigo.locations where id = $1 and company_id = $2 and customer_id = $3`, [input.locationId, cc.company.id, cust.id]);
-      if (!l.rows.length) throw badRequest('Choose one of this customer\'s locations.', { fields: { locationId: 'Belongs to another customer' } });
-    }
-    const key = `manual:${input.clientRequestId}`;
-    const dup = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and billable_key = $2`, [cc.company.id, key])).rows[0];
-    if (dup) return { id: dup.id as string, duplicate: true };
-    const lines = await editedLines(q, null, input.lines, input.allowFree, cc.company.currency);
-    const totals = computeTotals(lines, input.taxRateBp, [], { taxExempt: !!cust.tax_exempt });
-    const held = totals.totalMinor === null;
-    const { rows } = await q.query<{ id: string }>(
-      `insert into rigo.invoices (company_id, billable_key, customer_id, location_id, kind, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, notes, due_days, tax_rate_bp, free_confirmed)
-       values ($1,$2,$3,$4,'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
-      [cc.company.id, key, cust.id, input.locationId ?? null, held ? 'held' : 'draft', cc.company.currency, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor,
-        JSON.stringify(totals.holdReasons), input.notes, await termsFor(q, cc.company.id, cust.id), input.taxRateBp, input.allowFree]);
-    await persistLines(q, cc.company.id, rows[0].id, lines);
-    await audit(q, cc, 'invoice.created_manually', { id: rows[0].id });
-    await emit(q, cc.company.id, 'invoice.prepared', { type: 'invoice', id: rows[0].id }, { held, manual: true }, { actorUserId: cc.user.id });
-    return { id: rows[0].id, duplicate: false };
-  });
-  return c.json(out);
+  const input = await body(c, manualInvoiceInput);
+  return c.json(await cc.db.tx((q) => manualInvoice(q, cc, input)));
 });
 
 /** Who may decide a waiting approval, in words. */

@@ -41,7 +41,7 @@ export async function createCompany(q: Q, userId: string, input: z.infer<typeof 
   const id = rows[0].id;
   await seedRoles(q, id);
   await q.query(`insert into rigo.memberships (company_id, user_id, role_key) values ($1,$2,'owner')`, [id, userId]);
-  if (opts.structureFrom) await applyStructure(q, id, userId, opts.structureFrom);
+  if (opts.structureFrom) await applyStructure(q, id, userId, opts.structureFrom, { updateRoles: true });
   else if (input.start === 'starter') {
     await seedStarterServices(q, id, input.categories as ServiceCategory[]);
     await seedDefaultWorkflows(q, id, userId, { activate: true });
