@@ -77,7 +77,7 @@ export function Messages() {
         ))}</ul></div>
       )}
       <Dialog open={!!sel} onClose={() => setSel(null)} title={sel?.subject ?? ''} footer={sel && <>
-        {sel.status === 'prepared' && c.can('messages.send') && <>
+        {sel.status === 'prepared' && c.can('messages.send') && !sel.bodyHidden && <>
           {!sel.bodyHidden && <Button icon={<Pencil aria-hidden />} onClick={() => { setEdit({ ...sel }); setSel(null); }}>Edit</Button>}
           {!sel.bodyHidden && <Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(`${sel.subject}\n\n${sel.body}`).then(() => toast('Copied'), () => toast('Copy failed', 'error'))}>Copy text</Button>}
           {!c.demo && <Button icon={<CheckCheck aria-hidden />} busy={markSent.busy} onClick={() => markSent.run(sel)}>I sent it myself</Button>}
@@ -85,7 +85,7 @@ export function Messages() {
         </>}
         {['sent', 'delivered', 'simulated'].includes(sel.status) && c.can('messages.send') && <Button icon={<Reply aria-hidden />} onClick={() => setReplyOpen(true)}>Log customer reply</Button>}
       </>}>
-        {sel && <div className="stack"><ErrorSummary error={send.error ?? markSent.error} /><MessageStatus status={sel.status} />{sel.status === 'simulated' ? <Banner tone="info">Simulated: this is what the customer would receive. Nothing left Rigo.</Banner> : null}{sel.invoice_id ? <Link to={c.to(`invoices/${sel.invoice_id}`)}>Open invoice</Link> : null}<Preview m={sel} /></div>}
+        {sel && <div className="stack"><ErrorSummary error={send.error ?? markSent.error} /><MessageStatus status={sel.status} />{sel.status === 'simulated' ? <Banner tone="info">Simulated: this is what the customer would receive. Nothing left Rigo.</Banner> : null}{sel.bodyHidden ? <Banner tone="info">This message is about an invoice or statement. People who see billing read and send it.</Banner> : null}{sel.invoice_id && !sel.bodyHidden ? <Link to={c.to(`invoices/${sel.invoice_id}`)}>Open invoice</Link> : null}<Preview m={sel} /></div>}
       </Dialog>
       <Dialog open={!!edit} onClose={() => setEdit(null)} title="Edit prepared message" footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" busy={save.busy} onClick={() => save.run()}>Save</Button></>}>
         {edit && <div className="stack"><ErrorSummary error={save.error} />

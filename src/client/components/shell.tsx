@@ -313,7 +313,9 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
   }, [open]);
 
   // Searches only run for what this role may see; the server checks again.
-  const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('jobs.view_all') });
+  const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && (c.can('jobs.view_all') || c.can('jobs.view_assigned')) });
+  // Drivers search their own jobs (the server keeps it to them) and open them on the driver screen (R12-m3).
+  const ownJobsOnly = !c.can('jobs.view_all');
   const customers = useQuery({ queryKey: [c.cid, 'cmdk-customers', q], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('customers.view') });
   const invoices = useQuery({ queryKey: [c.cid, 'cmdk-invoices'], queryFn: () => get(`/c/${c.cid}/invoices?status=all`), enabled: open && q.length > 0 && c.can('invoices.view'), staleTime: 30_000 });
 
@@ -340,7 +342,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
     list.push(...actions.filter((a) => match(a.label)));
     list.push(...pages.filter((p) => match(p.label)));
     if (needle && remote) {
-      for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: `jobs/${j.id}` });
+      for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: ownJobsOnly ? `today/${j.id}` : `jobs/${j.id}` });
       for (const cu of (customers.data?.customers ?? []).slice(0, 5)) list.push({ id: `c-${cu.id}`, group: 'Customers', label: cu.name, meta: cu.firstAddress ?? (cu.location_count ? `${cu.location_count} location(s)` : undefined), icon: <Contact aria-hidden />, to: `customers/${cu.id}` });
       const inv = (invoices.data?.invoices ?? []).filter((i: any) => [i.number, i.customerName, i.jobNumber && `#${i.jobNumber}`, i.jobNumber].filter(Boolean).some((v: any) => String(v).toLowerCase().includes(remote))).slice(0, 5);
       for (const i of inv) list.push({ id: `i-${i.id}`, group: 'Invoices', label: i.number ?? `Draft for job #${i.jobNumber ?? i.job_number ?? '?'}`, meta: i.customerName ?? i.customer_name ?? undefined, icon: <FileText aria-hidden />, to: `invoices/${i.id}` });
@@ -367,7 +369,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
       {open && <>
         <div className="cmdk-input">
           <Search aria-hidden />
-          <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} placeholder="Search jobs, customers, invoices, or jump to…" aria-label="Search or run a command"
+          <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} placeholder={searchHint(c)} aria-label="Search or run a command"
             role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-activedescendant={all[sel] ? `cmdk-${sel}` : undefined} autoComplete="off" />
           {searching ? <span className="spinner" aria-hidden /> : null}
         </div>
@@ -505,4 +507,12 @@ export function MorePage() {
       </div>
     </div>
   );
+}
+
+/** The search box names only what this role can search (R12-m3). */
+function searchHint(c: { can: (p: any) => boolean }) {
+  const what = [c.can('jobs.view_all') ? 'jobs' : c.can('jobs.view_assigned') ? 'your jobs' : null, c.can('customers.view') ? 'customers' : null, c.can('invoices.view') ? 'invoices' : null].filter(Boolean) as string[];
+  if (!what.length) return 'Jump to a page…';
+  const list = what.length > 1 ? `${what.slice(0, -1).join(', ')}${what.length > 2 ? ',' : ''} and ${what[what.length - 1]}` : what[0];
+  return `Search ${list}, or jump to a page…`;
 }

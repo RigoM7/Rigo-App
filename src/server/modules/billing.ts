@@ -611,6 +611,7 @@ billingRoutes.post('/messages/:id/send', async (c) => {
     const { rows } = await q.query<any>(`select * from rigo.messages where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id]);
     const m = rows[0];
     if (!m) throw notFound('Message');
+    moneyMessageAllowed(cc, m);
     if (m.status !== 'prepared') throw conflict(`This message is already ${m.status}.`);
     if (!m.recipient) throw badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
     const r = await deliverMessage(cc.company, m);
@@ -623,11 +624,19 @@ billingRoutes.post('/messages/:id/send', async (c) => {
   return c.json(out);
 });
 
+/** Invoice emails, reminders and statements state amounts: only people who see money send them (R17-M1). */
+function moneyMessageAllowed(cc: CompanyCtx, m: { invoice_id: string | null; statement_id: string | null }) {
+  if ((m.invoice_id || m.statement_id) && !can(cc, 'finance.view')) throw forbidden('Messages about invoices and statements are sent by people who see billing.');
+}
+
 /** A person sent the prepared message themselves (outside Rigo). Recorded honestly as such. */
 billingRoutes.post('/messages/:id/mark-sent', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.send');
   if (cc.isDemo) throw badRequest('Demo messages are simulated only.');
+  const found = (await cc.db.query<any>(`select invoice_id, statement_id from rigo.messages where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id])).rows[0];
+  if (!found) throw notFound('Message');
+  moneyMessageAllowed(cc, found);
   const { rows } = await cc.db.query<any>(`update rigo.messages set status = 'sent', status_detail = $3, updated_at = now() where id = $1 and company_id = $2 and status = 'prepared' returning invoice_id`,
     [c.req.param('id'), cc.company.id, `Sent outside Rigo; recorded by ${cc.user.name}.`]);
   if (!rows.length) throw conflict('Only prepared messages can be marked as sent.');
