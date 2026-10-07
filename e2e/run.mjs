@@ -1617,7 +1617,7 @@ await step('create a job through the form (draft explains missing info)', async 
   let opened = false;
   for (let i = 0; i < 3 && !opened; i++) {
     await box.click();
-    opened = await page.getByRole('option').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+    opened = await page.locator('.combo-list').getByRole('option').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
   }
   if (!opened) throw new Error(`the customer list did not open: focus on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 200))}; ${await page.locator('.combo').first().innerHTML()}`);
   await box.press('Enter');
