@@ -151,7 +151,7 @@ function JobTable({ jobs, onChange, resources, preferFrom }: { jobs: any[]; onCh
             <option value="">Choose a driver…</option><option value="none">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <Button size="sm" variant="primary" busy={busy} disabled={!bulkDriver} onClick={applyBulk}>Assign {sel.length} job{sel.length === 1 ? '' : 's'}</Button>
-          {bulkDriver ? <span className="small">Not assigned yet</span> : null}
+          {bulkDriver ? <span className="small">Press Assign to apply</span> : null}
           {onSelected.length > 0 && <>
             <span className="bulk-sep" aria-hidden />
             <label className="sr-only" htmlFor="swap-from">Truck to replace</label>

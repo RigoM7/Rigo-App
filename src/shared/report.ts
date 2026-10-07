@@ -1,4 +1,5 @@
 import { fieldApplies, type FieldDef } from './services.js';
+import { translate, plural, type Lang, type MessageKey } from './i18n/index.js';
 
 // The job report (R6-M4): what the driver recorded, in the order the service lists it, for the printed
 // report and the prepared customer email. Fields that don't apply to the visit are left out.
@@ -24,19 +25,20 @@ export function reportLines(fields: FieldDef[], details: Record<string, unknown>
   return { request, findings };
 }
 
-/** Plain text for the prepared email. */
+/** Plain text for the prepared email, in the customer's language (D8). */
 export function reportText(o: { company: string; companyPhone?: string | null; customer: string; jobNumber: number; serviceName: string; address: string | null; date: string; outcome: string; request: ReportLine[]; findings: ReportLine[]; notes: string; photoCount: number; signer?: string | null;
-  deliveries?: { product: string; quantity: string; tank?: string; ticket?: string }[]; unit?: string }) {
+  deliveries?: { product: string; quantity: string; tank?: string; ticket?: string }[]; unit?: string }, lang: Lang = 'en') {
+  const t = (k: MessageKey, v?: Record<string, string | number>) => translate(lang, k, v);
   return [
-    `Hello ${o.customer},`, '',
-    `Here is the report for job #${o.jobNumber}: ${o.serviceName}${o.address ? ` at ${o.address}` : ''}, ${o.date}.`, '',
-    `Outcome: ${o.outcome}`,
+    t('customer.hello', { name: o.customer }), '',
+    t('cm.reportLead', { number: o.jobNumber, service: o.serviceName, at: o.address ? t('customer.at', { address: o.address }) : '', date: o.date }), '',
+    t('cm.outcome', { text: o.outcome }),
     ...o.request.map((l) => `${l.label}: ${l.value}`),
-    ...(o.deliveries?.length ? ['', 'Delivered', ...o.deliveries.map((d) => `- ${d.product}: ${d.quantity}${o.unit ? ` ${o.unit}` : ''}${d.tank ? `, ${d.tank}` : ''}${d.ticket ? ` (ticket ${d.ticket})` : ''}`)] : []),
-    ...(o.findings.length ? ['', 'Findings', ...o.findings.map((l) => `- ${l.label}: ${l.value}`)] : []),
-    ...(o.notes ? ['', 'Notes', o.notes] : []),
-    ...(o.photoCount ? ['', `${o.photoCount} photo${o.photoCount === 1 ? ' was' : 's were'} taken on site. Reply to this email if you'd like copies.`] : []),
-    ...(o.signer ? ['', `Signed on site by ${o.signer}.`] : []),
-    '', `Thank you,`, o.company, ...(o.companyPhone ? [o.companyPhone] : []),
+    ...(o.deliveries?.length ? ['', t('cm.delivered'), ...o.deliveries.map((d) => `- ${d.product}: ${d.quantity}${o.unit ? ` ${o.unit}` : ''}${d.tank ? `, ${d.tank}` : ''}${d.ticket ? t('cm.ticket', { n: d.ticket }) : ''}`)] : []),
+    ...(o.findings.length ? ['', t('cm.findings'), ...o.findings.map((l) => `- ${l.label}: ${l.value}`)] : []),
+    ...(o.notes ? ['', t('cm.notes'), o.notes] : []),
+    ...(o.photoCount ? ['', plural(lang, 'cm.photos', o.photoCount)] : []),
+    ...(o.signer ? ['', t('cm.signedBy', { name: o.signer })] : []),
+    '', t('cm.thankYou'), o.company, ...(o.companyPhone ? [o.companyPhone] : []),
   ].join('\n');
 }

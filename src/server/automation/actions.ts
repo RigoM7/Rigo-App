@@ -5,6 +5,7 @@ import { recordDelivery } from '../modules/messaging.js';
 import { notifyRoles, notifyUsers } from '../modules/inbox.js';
 import { subjectLabel } from './engine.js';
 import { jobUpdateText, textNumber } from '../../shared/messages.js';
+import { isLang } from '../../shared/i18n/index.js';
 
 // Workflow action primitives. Each handler is idempotent for its action id / subject so a retry
 // never duplicates an invoice, message or job.
@@ -58,13 +59,13 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
   },
 
   async 'message.prepare_job_update'(i) {
-    const { rows } = await i.q.query<any>(`select j.*, c.name as customer_name, c.email, nullif(coalesce(nullif(j.contact_phone, ''), c.phone), '') as phone, co.name as company_name,
+    const { rows } = await i.q.query<any>(`select j.*, c.name as customer_name, c.email, c.language as customer_language, nullif(coalesce(nullif(j.contact_phone, ''), c.phone), '') as phone, co.name as company_name,
         s.name as service_name, l.address, coalesce(m.display_name, u.name) as driver_name
       from rigo.jobs j left join rigo.customers c on c.id = j.customer_id join rigo.companies co on co.id = j.company_id left join rigo.services s on s.id = j.service_id
       left join rigo.locations l on l.id = j.location_id left join rigo.users u on u.id = j.assigned_user_id left join rigo.memberships m on m.company_id = j.company_id and m.user_id = j.assigned_user_id
       where j.id = $1`, [i.subject.id]);
     const j = rows[0];
-    const u = jobUpdateText(j, i.params.text);
+    const u = jobUpdateText(j, i.params.text, isLang(j.customer_language) ? j.customer_language : 'en');
     // A live update ("on the way", "started") goes by text when there is a number to text; anything
     // else by email. Either way it is only prepared here: message.send decides whether it can leave.
     const sms = u.live && !!j.phone;

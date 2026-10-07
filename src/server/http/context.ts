@@ -7,7 +7,7 @@ import { HttpError, forbidden, notFound, unauthorized } from './errors.js';
 import type { Permission } from '../../shared/permissions.js';
 import { ALL_PERMISSIONS } from '../../shared/permissions.js';
 
-export interface User { id: string; email: string; name: string; theme: string }
+export interface User { id: string; email: string; name: string; theme: string; language?: 'en' | 'es' | null }
 
 export interface Company {
   id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string;
@@ -43,7 +43,7 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     const db = await getDb();
     const id = sha256(tok);
     const { rows } = await db.query<User & { last_seen_at: string }>(
-      `select u.id, u.email, u.name, u.theme, s.last_seen_at from rigo.sessions s join rigo.users u on u.id = s.user_id
+      `select u.id, u.email, u.name, u.theme, u.language, s.last_seen_at from rigo.sessions s join rigo.users u on u.id = s.user_id
        where s.id = $1 and s.expires_at > now() and u.deleted_at is null`, [id]);
     if (rows[0]) {
       const { last_seen_at, ...user } = rows[0];

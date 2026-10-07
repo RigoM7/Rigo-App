@@ -56,7 +56,7 @@ export function ApprovalSummary({ s, compact }: { s: any; compact?: boolean }) {
         <dt>Job</dt><dd><span className="num">#{s.jobNumber}</span> {s.serviceName ?? ''}</dd>
         <dt>Customer</dt><dd>{s.customerName ?? '—'}</dd>
         <dt>When</dt><dd className="num">{s.scheduledStart ? fmtDateTime(s.scheduledStart, c.company.timezone) : 'Not scheduled'}</dd>
-        <dt>Driver</dt><dd>{s.assigneeName ?? 'No driver yet'}</dd>
+        <dt>Driver</dt><dd>{s.assigneeName ?? 'Unassigned'}</dd>
         {s.priority && s.priority !== 'normal' ? <><dt>Priority</dt><dd><PriorityPill priority={s.priority} /></dd></> : null}
       </dl>
     );

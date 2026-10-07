@@ -362,10 +362,12 @@ accounts.get('/me', async (c) => c.json(await mePayload(await getDb(), c.get('us
 
 accounts.patch('/me', async (c) => {
   const user = requireUser(c);
-  const input = await body(c, z.object({ name: name.optional(), theme: z.enum(['light', 'dark', 'system']).optional() }));
+  const input = await body(c, z.object({ name: name.optional(), theme: z.enum(['light', 'dark', 'system']).optional(), language: z.enum(['en', 'es']).nullable().optional() }));
   const db = await getDb();
   if (input.name) await db.query(`update rigo.users set name = $1 where id = $2`, [input.name, user.id]);
   if (input.theme) await db.query(`update rigo.users set theme = $1 where id = $2`, [input.theme, user.id]);
+  // null: follow the device's language (D8).
+  if (input.language !== undefined) await db.query(`update rigo.users set language = $1 where id = $2`, [input.language, user.id]);
   return c.json({ ok: true });
 });
 

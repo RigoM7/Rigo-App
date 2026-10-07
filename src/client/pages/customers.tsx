@@ -19,14 +19,14 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
   const c = useCompany();
   const defs = c.company.customFields?.customers ?? [];
   const bc = existing?.billingContact ?? {};
-  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '', taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote ?? '', terms: existing.paymentTermsDays === null || existing.paymentTermsDays === undefined ? '' : String(existing.paymentTermsDays), monthlyStatement: !!existing.monthlyStatement, bcName: bc.name ?? '', bcEmail: bc.email ?? '', bcPhone: bc.phone ?? '' } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '', taxExempt: false, taxExemptNote: '', terms: '', monthlyStatement: false, bcName: '', bcEmail: '', bcPhone: '' });
+  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '', taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote ?? '', terms: existing.paymentTermsDays === null || existing.paymentTermsDays === undefined ? '' : String(existing.paymentTermsDays), monthlyStatement: !!existing.monthlyStatement, language: existing.language ?? 'en', bcName: bc.name ?? '', bcEmail: bc.email ?? '', bcPhone: bc.phone ?? '' } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '', taxExempt: false, taxExemptNote: '', terms: '', monthlyStatement: false, language: 'en', bcName: '', bcEmail: '', bcPhone: '' });
   const [initial] = useState(() => JSON.stringify(v));
   const [dups, setDups] = useState<any[] | null>(null);
   const confirm = useConfirm();
   const billing = c.can('invoices.edit');
   const contact = c.can('customers.contact');
   const s = useSubmit(async (allowDuplicate?: boolean) => {
-    const body: any = { name: v.name, notes: v.notes, custom: v.custom };
+    const body: any = { name: v.name, notes: v.notes, custom: v.custom, language: v.language };
     if (contact) Object.assign(body, { email: v.email, phone: v.phone, billingAddress: v.billingAddress, billingContact: { name: v.bcName, email: v.bcEmail, phone: v.bcPhone } });
     if (billing) Object.assign(body, { taxExempt: v.taxExempt, taxExemptNote: v.taxExempt ? v.taxExemptNote : '', paymentTermsDays: v.terms === '' ? null : Number(v.terms), monthlyStatement: v.monthlyStatement });
     if (existing) {
@@ -65,6 +65,7 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
             <Field label="Email" optionalText id="f-email" error={s.fieldError('email')} hint="Used for invoices and updates.">{(p) => <Input {...p} maxLength={254} type="email" value={v.email} onChange={(e) => set({ email: e.target.value })} />}</Field>
             <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.phone} onChange={(e) => set({ phone: e.target.value })} />}</Field>
           </div>
+          <Field label="Language for messages" id="f-language" hint="Updates, reports, invoices and reminders Rigo prepares for this customer use it.">{(p) => <Select {...p} value={v.language} onChange={(e) => setV({ ...v, language: e.target.value })}><option value="en">English</option><option value="es">Español (Spanish)</option></Select>}</Field>
           <Field label="Billing address" optionalText id="f-billingAddress">{(p) => <Input {...p} maxLength={300} value={v.billingAddress} onChange={(e) => setV({ ...v, billingAddress: e.target.value })} />}</Field>
           <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="label" style={{ marginBottom: 4 }}>Billing contact <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></legend>

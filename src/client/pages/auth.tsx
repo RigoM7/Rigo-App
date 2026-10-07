@@ -9,6 +9,7 @@ import { useDocumentTitle } from '../lib/title';
 import { Button, Field, Input, PasswordInput, ErrorSummary, Banner, Wordmark, LinkButton, LoadingBlock, ErrorState, useToast } from '../components/ui';
 import { PASSWORD_HINT, PASSWORD_MAX } from '../../shared/password';
 import { EMAIL_MAX, suggestEmail } from '../../shared/email';
+import { useT, LanguageSwitch } from '../lib/i18n';
 
 export const NAME_MAX = 80;
 
@@ -23,6 +24,7 @@ function AuthLayout({ title, sub, children, foot }: { title: string; sub?: React
           {children}
         </div>
         {foot ? <div className="auth-foot">{foot}</div> : null}
+        <LanguageSwitch />
       </main>
     </div>
   );
@@ -33,25 +35,28 @@ const withNext = (path: string, next: string | null) => (next ? `${path}?next=${
 /** "Did you mean …@gmail.com?" under an email field. Never blocks. */
 export function EmailSuggestion({ email, onUse }: { email: string; onUse: (fixed: string) => void }) {
   const fixed = suggestEmail(email);
+  const t = useT();
   if (!fixed) return null;
+  const [before, after] = t('auth.didYouMean', { email: '\u0000' }).split('\u0000');
   return (
     <div className="email-suggest" role="status">
-      <span>Did you mean <strong className="wrap-anywhere">{fixed}</strong>?</span>
-      <Button size="sm" onClick={() => onUse(fixed)}>Use {fixed.split('@')[1]}</Button>
+      <span>{before}<strong className="wrap-anywhere">{fixed}</strong>{after}</span>
+      <Button size="sm" onClick={() => onUse(fixed)}>{t('auth.use', { domain: fixed.split('@')[1] })}</Button>
     </div>
   );
 }
 
 /** Sign-in errors: a pause names the wait and offers recovery; the last tries before a pause are counted. */
 function SignInProblem({ error }: { error: ApiError }) {
+  const t = useT();
   if (error.code === 'rate_limited') {
-    const text = error.message.replace(/,? or reset your password\.?$/, '');
-    return <Banner tone="warning" title="Sign-in is paused">{text}, or <Link to="/forgot">reset your password</Link>.</Banner>;
+    const text = t.phrase(error.message.replace(/,? or reset your password\.?$/, '.')).replace(/\.$/, '');
+    return <Banner tone="warning" title={t('auth.paused')}>{text}, <Link to="/forgot">{t('auth.orReset')}</Link>.</Banner>;
   }
   const left = error.details?.remaining as number | undefined;
   return (
-    <Banner tone="danger" title={error.message}>
-      {left ? <>{left === 1 ? '1 more try' : `${left} more tries`} before a {error.details.pauseMinutes}-minute pause. <Link to="/forgot">Reset your password</Link> if you're not sure.</> : 'Check the email address and password, then try again.'}
+    <Banner tone="danger" title={t.phrase(error.message)}>
+      {left ? <>{t.plural('auth.triesLeft', left, { m: error.details.pauseMinutes })} <Link to="/forgot">{t('auth.resetIfUnsure')}</Link></> : t('auth.checkAndRetry')}
     </Banner>
   );
 }
@@ -66,19 +71,20 @@ export function SignIn() {
   const s = useSubmit(async () => { await post('/auth/signin', { email, password }); await refreshMe(qc); nav(safeNext(next), { replace: true }); });
   const onSubmit = (e: FormEvent) => { e.preventDefault(); s.run(); };
   const fieldErrors = s.error && Object.keys(s.error.fields).length ? s.error : null;
+  const t = useT();
   return (
-    <AuthLayout title="Sign in">
+    <AuthLayout title={t('auth.signIn')}>
       <form onSubmit={onSubmit} className="stack" noValidate>
         <ErrorSummary error={fieldErrors} />
         {s.error && !fieldErrors ? <SignInProblem error={s.error} /> : null}
-        <Field label="Email" id="f-email" error={s.fieldError('email')}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
-        <Field label="Password" id="f-password" error={s.fieldError('password')}>{(p) => <PasswordInput {...p} autoComplete="current-password" maxLength={PASSWORD_MAX} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
-        <Button type="submit" variant="primary" busy={s.busy} block size="lg">Sign in</Button>
-        <Link to="/forgot" className="small link-target">Forgot your password?</Link>
+        <Field label={t('auth.email')} id="f-email" error={t.phrase(s.fieldError('email'))}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
+        <Field label={t('auth.password')} id="f-password" error={t.phrase(s.fieldError('password'))}>{(p) => <PasswordInput {...p} autoComplete="current-password" maxLength={PASSWORD_MAX} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
+        <Button type="submit" variant="primary" busy={s.busy} block size="lg">{t('auth.signIn')}</Button>
+        <Link to="/forgot" className="small link-target">{t('auth.forgot')}</Link>
       </form>
       <div className="auth-alt">
-        <p className="small muted">New to Rigo?</p>
-        <LinkButton to={withNext('/signup', next)} block size="lg">Create a free account</LinkButton>
+        <p className="small muted">{t('auth.newToRigo')}</p>
+        <LinkButton to={withNext('/signup', next)} block size="lg">{t('auth.createFree')}</LinkButton>
       </div>
     </AuthLayout>
   );
@@ -87,11 +93,13 @@ export function SignIn() {
 function LegalNote() {
   const q = useQuery({ queryKey: ['legal'], queryFn: () => get<{ termsUrl: string | null; privacyUrl: string | null }>('/auth/legal'), staleTime: Infinity });
   const { termsUrl, privacyUrl } = q.data ?? {};
+  const t = useT();
   if (!termsUrl && !privacyUrl) return null;
+  const parts = t('auth.agree', { terms: '\u0000', privacy: '\u0001' }).split(/[\u0000\u0001]/);
   return (
     <p className="small muted" style={{ margin: 0 }}>
-      By creating an account you agree to the {termsUrl ? <a href={termsUrl} target="_blank" rel="noreferrer">Terms</a> : 'Terms'}
-      {' and '}{privacyUrl ? <a href={privacyUrl} target="_blank" rel="noreferrer">Privacy Policy</a> : 'Privacy Policy'}.
+      {parts[0]}{termsUrl ? <a href={termsUrl} target="_blank" rel="noreferrer">{t('auth.terms')}</a> : t('auth.terms')}
+      {parts[1]}{privacyUrl ? <a href={privacyUrl} target="_blank" rel="noreferrer">{t('auth.privacy')}</a> : t('auth.privacy')}{parts[2]}
     </p>
   );
 }
@@ -110,19 +118,20 @@ export function SignUp() {
   const invitedEmail: string | null = invite.data?.email ?? null;
   useEffect(() => { if (invitedEmail) setV((x) => ({ ...x, email: invitedEmail })); }, [invitedEmail]);
   const s = useSubmit(async () => { await post('/auth/signup', v); await refreshMe(qc); nav(safeNext(next), { replace: true }); });
+  const t = useT();
   return (
-    <AuthLayout title="Create your account" sub="It's free. Next you can try a sample company, set up your own, or join the one that invited you."
-      foot={<>Already have an account? <Link to={withNext('/signin', next)}>Sign in</Link></>}>
+    <AuthLayout title={t('auth.createTitle')} sub={t('auth.createSub')}
+      foot={<>{t('auth.haveAccount')} <Link to={withNext('/signin', next)}>{t('auth.signIn')}</Link></>}>
       <form onSubmit={(e) => { e.preventDefault(); s.run(); }} className="stack" noValidate>
         <ErrorSummary error={s.error} />
-        <Field label="Your name" id="f-name" error={s.fieldError('name')}>{(p) => <Input {...p} autoComplete="name" maxLength={NAME_MAX} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
+        <Field label={t('auth.yourName')} id="f-name" error={t.phrase(s.fieldError('name'))}>{(p) => <Input {...p} autoComplete="name" maxLength={NAME_MAX} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />}</Field>
         <div className="stack-sm">
-          <Field label="Email" id="f-email" error={s.fieldError('email')} hint={invitedEmail ? `From your invitation to ${invite.data.companyName}.` : 'If a company invited you, use the address the invitation went to.'}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={v.email} readOnly={!!invitedEmail} onBlur={() => setEmailTouched(true)} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+          <Field label={t('auth.email')} id="f-email" error={t.phrase(s.fieldError('email'))} hint={invitedEmail ? t('auth.fromInvite', { company: invite.data.companyName }) : t('auth.inviteHint')}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={v.email} readOnly={!!invitedEmail} onBlur={() => setEmailTouched(true)} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
           {emailTouched && !invitedEmail ? <EmailSuggestion email={v.email} onUse={(fixed) => setV({ ...v, email: fixed })} /> : null}
         </div>
-        <Field label="Password" id="f-password" error={s.fieldError('password')} hint={PASSWORD_HINT}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />}</Field>
+        <Field label={t('auth.password')} id="f-password" error={t.phrase(s.fieldError('password'))} hint={t.lang === 'en' ? PASSWORD_HINT : t('auth.passwordHint')}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />}</Field>
         <LegalNote />
-        <Button type="submit" variant="primary" busy={s.busy} block size="lg">Create account</Button>
+        <Button type="submit" variant="primary" busy={s.busy} block size="lg">{t('auth.createAccount')}</Button>
       </form>
     </AuthLayout>
   );
@@ -132,13 +141,15 @@ interface Recovery { methods: ('email' | 'mailbox' | 'owner_link')[]; supportEma
 
 /** Recovery through an owner of the person's company, for when email can't help. */
 function OwnerHelp({ supportEmail, heading }: { supportEmail: string | null; heading?: string }) {
+  const t = useT();
+  const [pre, post] = t('auth.onlyOwner', { email: '\u0000' }).split('\u0000');
   return (
     <div className="recovery-help">
       <span className="empty-icon" aria-hidden><Users /></span>
       <div className="stack-sm">
         {heading ? <h2 className="h3">{heading}</h2> : null}
-        <p style={{ margin: 0 }}>Ask an owner of your company to create a reset link for you from Team. It works once and expires in 24 hours.</p>
-        {supportEmail ? <p style={{ margin: 0 }}>If you're the only owner, email <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p> : null}
+        <p style={{ margin: 0 }}>{t('auth.ownerHelp')}</p>
+        {supportEmail ? <p style={{ margin: 0 }}>{pre}<a href={`mailto:${supportEmail}`}>{supportEmail}</a>{post}</p> : null}
       </div>
     </div>
   );
@@ -150,42 +161,44 @@ export function Forgot() {
   const q = useQuery({ queryKey: ['recovery'], queryFn: () => get<Recovery>('/auth/recovery'), staleTime: 60_000 });
   const s = useSubmit(async () => { const r = await post('/auth/forgot', { email }); setSent(r.channel); });
   const canEmail = q.data && (q.data.methods.includes('email') || q.data.methods.includes('mailbox'));
+  const t = useT();
   return (
-    <AuthLayout title="Reset your password" sub={canEmail && !sent ? "Enter your account's email address and we'll send you a link to choose a new password." : undefined}>
+    <AuthLayout title={t('auth.resetTitle')} sub={canEmail && !sent ? t('auth.resetSub') : undefined}>
       {q.isLoading ? <LoadingBlock rows={2} /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} /> : !canEmail || sent === 'unavailable' ? (
         <>
-          <Banner tone="info" title="Reset emails aren't available yet">Rigo can't send email yet, so there's no reset link to send.</Banner>
+          <Banner tone="info" title={t('auth.noResetEmails')}>{t('auth.noResetEmailsBody')}</Banner>
           <OwnerHelp supportEmail={q.data?.supportEmail ?? null} />
         </>
       ) : sent ? (
         <>
-          <Banner tone="success" title="Check your email">
-            If an account uses {email.trim()}, we sent it a reset link. It works for one hour.
-            {sent === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</> : null}
+          <Banner tone="success" title={t('auth.checkEmail')}>
+            {t('auth.sentIfAccount', { email: email.trim() })}
+            {sent === 'mailbox' ? <> <Link to="/dev/mailbox">{t('auth.testInbox')}</Link></> : null}
           </Banner>
-          <OwnerHelp supportEmail={q.data?.supportEmail ?? null} heading="No email?" />
+          <OwnerHelp supportEmail={q.data?.supportEmail ?? null} heading={t('auth.noEmail')} />
         </>
       ) : (
         <>
           <form onSubmit={(e) => { e.preventDefault(); s.run(); }} className="stack" noValidate>
             <ErrorSummary error={s.error} />
-            <Field label="Email" id="f-email" error={s.fieldError('email')}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
-            <Button type="submit" variant="primary" busy={s.busy} block size="lg">Send reset link</Button>
+            <Field label={t('auth.email')} id="f-email" error={t.phrase(s.fieldError('email'))}>{(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
+            <Button type="submit" variant="primary" busy={s.busy} block size="lg">{t('auth.sendReset')}</Button>
           </form>
-          <OwnerHelp supportEmail={q.data?.supportEmail ?? null} heading="Can't get to your email?" />
+          <OwnerHelp supportEmail={q.data?.supportEmail ?? null} heading={t('auth.cantGetEmail')} />
         </>
       )}
-      <Link to="/signin" className="small link-target">Back to sign in</Link>
+      <Link to="/signin" className="small link-target">{t('auth.backToSignIn')}</Link>
     </AuthLayout>
   );
 }
 
-const LINK_TITLE = { used: 'This link was already used.', expired: 'This link has expired.', invalid: "This link doesn't work." } as const;
+const LINK_TITLE = { used: 'auth.link.used', expired: 'auth.link.expired', invalid: 'auth.link.invalid' } as const;
 
 function ExpiredLink({ what, again, reason }: { what: string; again: { to: string; label: string }; reason?: keyof typeof LINK_TITLE }) {
+  const t = useT();
   return (
     <>
-      <Banner tone="warning" title={reason ? LINK_TITLE[reason] : 'This link has expired or was already used'}>{what}</Banner>
+      <Banner tone="warning" title={reason ? t(LINK_TITLE[reason]) : t('auth.link.either')}>{what}</Banner>
       <LinkButton variant="primary" block size="lg" to={again.to}>{again.label}</LinkButton>
     </>
   );
@@ -198,6 +211,7 @@ export function Reset() {
   const toast = useToast();
   const [password, setPassword] = useState('');
   const [usedUp, setUsedUp] = useState(false);
+  const t = useT();
   const check = useQuery({ queryKey: ['reset-link', token], queryFn: () => get<{ valid: boolean; reason?: 'used' | 'expired' | 'invalid' }>(`/auth/reset/${encodeURIComponent(token)}`), staleTime: Infinity, retry: false });
   const s = useSubmit(async () => {
     try { await post('/auth/reset', { token, password }); } catch (e) {
@@ -205,22 +219,22 @@ export function Reset() {
       throw e;
     }
     await refreshMe(qc);
-    toast("Password changed. You're signed in.");
+    toast(t('auth.passwordChanged'));
     nav('/workspaces', { replace: true });
   });
   const invalid = usedUp || check.data?.valid === false;
   return (
-    <AuthLayout title={invalid ? 'Link not valid' : 'Choose a new password'} sub={!invalid && check.data ? "You'll be signed in here. Other devices will need to sign in again." : undefined}>
+    <AuthLayout title={invalid ? t('auth.linkNotValid') : t('auth.chooseNew')} sub={!invalid && check.data ? t('auth.signedInHere') : undefined}>
       {check.isLoading ? <LoadingBlock rows={2} /> : check.error ? <ErrorState error={check.error} retry={() => check.refetch()} /> : invalid ? (
-        <ExpiredLink reason={usedUp ? 'used' : check.data?.reason} what={check.data?.reason === 'invalid' && !usedUp ? 'Check that you copied the whole link. Reset links work once, and only for a limited time.' : 'Reset links work once, and only for a limited time.'} again={{ to: '/forgot', label: 'Send a new link' }} />
+        <ExpiredLink reason={usedUp ? 'used' : check.data?.reason} what={check.data?.reason === 'invalid' && !usedUp ? t('auth.copyWhole') : t('auth.resetOnce')} again={{ to: '/forgot', label: t('auth.sendNewLink') }} />
       ) : (
         <form onSubmit={(e) => { e.preventDefault(); s.run(); }} className="stack" noValidate>
           <ErrorSummary error={s.error} />
-          <Field label="New password" id="f-password" error={s.fieldError('password')} hint={PASSWORD_HINT}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
-          <Button type="submit" variant="primary" busy={s.busy} block size="lg" icon={<KeyRound aria-hidden />}>Save password and sign in</Button>
+          <Field label={t('auth.newPassword')} id="f-password" error={t.phrase(s.fieldError('password'))} hint={t.lang === 'en' ? PASSWORD_HINT : t('auth.passwordHint')}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
+          <Button type="submit" variant="primary" busy={s.busy} block size="lg" icon={<KeyRound aria-hidden />}>{t('auth.savePassword')}</Button>
         </form>
       )}
-      <Link to="/signin" className="small link-target">Back to sign in</Link>
+      <Link to="/signin" className="small link-target">{t('auth.backToSignIn')}</Link>
     </AuthLayout>
   );
 }
@@ -232,6 +246,7 @@ export function ConfirmEmail() {
   const me = useMe();
   const [done, setDone] = useState<null | 'verify' | 'change'>(null);
   const [usedUp, setUsedUp] = useState(false);
+  const t = useT();
   const check = useQuery({ queryKey: ['email-link', token], queryFn: () => get<{ valid: boolean; purpose?: 'verify' | 'change' }>(`/auth/email-token/${encodeURIComponent(token)}`), staleTime: Infinity, retry: false });
   const s = useSubmit(async () => {
     try { const r = await post(`/auth/email-token/${encodeURIComponent(token)}`); setDone(r.purpose); } catch (e) {
@@ -243,23 +258,23 @@ export function ConfirmEmail() {
   const signedIn = !!me.data?.user;
   const change = check.data?.purpose === 'change';
   const invalid = usedUp || check.data?.valid === false;
-  const title = done ? (done === 'change' ? 'Email address changed' : 'Email confirmed') : invalid ? 'Link not valid' : change ? 'Use your new email address' : 'Confirm your email';
+  const title = done ? (done === 'change' ? t('auth.emailChanged') : t('auth.emailConfirmed')) : invalid ? t('auth.linkNotValid') : change ? t('auth.useNewEmail') : t('auth.confirmEmail');
   return (
     <AuthLayout title={title}>
       {check.isLoading ? <LoadingBlock rows={2} /> : check.error ? <ErrorState error={check.error} retry={() => check.refetch()} /> : done ? (
         <>
-          <Banner tone="success" title={done === 'change' ? 'Your account now uses this email address.' : 'Thanks, your email address is confirmed.'}>
-            {done === 'change' ? 'Sign in with it from now on. Other devices were signed out.' : 'You can now recover your account by email if you forget your password.'}
+          <Banner tone="success" title={done === 'change' ? t('auth.nowUses') : t('auth.thanksConfirmed')}>
+            {done === 'change' ? t('auth.signInWithIt') : t('auth.canRecover')}
           </Banner>
-          <LinkButton variant="primary" block size="lg" to={signedIn ? '/workspaces' : '/signin'}>{signedIn ? 'Go to my workspaces' : 'Sign in'}</LinkButton>
+          <LinkButton variant="primary" block size="lg" to={signedIn ? '/workspaces' : '/signin'}>{signedIn ? t('auth.goWorkspaces') : t('auth.signIn')}</LinkButton>
         </>
       ) : invalid ? (
-        <ExpiredLink what="Email links work once, and only for a limited time. You can send a new one from your account." again={{ to: signedIn ? '/account' : '/signin?next=/account', label: 'Send a new link' }} />
+        <ExpiredLink what={t('auth.emailLinksOnce')} again={{ to: signedIn ? '/account' : '/signin?next=/account', label: t('auth.sendNewLink') }} />
       ) : (
         <div className="stack">
-          <p style={{ margin: 0 }}>{change ? 'Your account will switch to the address this link was sent to. Sign in with it from now on.' : 'Confirming your email lets you recover your account if you forget your password.'}</p>
+          <p style={{ margin: 0 }}>{change ? t('auth.willSwitch') : t('auth.confirmingLets')}</p>
           <ErrorSummary error={s.error} />
-          <Button variant="primary" block size="lg" busy={s.busy} icon={<MailCheck aria-hidden />} onClick={() => s.run()}>{change ? 'Use this email address' : 'Confirm email'}</Button>
+          <Button variant="primary" block size="lg" busy={s.busy} icon={<MailCheck aria-hidden />} onClick={() => s.run()}>{change ? t('auth.useThisEmail') : t('auth.confirmButton')}</Button>
         </div>
       )}
     </AuthLayout>

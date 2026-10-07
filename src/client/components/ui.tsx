@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff, ChevronLeft, Loader2, CircleDot, Clock, Ban, XCircle, Send, FlaskConical, PauseCircle, Hand, Sparkles, PlayCircle, Siren, ChevronsUp, Hourglass } from 'lucide-react';
 import type { ApiError } from '../lib/api';
 import { useDocumentTitle } from '../lib/title';
+import { useT } from '../lib/i18n';
+import type { MessageKey } from '../../shared/i18n';
 
 // ------------------------------------------------------------ buttons
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' | 'default'; size?: 'sm' | 'lg'; block?: boolean; busy?: boolean; icon?: ReactNode };
@@ -33,12 +35,13 @@ export function IconButton({ label, children, badge, ...rest }: ButtonHTMLAttrib
 // ------------------------------------------------------------ fields
 export function Field({ label, hint, error, children, id, required, optionalText }: { label: ReactNode; hint?: ReactNode; error?: string; children: (p: { id: string; 'aria-invalid'?: boolean; 'aria-describedby'?: string; required?: boolean }) => ReactNode; id?: string; required?: boolean; optionalText?: boolean }) {
   const auto = useId();
+  const t = useT();
   const fid = id ?? `f${auto.replace(/:/g, '')}`;
   const hintId = hint ? `${fid}-hint` : undefined;
   const errId = error ? `${fid}-err` : undefined;
   return (
     <div className="field">
-      <label htmlFor={fid}>{label}{optionalText && !required ? <span className="muted" style={{ fontWeight: 400 }}> (optional)</span> : null}</label>
+      <label htmlFor={fid}>{label}{optionalText && !required ? <span className="muted" style={{ fontWeight: 400 }}> {t('ui.optional')}</span> : null}</label>
       {hint ? <div className="hint" id={hintId}>{hint}</div> : null}
       {children({ id: fid, 'aria-invalid': error ? true : undefined, 'aria-describedby': [hintId, errId].filter(Boolean).join(' ') || undefined, required })}
       {error ? <div className="field-error" id={errId}><AlertCircle aria-hidden />{error}</div> : null}
@@ -54,10 +57,11 @@ export function Textarea(p: TextareaHTMLAttributes<HTMLTextAreaElement>) { retur
 
 export function PasswordInput(p: InputHTMLAttributes<HTMLInputElement>) {
   const [show, setShow] = useState(false);
+  const t = useT();
   return (
     <div className="input-group">
       <input className="input" type={show ? 'text' : 'password'} {...p} />
-      <IconButton label={show ? 'Hide password' : 'Show password'} aria-pressed={show} onClick={() => setShow((s) => !s)}>{show ? <EyeOff aria-hidden /> : <Eye aria-hidden />}</IconButton>
+      <IconButton label={show ? t('ui.hidePassword') : t('ui.showPassword')} aria-pressed={show} onClick={() => setShow((s) => !s)}>{show ? <EyeOff aria-hidden /> : <Eye aria-hidden />}</IconButton>
     </div>
   );
 }
@@ -74,6 +78,7 @@ export function Checkbox({ label, hint, ...p }: InputHTMLAttributes<HTMLInputEle
 /** Linked error summary shown after a failed multi-field submit. Receives focus. */
 export function ErrorSummary({ error, labels = {} }: { error: ApiError | null; labels?: Record<string, string> }) {
   const ref = useRef<HTMLDivElement>(null);
+  const t = useT();
   useEffect(() => { if (error) ref.current?.focus(); }, [error]);
   if (!error) return null;
   const fields = Object.entries(error.fields ?? {});
@@ -82,10 +87,10 @@ export function ErrorSummary({ error, labels = {} }: { error: ApiError | null; l
     <div ref={ref} tabIndex={-1} role="alert" aria-labelledby="err-title" className="banner banner-danger">
       <AlertCircle aria-hidden />
       <div className="stack-sm">
-        <strong id="err-title">{error.message}</strong>
+        <strong id="err-title">{t.phrase(error.message)}</strong>
         {fields.length > 0 && (
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {fields.map(([k, v]) => <li key={k}><a href={`#${labels[k] ?? `f-${k.replace(/\./g, '-')}`}`}>{v}</a></li>)}
+            {fields.map(([k, v]) => <li key={k}><a href={`#${labels[k] ?? `f-${k.replace(/\./g, '-')}`}`}>{t.phrase(v)}</a></li>)}
           </ul>
         )}
         {missing.length > 0 && <ul style={{ margin: 0, paddingLeft: 18 }}>{missing.map((m) => <li key={m}>{m}</li>)}</ul>}
@@ -119,8 +124,9 @@ export function Skeleton({ h = 18, w = '100%' }: { h?: number; w?: number | stri
 
 /** Skeleton shaped like a page: a header line, then a card of rows. */
 export function LoadingBlock({ rows = 4 }: { rows?: number }) {
+  const t = useT();
   return (
-    <div className="skeleton-page" role="status" aria-label="Loading" aria-busy="true">
+    <div className="skeleton-page" role="status" aria-label={t('ui.loading')} aria-busy="true">
       <Skeleton h={30} w="min(280px, 60%)" />
       <div className="skeleton-card">{Array.from({ length: rows }, (_, i) => <Skeleton key={i} h={i === 0 ? 20 : 16} w={i === 0 ? '35%' : `${92 - (i % 4) * 9}%`} />)}</div>
     </div>
@@ -215,15 +221,18 @@ const JOB_TONES: Record<string, [Tone, string]> = {
   partial: ['warning', 'Partial'], unsuccessful: ['danger', 'Unsuccessful'], cancelled: ['neutral', 'Cancelled'],
 };
 export function JobStatus({ status }: { status: string }) {
-  const [tone, label] = JOB_TONES[status] ?? ['neutral', status];
+  const t = useT();
+  const [tone, english] = JOB_TONES[status] ?? ['neutral', status];
+  const label = JOB_TONES[status] ? t(`status.${status}` as MessageKey) : english;
   if (status === 'in_progress') return <span className="pill pill-brand"><LiveDot />{label}</span>;
   return <Pill tone={tone} icon={status === 'cancelled' ? <Ban aria-hidden /> : undefined}>{label}</Pill>;
 }
 
 /** Urgent / Emergency pill (icon and text). Normal priority shows nothing. */
 export function PriorityPill({ priority }: { priority?: string | null }) {
-  if (priority === 'emergency') return <Pill tone="danger" icon={<Siren aria-hidden />}>Emergency</Pill>;
-  if (priority === 'urgent') return <Pill tone="warning" icon={<ChevronsUp aria-hidden />}>Urgent</Pill>;
+  const t = useT();
+  if (priority === 'emergency') return <Pill tone="danger" icon={<Siren aria-hidden />}>{t('priority.emergency')}</Pill>;
+  if (priority === 'urgent') return <Pill tone="warning" icon={<ChevronsUp aria-hidden />}>{t('priority.urgent')}</Pill>;
   return null;
 }
 
@@ -271,6 +280,7 @@ export function MessageStatus({ status }: { status: string }) {
 // ------------------------------------------------------------ dialog
 export function Dialog({ open, onClose, title, children, footer, labelledBy }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; labelledBy?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const t = useT();
   const tid = useId();
   useEffect(() => {
     const d = ref.current;
@@ -281,7 +291,7 @@ export function Dialog({ open, onClose, title, children, footer, labelledBy }: {
   return (
     <dialog ref={ref} className="dialog" aria-labelledby={labelledBy ?? tid} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
       {open && <>
-        <div className="dialog-head"><h2 id={tid}>{title}</h2><IconButton label="Close" onClick={onClose}><X aria-hidden /></IconButton></div>
+        <div className="dialog-head"><h2 id={tid}>{title}</h2><IconButton label={t('ui.close')} onClick={onClose}><X aria-hidden /></IconButton></div>
         <div className="dialog-body">{children}</div>
         {footer ? <div className="dialog-foot">{footer}</div> : null}
       </>}
@@ -316,9 +326,10 @@ export function useConfirm() {
   const [state, setState] = useState<null | { title: string; body: ReactNode; confirm: string; danger?: boolean; resolve: (v: boolean) => void }>(null);
   const ask = useCallback((o: { title: string; body: ReactNode; confirm: string; danger?: boolean }) => new Promise<boolean>((resolve) => setState({ ...o, resolve })), []);
   const close = (v: boolean) => { state?.resolve(v); setState(null); };
+  const t = useT();
   const node = (
     <Dialog open={!!state} onClose={() => close(false)} title={state?.title ?? ''}
-      footer={<><Button onClick={() => close(false)}>Cancel</Button><Button variant={state?.danger ? 'danger' : 'primary'} icon={state?.danger ? <AlertTriangle aria-hidden /> : undefined} onClick={() => close(true)}>{state?.confirm}</Button></>}>
+      footer={<><Button onClick={() => close(false)}>{t('ui.cancel')}</Button><Button variant={state?.danger ? 'danger' : 'primary'} icon={state?.danger ? <AlertTriangle aria-hidden /> : undefined} onClick={() => close(true)}>{state?.confirm}</Button></>}>
       {state?.body}
     </Dialog>
   );

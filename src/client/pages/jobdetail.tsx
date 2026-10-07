@@ -133,7 +133,7 @@ export function JobDetail() {
             <div className="record-meta">
               <span><Contact aria-hidden />{customer?.name ?? 'No customer'}</span>
               <span><CalendarClock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDateTime(job.scheduled_start, c.company.timezone)}${job.scheduled_end ? ` – ${fmtTime(job.scheduled_end, c.company.timezone)}` : ''}` : 'Not scheduled'}</span></span>
-              <span><UserRound aria-hidden />{job.assignee_name ?? 'No driver yet'}{job.status === 'open' && job.en_route_at ? `, on the way since ${fmtTime(job.en_route_at, c.company.timezone)}${job.en_route_eta_minutes ? ` (about ${job.en_route_eta_minutes} min)` : ''}` : ''}</span>
+              <span><UserRound aria-hidden />{job.assignee_name ?? 'Unassigned'}{job.status === 'open' && job.en_route_at ? `, on the way since ${fmtTime(job.en_route_at, c.company.timezone)}${job.en_route_eta_minutes ? ` (about ${job.en_route_eta_minutes} min)` : ''}` : ''}</span>
               {job.billing_status ? <span><Receipt aria-hidden />Billing: {(BILLING_STATUSES as any)[job.billing_status]}</span> : null}
             </div>
           </div>

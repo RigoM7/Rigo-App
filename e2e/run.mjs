@@ -853,6 +853,56 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase3') {
     await p.getByText('Long list 54').waitFor();
     await c.close(); await f.owner.dispose();
   });
+
+  await step('WP16: a driver who chooses Español gets the job screen in Spanish; sign-in has a language switch (R4-M5, D8)', async () => {
+    const f = await fieldCompany('p3-es');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp16-es');
+    await p.goto(`${BASE}/signin`);
+    await p.getByRole('button', { name: 'Español' }).click();
+    await p.getByRole('heading', { name: 'Iniciar sesión' }).waitFor();
+    await p.getByRole('button', { name: 'English' }).click();
+    await p.getByRole('heading', { name: 'Sign in' }).waitFor();
+    await p.goto(`${BASE}/signin?next=${encodeURIComponent('/account')}`);
+    await signInHere(p, f.driver);
+    await p.waitForURL(/\/account/);
+    await p.getByRole('combobox', { name: 'Language' }).selectOption('es');
+    await p.getByText('Idioma guardado').waitFor();
+    await p.goto(`${f.C}/today/${job.id}`);
+    await p.getByRole('button', { name: 'Empezar trabajo' }).waitFor();
+    await p.getByRole('button', { name: 'Voy en camino' }).waitFor();
+    await p.getByRole('link', { name: 'Mis trabajos' }).first().waitFor();
+    if ((await p.evaluate(() => document.documentElement.lang)) !== 'es') throw new Error('page language is not es');
+    await p.getByRole('button', { name: 'Empezar trabajo' }).click();
+    await p.getByRole('heading', { name: 'Anotar el resultado' }).waitFor();
+    await p.getByText('Completado con éxito').waitFor();
+    await p.screenshot({ path: `${OUT}/wp16-driver-es.png`, fullPage: true });
+    await axe(p, 'driver job (es)');
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP16: no page shows machine words (permission or action keys, field keys, raw time zones, validator wording) (R18-m2)', async () => {
+    const f = await fieldCompany('p3-words');
+    const job = await f.mkJob(soon(3));
+    const wf = (await f.o.get('/workflows')).workflows[0];
+    const svc = (await f.o.get('/services')).services[0];
+    const { c, p } = await ownerContext(f); watch(p, 'wp16-words');
+    const MACHINE = [
+      /\b(company|members|roles|customers|jobs|resources|services|invoices|finance|payments|approvals|workflows|automation|messages|imports|templates|reports|assistant)\.[a-z_]+\b/,
+      /\b(invoice|job|message)\.(prepare|issue|send|completed|partial|unsuccessful|assigned|created|started|en_route|problem_reported|approved|issued|prepared|prepare_invoice|prepare_job_update|create_followup)\b/,
+      /\b[a-z]+_[a-z]+(_[a-z]+)*\b/, /\((?:in )?cents\)/i, /Invalid input|expected string|received undefined/, /\b(America|Europe|Asia|Pacific|Africa|Australia)\/[A-Z][A-Za-z_]+/,
+    ];
+    const bad = [];
+    for (const path of ['', '/jobs', '/jobs?view=board', '/inbox', '/invoices?status=all', '/customers', '/team', '/workflows', `/workflows/${wf.id}`, '/automation', '/recurring', '/messages', '/services', `/services/${svc.id}`, '/settings', '/templates', '/imports', '/assistant', '/collections', '/resources', `/jobs/${job.id}`, '/jobs/new']) {
+      await p.goto(`${f.C}${path}`);
+      await p.locator('main h1, main [role=status]').first().waitFor({ timeout: 15000 });
+      await p.waitForTimeout(400);
+      const text = await p.locator('body').innerText();
+      for (const re of MACHINE) { const m = re.exec(text); if (m) bad.push(`${path || '/'}: "${m[0]}"`); }
+    }
+    if (bad.length) throw new Error(bad.slice(0, 8).join('; '));
+    await c.close(); await f.owner.dispose();
+  });
 }
 if (process.env.E2E_ONLY === 'phase3') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');

@@ -1053,3 +1053,9 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 .activity-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .activity-list li { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
 @media (max-width: 600px) { .activity-list li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Language choice on signed-out pages (D8). */
+.lang-switch { display: flex; justify-content: center; gap: 4px; margin-top: 16px; }
+.link-button { background: none; border: 0; padding: 6px 10px; min-height: 32px; border-radius: var(--radius-sm, 6px); color: var(--text-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.link-button[aria-pressed="true"] { color: var(--text); font-weight: 600; text-decoration: none; }
+.link-button:focus-visible { outline: 2px solid var(--focus, var(--brand)); outline-offset: 2px; }

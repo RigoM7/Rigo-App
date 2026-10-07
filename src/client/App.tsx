@@ -22,6 +22,7 @@ const Account = lazy(() => import('./pages/account').then((m) => ({ default: m.A
 const DevMailbox = lazy(() => import('./pages/devmailbox').then((m) => ({ default: m.DevMailbox })));
 import { ApiError } from './lib/api';
 import { PERMISSIONS, type Permission } from '../shared/permissions';
+import { PersonLanguage } from './lib/i18n';
 
 const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
@@ -160,11 +161,13 @@ function CompanyRoot() {
   return (
     // key={cid} remounts everything when switching companies so no state carries across.
     <CompanyProvider key={cid} cid={cid} boot={boot.data!}>
-      <AppShell>
-        <Suspense fallback={<LoadingBlock />}>
-          {boot.data!.offlineSince ? <OfflineRoutes /> : <CompanyRoutes />}
-        </Suspense>
-      </AppShell>
+      <DriverLanguage>
+        <AppShell>
+          <Suspense fallback={<LoadingBlock />}>
+            {boot.data!.offlineSince ? <OfflineRoutes /> : <CompanyRoutes />}
+          </Suspense>
+        </AppShell>
+      </DriverLanguage>
     </CompanyProvider>
   );
 }
@@ -222,8 +225,8 @@ function OfflineRoutes() {
   return (
     <Routes>
       <Route index element={<OfflineHome />} />
-      <Route path="today" element={<Today />} />
-      <Route path="today/:jobId" element={<DriverJob />} />
+      <Route path="today" element={<PersonLanguage><Today /></PersonLanguage>} />
+      <Route path="today/:jobId" element={<PersonLanguage><DriverJob /></PersonLanguage>} />
       <Route path="*" element={<NeedsConnection />} />
     </Routes>
   );
@@ -264,6 +267,12 @@ function NotFound() {
       <div className="card"><Empty icon={<SearchX />} title="This page does not exist" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>The link may be old, or the page moved. Use the menu or press <kbd>Ctrl</kbd> <kbd>K</kbd> to search.</Empty></div>
     </div>
   );
+}
+
+/** Someone whose role is driving sees the menus in their language too; office roles stay English (D8). */
+function DriverLanguage({ children }: { children: ReactNode }) {
+  const c = useCompany();
+  return <PersonLanguage enabled={c.can('jobs.work') && !c.can('jobs.view_all')}>{children}</PersonLanguage>;
 }
 
 /** A driver opening an office link to their own job lands on the driver screen (R17-m4). */
@@ -313,8 +322,8 @@ function CompanyRoutes() {
   return (
     <Routes>
       <Route index element={<RoleHome />} />
-      <Route path="today" element={<Need any={['jobs.work']}><Today /></Need>} />
-      <Route path="today/:jobId" element={<Need any={['jobs.work']}><DriverJob /></Need>} />
+      <Route path="today" element={<Need any={['jobs.work']}><PersonLanguage><Today /></PersonLanguage></Need>} />
+      <Route path="today/:jobId" element={<Need any={['jobs.work']}><PersonLanguage><DriverJob /></PersonLanguage></Need>} />
       <Route path="jobs" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><Jobs /></Need>} />
       <Route path="jobs/new" element={<Need any={['jobs.create']}><JobForm /></Need>} />
       <Route path="jobs/records" element={<Need any={['jobs.assign']}><DriverRecords /></Need>} />
@@ -363,13 +372,13 @@ function AppRoutes() {
       <Suspense fallback={<BootScreen />}>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/signin" element={<SignedOutOnly><SignIn /></SignedOutOnly>} />
-        <Route path="/signup" element={<SignedOutOnly><SignUp /></SignedOutOnly>} />
-        <Route path="/forgot" element={<Forgot />} />
-        <Route path="/reset/:token" element={<Reset />} />
-        <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
+        <Route path="/signin" element={<SignedOutOnly><PersonLanguage><SignIn /></PersonLanguage></SignedOutOnly>} />
+        <Route path="/signup" element={<SignedOutOnly><PersonLanguage><SignUp /></PersonLanguage></SignedOutOnly>} />
+        <Route path="/forgot" element={<PersonLanguage><Forgot /></PersonLanguage>} />
+        <Route path="/reset/:token" element={<PersonLanguage><Reset /></PersonLanguage>} />
+        <Route path="/confirm-email/:token" element={<PersonLanguage><ConfirmEmail /></PersonLanguage>} />
         <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
-        <Route path="/invite/:token" element={<InvitePage />} />
+        <Route path="/invite/:token" element={<PersonLanguage><InvitePage /></PersonLanguage>} />
         <Route path="/i/:token" element={<PublicInvoice />} />
         <Route path="/dev/mailbox" element={<DevMailbox />} />
         <Route path="/open" element={<RequireUser><OpenApp /></RequireUser>} />

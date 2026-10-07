@@ -16,6 +16,7 @@ import { DemoGuide, ResumeGuideButton } from '../pages/demo';
 import type { Permission } from '../../shared/permissions';
 import { accentVariants } from '../../shared/branding';
 import { useDocumentTitle } from '../lib/title';
+import { useT } from '../lib/i18n';
 
 export interface NavItem { key: string; label: string; to: string; icon: ReactNode; perm?: Permission | Permission[]; count?: number; section: string }
 
@@ -25,19 +26,20 @@ const SECTIONS = ['Operations', 'Customers', 'Money', 'Fleet', 'Automation & ass
 
 export function useNavItems(): NavItem[] {
   const c = useCompany();
+  const t = useT();
   const items: NavItem[] = [
     { key: 'home', label: 'Home', to: '', icon: <Home aria-hidden />, perm: ['jobs.view_all', 'reports.view'], section: 'Operations' },
-    { key: 'today', label: 'My jobs', to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work', section: 'Operations' },
-    { key: 'inbox', label: 'Inbox', to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined, section: 'Operations' },
+    { key: 'today', label: t('nav.today'), to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work', section: 'Operations' },
+    { key: 'inbox', label: t('nav.inbox'), to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined, section: 'Operations' },
     { key: 'jobs', label: 'Jobs', to: 'jobs', icon: <ClipboardList aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
-    { key: 'recurring', label: 'Recurring & rentals', to: 'recurring', icon: <Repeat aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
+    { key: 'recurring', label: 'Recurring service & rentals', to: 'recurring', icon: <Repeat aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
     { key: 'customers', label: 'Customers', to: 'customers', icon: <Contact aria-hidden />, perm: 'customers.view', section: 'Customers' },
     { key: 'team', label: 'Team', to: 'team', icon: <UsersRound aria-hidden />, perm: 'members.view', section: 'Setup' },
-    { key: 'resources', label: 'Trucks & equipment', to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
+    { key: 'resources', label: t('nav.resources'), to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
     { key: 'invoices', label: 'Invoices', to: 'invoices', icon: <Receipt aria-hidden />, perm: 'invoices.view', section: 'Money' },
     { key: 'collections', label: 'Collections', to: 'collections', icon: <Wallet aria-hidden />, perm: 'finance.view', section: 'Money' },
     { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Customers' },
-    { key: 'assistant', label: 'Assistant', to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Automation & assistant' },
+    { key: 'assistant', label: t('nav.assistant'), to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Automation & assistant' },
     { key: 'automation', label: 'Automation', to: 'automation', icon: <Zap aria-hidden />, perm: ['workflows.view', 'automation.control'], section: 'Automation & assistant' },
     { key: 'workflows', label: 'Workflows', to: 'workflows', icon: <Workflow aria-hidden />, perm: 'workflows.view', section: 'Automation & assistant' },
     { key: 'services', label: 'Services & pricing', to: 'services', icon: <Wrench aria-hidden />, perm: ['services.manage', 'jobs.create'], section: 'Setup' },
@@ -120,6 +122,7 @@ function AccountMenu() {
   const nav = useNavigate();
   const me = useMe();
   const [pref, setPref] = useState<ThemePref>(readThemePref());
+  const tr = useT();
   useClickOutside(ref, () => setOpen(false), open);
   const setTheme = async (t: ThemePref) => { setPref(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); qc.invalidateQueries({ queryKey: ['me'] }); };
   const signOut = async () => {
@@ -148,8 +151,8 @@ function AccountMenu() {
             ))}
           </div>
           <hr />
-          <Link to="/account" onClick={() => setOpen(false)}><UserCircle2 aria-hidden />Account</Link>
-          <button className="menu-item" onClick={signOut}><LogOut aria-hidden />Sign out</button>
+          <Link to="/account" onClick={() => setOpen(false)}><UserCircle2 aria-hidden />{tr('nav.account')}</Link>
+          <button className="menu-item" onClick={signOut}><LogOut aria-hidden />{tr('nav.signOut')}</button>
         </div>
       )}
     </div>
@@ -402,6 +405,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
 
 export function AppShell({ children }: { children: ReactNode }) {
   const c = useCompany();
+  const t = useT();
   useAutoSync(c.me.actingUserId, c.cid, c.can('jobs.work'));
   const items = useNavItems();
   const online = useOnline();
@@ -471,7 +475,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {i.icon}<span>{i.label}</span>{i.count ? <span className="nav-dot" aria-label={`${i.count} need action`}>{i.count}</span> : null}
           </NavLink>
         ))}
-        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')} aria-current={isActive('more') ? 'page' : undefined}><MoreHorizontal aria-hidden /><span>More</span></NavLink>}
+        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')} aria-current={isActive('more') ? 'page' : undefined}><MoreHorizontal aria-hidden /><span>{t('nav.more')}</span></NavLink>}
       </nav>
       <CommandMenu open={cmdk} onClose={() => setCmdk(false)} />
     </div>
@@ -480,13 +484,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 export function MorePage() {
   const c = useCompany();
-  useDocumentTitle('More');
+  const t = useT();
+  useDocumentTitle(t('nav.more'));
   const items = useNavItems();
   const bottom = bottomItems(items);
   const more = items.filter((i) => !bottom.includes(i));
   return (
     <div className="page page-narrow">
-      <h1>More</h1>
+      <h1>{t('nav.more')}</h1>
       {SECTIONS.map((s) => {
         const group = more.filter((i) => i.section === s);
         if (!group.length) return null;

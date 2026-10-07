@@ -8,6 +8,7 @@ import { Button, Banner, LoadingBlock, ErrorSummary, LinkButton, Wordmark } from
 import { fmtDate } from '../lib/format';
 import { refreshMe, signOutAndForget } from '../lib/session';
 import { useDocumentTitle } from '../lib/title';
+import { useT, LanguageSwitch } from '../lib/i18n';
 
 const GO_KEY = 'rigo-invite-accept';
 
@@ -19,7 +20,8 @@ export function InvitePage() {
   const accept = useSubmit(async () => { const r = await post(`/invitations/${token}/accept`); await refreshMe(qc); nav(`/c/${r.companyId}`); });
   const signOut = async () => { await signOutAndForget(qc); nav(`/signin?next=/invite/${token}`); };
   const d = q.data;
-  useDocumentTitle(d?.companyName ? `Join ${d.companyName}` : 'Invitation');
+  const t = useT();
+  useDocumentTitle(d?.companyName ? t('invite.title', { company: d.companyName }) : t('invite.docTitle'));
   // Straight after signing up or in from this page, the invitation is accepted without another click
   // (R4-m6). The mark is set by those buttons in this tab, never by the link itself, so a crafted
   // link can't make someone join a company on page load (security review).
@@ -37,38 +39,39 @@ export function InvitePage() {
         <Wordmark to="/" />
         <div className="auth-panel stack">
           {q.isLoading ? <LoadingBlock /> : !d || d.state === 'invalid' ? (
-            <Banner tone="danger" title="This invitation link is not valid">Check that you copied the whole link, or ask the company to send a new invitation.</Banner>
+            <Banner tone="danger" title={t('invite.notValid')}>{t('invite.notValidBody')}</Banner>
           ) : (
             <>
               <span className="empty-icon" aria-hidden><MailOpen /></span>
-              <h1>Join {d.companyName}</h1>
-              <p style={{ margin: 0 }}>You are invited as <strong>{d.roleName}</strong>. The invitation is for <strong>{d.emailHint}</strong>{d.state === 'pending' ? ` and expires ${fmtDate(d.expiresAt)}` : ''}.</p>
-              {d.state === 'expired' && <Banner tone="warning" title="This invitation has expired">Ask the company to send a new one.</Banner>}
-              {d.state === 'revoked' && <Banner tone="warning" title="This invitation was cancelled">Ask the company if you should still join.</Banner>}
-              {d.state === 'replaced' && <Banner tone="warning" title="A newer invitation was sent">Use the most recent link you received.</Banner>}
-              {d.state === 'accepted' && (d.companyId ? <LinkButton variant="primary" to={`/c/${d.companyId}`}>Open {d.companyName}</LinkButton> : <Banner tone="info">This invitation has already been used.</Banner>)}
+              <h1>{t('invite.title', { company: d.companyName })}</h1>
+              <p style={{ margin: 0 }}>{d.state === 'pending' ? t('invite.asRoleExpires', { role: d.roleName, email: d.emailHint, date: fmtDate(d.expiresAt, undefined, t.locale) }) : t('invite.asRole', { role: d.roleName, email: d.emailHint })}</p>
+              {d.state === 'expired' && <Banner tone="warning" title={t('invite.expired')}>{t('invite.expiredBody')}</Banner>}
+              {d.state === 'revoked' && <Banner tone="warning" title={t('invite.revoked')}>{t('invite.revokedBody')}</Banner>}
+              {d.state === 'replaced' && <Banner tone="warning" title={t('invite.replaced')}>{t('invite.replacedBody')}</Banner>}
+              {d.state === 'accepted' && (d.companyId ? <LinkButton variant="primary" to={`/c/${d.companyId}`}>{t('invite.open', { company: d.companyName })}</LinkButton> : <Banner tone="info">{t('invite.used')}</Banner>)}
               {d.state === 'pending' && !d.signedIn && (
                 <div className="stack-sm">
-                  <p className="muted">Sign in or create an account with the invited email address. You don't need to create a company or try the demo first.</p>
-                  <LinkButton variant="primary" onClick={markGo} to={`/signup?next=${encodeURIComponent(`/invite/${token}`)}`}>Create an account</LinkButton>
-                  <LinkButton onClick={markGo} to={`/signin?next=${encodeURIComponent(`/invite/${token}`)}`}>I already have an account</LinkButton>
+                  <p className="muted">{t('invite.signInOrCreate')}</p>
+                  <LinkButton variant="primary" onClick={markGo} to={`/signup?next=${encodeURIComponent(`/invite/${token}`)}`}>{t('invite.create')}</LinkButton>
+                  <LinkButton onClick={markGo} to={`/signin?next=${encodeURIComponent(`/invite/${token}`)}`}>{t('invite.haveAccount')}</LinkButton>
                 </div>
               )}
               {d.state === 'pending' && d.signedIn && d.emailMatches === false && (
                 <div className="stack-sm">
-                  <Banner tone="warning" title="You're signed in with a different email">This invitation is for {d.emailHint}. Sign out, then sign in or create an account with that address.</Banner>
-                  <Button variant="primary" onClick={signOut}>Sign out and switch account</Button>
+                  <Banner tone="warning" title={t('invite.otherEmail')}>{t('invite.otherEmailBody', { email: d.emailHint })}</Banner>
+                  <Button variant="primary" onClick={signOut}>{t('invite.switch')}</Button>
                 </div>
               )}
               {d.state === 'pending' && d.signedIn && d.emailMatches && (
                 <div className="stack-sm">
                   <ErrorSummary error={accept.error} />
-                  <Button variant="primary" size="lg" busy={accept.busy} onClick={() => accept.run()}>Accept invitation</Button>
+                  <Button variant="primary" size="lg" busy={accept.busy} onClick={() => accept.run()}>{t('invite.accept')}</Button>
                 </div>
               )}
             </>
           )}
         </div>
+        <LanguageSwitch />
       </main>
     </div>
   );

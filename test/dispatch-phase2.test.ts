@@ -100,7 +100,7 @@ describe('drivers are told what changed (R11-M2, R6-M1)', () => {
     const t = await triCounty();
     const j = await fuelJob(t, { priority: 'emergency', driver: null });
     expect(await bell(t.marcus, t.cid)).toContain(`Emergency job #${j.number}`);
-    expect(await bell(t.dana, t.cid)).toContain('No driver yet. Assign one now.');
+    expect(await bell(t.dana, t.cid)).toContain('Unassigned. Assign a driver now.');
     await t.marcus.post(`/c/${t.cid}/jobs/${j.id}/assign`, { userId: t.ids.luis, resourceIds: [], version: j.version });
     expect(await bell(t.luis, t.cid)).toContain(`Emergency: job #${j.number}, Grace Okafor, 812 Willow Ln, Fairview`);
     expect((await t.dana.get(`/c/${t.cid}/overview`)).body.attention.some((x: any) => x.key === 'emergency')).toBe(true);

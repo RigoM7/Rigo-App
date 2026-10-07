@@ -33,7 +33,7 @@ function serializeCustomer(cc: CompanyCtx, r: any) {
     priceOverrides: can(cc, 'finance.view') ? (r.price_overrides ?? {}) : undefined,
     // A separate billing / accounts-payable contact (R5-m3); contact details only with customers.contact.
     billingContact: contact ? (r.billing_contact ?? {}) : (r.billing_contact?.name ? { name: r.billing_contact.name } : {}),
-    archivedAt: r.archived_at ?? null, mergedInto: r.merged_into ?? null,
+    archivedAt: r.archived_at ?? null, mergedInto: r.merged_into ?? null, language: r.language ?? 'en',
     firstAddress: r.first_address ?? undefined, town: r.first_address ? townOf(r.first_address) : undefined };
 }
 
@@ -153,6 +153,8 @@ const customerInput = z.object({
   billingContact: z.object({ name: z.string().trim().max(120).default(''), email: z.string().trim().max(254).email('Enter a valid email').or(z.literal('')).default(''), phone: z.string().trim().max(40).default('') }).optional(),
   /** Create it even though it looks like an existing customer (the person chose "Create anyway"). */
   allowDuplicate: z.boolean().optional(),
+  /** The language of the messages Rigo prepares for this customer (D8). */
+  language: z.enum(['en', 'es']).optional(),
 });
 
 /** Existing customers that look like this one, with the reasons (R5-M1). */
@@ -199,8 +201,8 @@ recordRoutes.post('/customers', async (c) => {
       if (dups.length) throw conflict(`This looks like ${dups.length === 1 ? 'a customer you already have' : `${dups.length} customers you already have`}.`, { needsConfirm: 'duplicate', candidates: dups });
     }
     const overrides = input.priceOverrides ? await cleanOverrides(q, cc, input.priceOverrides) : {};
-    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides, payment_terms_days, monthly_statement, billing_contact) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id`,
-      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides), input.paymentTermsDays ?? null, !!input.monthlyStatement, JSON.stringify(can(cc, 'customers.contact') ? input.billingContact ?? {} : {})]);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides, payment_terms_days, monthly_statement, billing_contact, language) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
+      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides), input.paymentTermsDays ?? null, !!input.monthlyStatement, JSON.stringify(can(cc, 'customers.contact') ? input.billingContact ?? {} : {}), input.language ?? 'en']);
     if (input.location) {
       // The first location is named after its street, not "Location" (R5-m5).
       await q.query(`insert into rigo.locations (company_id, customer_id, label, address, access_instructions, site_contact, site_contact_phone) values ($1,$2,$3,$4,$5,$6,$7)`,
@@ -228,10 +230,11 @@ recordRoutes.patch('/customers/:id', async (c) => {
         notes = coalesce($7, notes), custom = coalesce($8::jsonb, custom), tax_exempt = coalesce($11, tax_exempt), tax_exempt_note = coalesce($12, tax_exempt_note),
         price_overrides = coalesce($13::jsonb, price_overrides), payment_terms_days = case when $14 then $15 else payment_terms_days end, monthly_statement = coalesce($16, monthly_statement),
         billing_contact = case when $9 then coalesce($17::jsonb, billing_contact) else billing_contact end,
+        language = coalesce($18, language),
         version = version + 1, updated_at = now()
       where id = $1 and company_id = $2 and version = $10 returning id`,
     [c.req.param('id'), cc.company.id, input.name ?? null, input.email ?? null, input.phone ?? null, input.billingAddress ?? null, input.notes ?? null, custom ? JSON.stringify(custom.clean) : null, contact, input.version,
-      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null, input.paymentTermsDays !== undefined, input.paymentTermsDays ?? null, input.monthlyStatement ?? null, input.billingContact ? JSON.stringify(input.billingContact) : null]);
+      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null, input.paymentTermsDays !== undefined, input.paymentTermsDays ?? null, input.monthlyStatement ?? null, input.billingContact ? JSON.stringify(input.billingContact) : null, input.language ?? null]);
   if (!rows.length) {
     const exists = await cc.db.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id]);
     if (!exists.rows.length) throw notFound('Customer');
@@ -280,7 +283,7 @@ recordRoutes.patch('/locations/:id', async (c) => {
     const { noteDriverChange } = await import('./jobs.js');
     for (const j of jobs.rows) {
       await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'edited',$3,$4)`, [cc.company.id, j.id, cc.user.id, JSON.stringify({ addressUpdated: true })]);
-      if (j.assigned_user_id) await noteDriverChange(q, cc, j, [input.address ? `New address: ${input.address}` : 'The site details changed', ...(input.accessInstructions !== undefined ? ['New access instructions'] : [])]);
+      if (j.assigned_user_id) await noteDriverChange(q, cc, j, [input.address ? { k: 'notice.newAddress', v: { address: input.address } } : { k: 'notice.siteChanged' }, ...(input.accessInstructions !== undefined ? [{ k: 'notice.newAccessShort' as const }] : [])]);
     }
     await audit(q, cc, 'location.updated', { id: c.req.param('id'), updatedJobs: jobs.rows.length });
     return { updatedJobs: jobs.rows.length };

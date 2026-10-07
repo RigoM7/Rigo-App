@@ -6,7 +6,7 @@ import type { Permission } from '../../shared/permissions';
 import { applyTheme, type ThemePref } from './theme';
 
 export interface Me {
-  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean } | null;
+  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean; language?: 'en' | 'es' | null } | null;
   companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null; created_at?: string; address?: string | null; archived_at?: string | null; copied_from_demo?: boolean }[];
   invitations: { id: string; role_name: string; company_name: string; expires_at: string; needsLink?: boolean }[];
   devMailbox: boolean;

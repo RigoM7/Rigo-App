@@ -246,7 +246,7 @@ function Feed({ jobs, nowMin, day, tz, now, onOpen, byDriver = false }: { jobs: 
     const groups = new Map<string, { name: string; jobs: Job[] }>();
     for (const j of [...jobs].sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start))) {
       const k = j.assigned_user_id ?? '';
-      if (!groups.has(k)) groups.set(k, { name: j.assignee_name ?? 'No driver yet', jobs: [] });
+      if (!groups.has(k)) groups.set(k, { name: j.assignee_name ?? 'Unassigned', jobs: [] });
       groups.get(k)!.jobs.push(j);
     }
     const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (a === '' ? -1 : b === '' ? 1 : x.name.localeCompare(y.name)));
@@ -273,7 +273,7 @@ function Feed({ jobs, nowMin, day, tz, now, onOpen, byDriver = false }: { jobs: 
         <div className="fbody">
           <div className="fmain">
             <button type="button" className="linkish" onClick={() => onOpen(j)}>#{j.number} {j.service_name ?? 'Job'} · {j.customer_name ?? 'No customer'}</button>
-            <div className="small muted">{j.address ?? 'No location'} · {j.assignee_name ?? 'No driver yet'}{j.scheduled_end ? ` · until ${fmtTime(j.scheduled_end, tz)}` : ''}</div>
+            <div className="small muted">{j.address ?? 'No address'} · {j.assignee_name ?? 'Unassigned'}{j.scheduled_end ? ` · until ${fmtTime(j.scheduled_end, tz)}` : ''}</div>
           </div>
           <span className="row" style={{ gap: 6 }}><JobStatus status={j.status} /><PriorityPill priority={j.priority} />{isLate(j, now) ? <LatePill /> : null}{j.problem_open ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Problem</Pill> : null}{!j.assigned_user_id && ['open', 'draft'].includes(j.status) ? <Pill tone="warning" icon={<UserX aria-hidden />}>No driver</Pill> : null}</span>
         </div>
