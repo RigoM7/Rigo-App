@@ -11,6 +11,10 @@ on:
       sha:
         description: Commit to revert if the check fails (defaults to the latest on main)
         required: false
+      test_failure:
+        description: Test run - also probe a page that doesn't exist, so the check fails on purpose
+        type: boolean
+        default: false
 
 concurrency:
   group: post-deploy
@@ -24,6 +28,7 @@ jobs:
       failed: ${{ steps.probe.outputs.failed }}
     env:
       LIVE: https://rigo-app-dun.vercel.app
+      TEST_FAILURE: ${{ inputs.test_failure }}
     steps:
       - id: probe
         run: |
@@ -38,6 +43,10 @@ jobs:
           ok / '<div id="root"' || failed=true
           ok /api/health '"ok":true' || failed=true
           ok /signin '<div id="root"' || failed=true
+          if [ "$TEST_FAILURE" = true ]; then
+            echo "Test run: probing a page that doesn't exist."
+            ok /api/post-deploy-test '"ok":true' || failed=true
+          fi
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - if: steps.probe.outputs.failed == 'true'
         run: exit 1
@@ -54,6 +63,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SHA: ${{ github.event.client_payload.git.sha || inputs.sha }}
+      # A test run labels what it creates, so it can be closed without a second look.
+      LABEL: ${{ inputs.test_failure && '[Test] ' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +82,7 @@ jobs:
           if [ "$parents" -gt 2 ]; then git revert --no-edit -m 1 "$sha"; else git revert --no-edit "$sha"; fi
           git push origin "HEAD:refs/heads/$branch"
           url=$(gh pr create --draft --base main --head "$branch" \
-            --title "Revert $short: the post-deploy check failed" \
+            --title "${LABEL}Revert $short: the post-deploy check failed" \
             --body "The post-deploy check failed after deploying $sha, so this reverts it. Merge only on the owner's \"merge\". In an emergency, promote the previous deployment in Vercel first.") || url=""
           # Pull requests opened by this workflow don't start CI on their own; start it for the branch.
           gh workflow run ci.yml --ref "$branch" || true
@@ -89,7 +100,7 @@ jobs:
           else
             next="The revert PR couldn't be created (check Settings → Actions → General → Workflow permissions). Ask Claude to \"undo the last change\"."
           fi
-          gh issue create --title "Post-deploy check failed for ${sha:-the latest deployment}" \
+          gh issue create --title "${LABEL}Post-deploy check failed for ${sha:-the latest deployment}" \
             --body "The landing page, the health endpoint or the sign-in page didn't load after the production deployment. Details: $RUN_URL
 
           $next
