@@ -1746,71 +1746,17 @@ await step('home: live timeline with driver lanes, now line, job panel and feed 
 });
 
 await step('command menu: Ctrl+K finds a job by number and opens it', async () => {
-  // Each phase is named, and a failure reports what the page looked like, so a failure on GitHub
-  // says which part broke (the actions and assertions are unchanged).
-  let phase = 'open the inbox';
-  const at = async (name, fn) => { phase = name; return fn(); };
-  try {
-    await page.goto(`${BASE}${cidPath()}/inbox`);
-    await page.locator('main h1').first().waitFor();
-    await page.evaluate(() => {
-      window.__keys = [];
-      window.addEventListener('keydown', (e) => window.__keys.push(`${e.ctrlKey ? 'Ctrl+' : ''}${e.key}${e.defaultPrevented ? ' (handled)' : ''}`), true);
-      window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'k') window.__keys.push(`after app: handled=${e.defaultPrevented}`); });
-    });
-    await at('first Ctrl+K opens the menu', async () => { await page.keyboard.press('Control+k'); });
-    const menu = page.getByRole('dialog', { name: 'Command menu' });
-    await at('first Ctrl+K opens the menu', () => menu.waitFor());
-    await at('type "3" in the menu', () => menu.getByRole('combobox').fill('3'));
-    await at('job #3 is offered', () => menu.getByRole('option', { name: /#3 Fuel delivery/ }).waitFor());
-    await page.screenshot({ path: `${OUT}/command-menu.png` });
-    await at('choose job #3', () => menu.getByRole('option', { name: /#3 Fuel delivery/ }).click());
-    await at('the job page opens', () => page.waitForURL(/\/jobs\/[0-9a-f-]+$/));
-    await at('second Ctrl+K on the job page', () => page.keyboard.press('Control+k'));
-    await at('type "invoices" in the reopened menu', () => menu.getByRole('combobox').fill('invoices'));
-    await page.keyboard.press('Enter');
-    await at('Enter opens invoices', () => page.waitForURL(/\/invoices$/));
-  } catch (e) {
-    await page.screenshot({ path: `${OUT}/command-menu-failure.png` }).catch(() => {});
-    const state = await page.evaluate(() => {
-      const d = document.querySelector('dialog.cmdk');
-      const a = document.activeElement;
-      return {
-        url: location.pathname,
-        dialogOpen: d?.open ?? null,
-        dialogHasInput: !!d?.querySelector('input[role=combobox]'),
-        openDialogs: [...document.querySelectorAll('dialog[open]')].map((x) => x.getAttribute('aria-label') || x.className),
-        focus: a ? `${a.tagName.toLowerCase()}${a.id ? '#' + a.id : ''}${a.className ? '.' + String(a.className).split(' ')[0] : ''}` : null,
-        keys: window.__keys ?? null,
-        browser: navigator.userAgent.match(/(Headless)?Chrome\/[\d.]+/)?.[0],
-      };
-    }).catch((x) => ({ unavailable: String(x).slice(0, 120) }));
-    throw new Error(`failed at "${phase}": ${String(e?.message ?? e).split('\n')[0]} | page: ${JSON.stringify(state)}`);
-  }
-});
-
-// Newer Chrome (153) reports a dialog's "close" later than Chrome 141. When that late report arrived
-// after Ctrl+K had reopened the menu, the menu shut again. This holds every browser's report back
-// 150 ms, so the case is checked on any Chromium.
-await step('command menu: a late "closed" report from the browser does not shut the reopened menu', async () => {
   await page.goto(`${BASE}${cidPath()}/inbox`);
   await page.locator('main h1').first().waitFor();
-  await page.evaluate(() => {
-    window.addEventListener('close', (e) => {
-      const d = e.target;
-      if (!(d instanceof HTMLDialogElement) || !d.classList.contains('cmdk') || !e.isTrusted) return;
-      e.stopImmediatePropagation();
-      setTimeout(() => d.dispatchEvent(new Event('close')), 150);
-    }, true);
-  });
-  const menu = page.getByRole('dialog', { name: 'Command menu' });
   await page.keyboard.press('Control+k');
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await menu.waitFor();
   await menu.getByRole('combobox').fill('3');
+  await menu.getByRole('option', { name: /#3 Fuel delivery/ }).waitFor();
+  await page.screenshot({ path: `${OUT}/command-menu.png` });
   await menu.getByRole('option', { name: /#3 Fuel delivery/ }).click();
   await page.waitForURL(/\/jobs\/[0-9a-f-]+$/);
   await page.keyboard.press('Control+k');
-  await page.waitForTimeout(400);
-  if (!(await page.evaluate(() => document.querySelector('dialog.cmdk')?.open))) throw new Error('the menu reopened by Ctrl+K was shut by the late report');
   await menu.getByRole('combobox').fill('invoices');
   await page.keyboard.press('Enter');
   await page.waitForURL(/\/invoices$/);

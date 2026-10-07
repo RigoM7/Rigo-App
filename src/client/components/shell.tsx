@@ -309,19 +309,12 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
   const [text, setText] = useState('');
   const [sel, setSel] = useState(0);
   const q = useDebounced(text.trim(), 160);
-  // The browser reports a close after the fact (Chrome 153 later than 141). A report of a close
-  // this menu asked for must not count: by then Ctrl+K may have opened it again.
-  const closingOurselves = useRef(false);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) { d.showModal(); setText(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 0); }
-    if (!open && d.open) { closingOurselves.current = true; d.close(); }
+    if (!open && d.open) d.close();
   }, [open]);
-  const onDialogClose = () => {
-    if (closingOurselves.current) { closingOurselves.current = false; return; }
-    if (!ref.current?.open) onClose();
-  };
 
   // Searches only run for what this role may see; the server checks again.
   const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&limit=6&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && (c.can('jobs.view_all') || c.can('jobs.view_assigned')) });
@@ -377,7 +370,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
   const searching = q.length > 0 && (jobs.isFetching || customers.isFetching || invoices.isFetching);
   let lastGroup = '';
   return (
-    <dialog ref={ref} className="cmdk" aria-label="Command menu" onClose={onDialogClose} onCancel={(e) => { e.preventDefault(); onClose(); }} onClick={(e) => { if (e.target === ref.current) onClose(); }}>
+    <dialog ref={ref} className="cmdk" aria-label="Command menu" onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }} onClick={(e) => { if (e.target === ref.current) onClose(); }}>
       {open && <>
         <div className="cmdk-input">
           <Search aria-hidden />

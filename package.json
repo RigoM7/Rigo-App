@@ -15,8 +15,7 @@
     "migrate": "tsx src/server/db/migrate-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:browser": "node e2e/run.mjs",
-    "check:docs": "node scripts/check-docs.mjs"
+    "test:browser": "node e2e/run.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

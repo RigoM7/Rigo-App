@@ -5,7 +5,7 @@ import { buildDeliveryLines, type DeliveryLine } from '../src/shared/deliveries.
 import { computeTotals } from '../src/shared/billing.js';
 import { activityText } from '../src/shared/activity.js';
 
-// Findings from the Phase 2 review, each fixed with a test.
+// Findings from the Phase 2 /review, each fixed with a test.
 
 const line = (p: Partial<DeliveryLine>): DeliveryLine => ({ product: 'Diesel', tank: '', quantity: '', meterStart: '', meterEnd: '', ticket: '', ...p });
 

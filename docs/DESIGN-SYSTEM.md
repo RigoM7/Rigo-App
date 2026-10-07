@@ -8,9 +8,8 @@ Source of truth for tokens: `src/client/styles.css`. Components: `src/client/com
 The redesign used the design skills in `.claude/skills/`: `ui-ux-pro-max` (`"field service
 operations dashboard command center" --design-system`, plus `chart`, `ux` searches for real-time
 dashboards, timelines, command palettes, live badge announcements, tables, loading states and
-dark-sidebar contrast), `impeccable` (operate mode and its craft floor), and the `design-system`
-(three-layer tokens, states and variants) and `brand` (voice) skills, which were removed in October
-2026 when `/change` and `/release` replaced the old commands. Their generic suggestions (a
+dark-sidebar contrast), `impeccable` (operate mode and its craft floor), `design-system`
+(three-layer tokens, states and variants) and `brand` (voice). Their generic suggestions (a
 navy/blue palette, Fira type, bouncy stagger motion) were **not adopted**: the confirmed
 red/white/black palette, Geist type and the decisions below take precedence.
 
