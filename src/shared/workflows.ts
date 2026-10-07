@@ -245,8 +245,10 @@ export function explainDefinition(def: Definition, roleNames: Record<string, str
     const meta = ACTIONS[s.action];
     let line = `${i + 1}. ${meta.label}`;
     if (s.action === 'notify') line += ` (${[...(s.params.assignee ? ['assigned driver'] : []), ...(s.params.roles ?? []).map(rn)].join(', ')})`;
-    if (s.approval.required === 'always') line += `, after approval by ${[...s.approval.approverRoles.map(rn), ...(s.approval.approverUserIds.length ? ['named approvers'] : [])].join(' or ')}`;
-    if (s.approval.required === 'conditional') line += `, needing approval when ${s.approval.conditions.map(describeCondition).join(' and ')}`;
+    // People are named when their names are known (the same map carries role and user names).
+    const who = [...s.approval.approverUserIds.map((u) => roleNames[u] ?? 'a named approver'), ...s.approval.approverRoles.map(rn)].join(' or ');
+    if (s.approval.required === 'always') line += `, after approval by ${who}`;
+    if (s.approval.required === 'conditional') line += `, needing approval${who ? ` by ${who}` : ''} when ${s.approval.conditions.map(describeCondition).join(' and ')}`;
     if (s.mode) line += ` [always ${s.mode}]`;
     lines.push(line + '.');
     if (s.onException.notifyRoles.length) lines.push(`   If it cannot finish: notify ${s.onException.notifyRoles.map(rn).join(', ')}${s.onException.stop ? ' and stop' : ' and continue'}.`);

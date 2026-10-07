@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Sparkles, FileText, Trash2, ShieldCheck, Eye, Workflow, ArrowUpRight } from 'lucide-react';
+import { Send, Sparkles, FileText, Trash2, ShieldCheck, Eye, Workflow, ArrowUpRight, ChevronRight } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
 import { Button, Pill, Banner, LoadingBlock, PageHeader, Card, useConfirm } from '../components/ui';
 import { relTime } from '../lib/format';
 
-const SUGGESTIONS = ['What needs my attention?', 'Why is an invoice on hold?', 'What is on today?', 'When a job is completed, prepare an invoice and ask me to approve it'];
+const SUGGESTIONS = ['What needs my attention?', 'Who is free at 2pm tomorrow?', 'Why is an invoice on hold?', 'When a job is completed, prepare an invoice and ask me to approve it'];
 
 function ProposalCard({ p }: { p: any }) {
   const c = useCompany();
@@ -62,6 +62,7 @@ export function AssistantChat({ compact, initial = '' }: { compact?: boolean; in
           <div key={m.id} className={`msg ${m.role === 'user' ? 'msg-user' : 'msg-assistant'}`}>
             {m.role === 'assistant' && <div className="msg-meta">{m.source === 'ai' ? <Pill tone="brand" icon={<Sparkles aria-hidden />}>AI response</Pill> : <Pill tone="neutral">Prepared response (not AI)</Pill>}<span>{relTime(m.created_at)}</span></div>}
             {m.content}
+            {m.links?.length ? <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>{m.links.map((l: any) => <Link key={`${l.to}-${l.label}`} className="btn btn-sm" to={c.to(l.to)}>{l.label}<ChevronRight aria-hidden /></Link>)}</div> : null}
             {m.proposal ? <ProposalCard p={m.proposal} /> : null}
           </div>
         ))}
