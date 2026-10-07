@@ -3,7 +3,7 @@ import { es, esPhrases } from './es.js';
 
 // Words people read, in their language (R4-M5, D8). English is complete; any key missing from
 // another language falls back to English. Spanish is marked "needs review by a Spanish speaker"
-// in docs/IMPLEMENTATION-STATUS.md.
+// in docs/FEATURES.md.
 
 export const LANGS = { en: 'English', es: 'Español' } as const;
 export type Lang = keyof typeof LANGS;
