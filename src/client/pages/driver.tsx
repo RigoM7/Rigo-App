@@ -470,6 +470,8 @@ export function DriverJob() {
           {job.notes && <p className="pre" style={{ margin: 0 }}><strong>{t('job.notes')}</strong> {job.notes}</p>}
         </div>
       </Card>
+      {/* "On my way" lives in the page, not the bottom bar: the bar holds one action only (Ionic footer toolbar pattern). */}
+      {!sentOrSending && !started && job.status === 'open' && <Card id="on-my-way"><OnMyWay job={job} onDone={reload} /></Card>}
 
       {finished ? (
         <Banner tone={job.status === 'completed' ? 'success' : 'warning'} title={t('job.recordedAs', { outcome: job.status in OUTCOMES ? t(`outcome.${job.status}` as MessageKey).toLowerCase() : t(`status.${job.status}` as MessageKey).toLowerCase() })}>{draft?.state === 'accepted' ? t('job.recordAccepted') : t('job.isFinished')} {t('job.contactOffice')}</Banner>
@@ -631,9 +633,8 @@ export function DriverJob() {
           )}
           {!sentOrSending && (
             <div className="sticky-actions stack-sm">
-              <div className="row-between"><SyncState state={draft ? d.state : null} /><span className="small muted">{draft ? t('job.savedAgo', { when: relTime(d.updatedAt, L) }) : t('job.savesAsYouType')}</span></div>
+              <div className="row-between sticky-meta"><SyncState state={draft ? d.state : null} /><span className="small muted">{draft ? t('job.savedAgo', { when: relTime(d.updatedAt, L) }) : t('job.savesAsYouType')}</span></div>
               {/* One primary action at a time, never hidden under the bar (R9-M1). */}
-              {!started && job.status === 'open' && <OnMyWay job={job} onDone={reload} />}
               {!started
                 ? <GuideTarget id="driver-start" block><Button variant="primary" size="lg" block icon={<Play aria-hidden />} busy={busy === 'start'} onClick={start}>{busy === 'start' ? t('job.starting') : t('job.start')}</Button></GuideTarget>
                 : <Button variant="primary" size="lg" block icon={<Send aria-hidden />} busy={busy === 'submit'} onClick={submit} disabled={d.state === 'conflict'}>{busy === 'submit' ? t('job.sending') : t('job.submitToOffice')}</Button>}
