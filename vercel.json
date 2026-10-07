@@ -3,5 +3,8 @@
   "framework": null,
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
-  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" != \"main\" ] && git log -1 --format=%s | grep -qF '[checkpoint]' || git diff HEAD^ HEAD --quiet -- . ':(exclude).claude' ':(exclude)CLAUDE.md'"
+  "ignoreCommand": "bash scripts/vercel-ignore.sh",
+  "github": {
+    "silent": true
+  }
 }

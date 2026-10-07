@@ -1,0 +1,108 @@
+# After a production deployment: load the landing page, the health endpoint and the sign-in page.
+# On failure, open an issue and prepare a revert PR for the owner to approve. It never merges.
+# Vercel sends `vercel.deployment.success` as a repository dispatch; it can also be run by hand.
+name: Post-deploy check
+
+on:
+  repository_dispatch:
+    types: [vercel.deployment.success]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to revert if the check fails (defaults to the latest on main)
+        required: false
+      test_failure:
+        description: Test run - also probe a page that doesn't exist, so the check fails on purpose
+        type: boolean
+        default: false
+
+concurrency:
+  group: post-deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || github.event.client_payload.environment == 'production'
+    runs-on: ubuntu-latest
+    outputs:
+      failed: ${{ steps.probe.outputs.failed }}
+    env:
+      LIVE: https://rigo-app-dun.vercel.app
+      TEST_FAILURE: ${{ inputs.test_failure }}
+    steps:
+      - id: probe
+        run: |
+          ok() {  # path, text the response must contain
+            for i in $(seq 1 12); do
+              body=$(curl -fsSL --max-time 20 "$LIVE$1") && echo "$body" | grep -qF "$2" && { echo "ok $1"; return 0; }
+              sleep 10
+            done
+            echo "FAILED $1"; return 1
+          }
+          failed=false
+          ok / '<div id="root"' || failed=true
+          ok /api/health '"ok":true' || failed=true
+          ok /signin '<div id="root"' || failed=true
+          if [ "$TEST_FAILURE" = true ]; then
+            echo "Test run: probing a page that doesn't exist."
+            ok /api/post-deploy-test '"ok":true' || failed=true
+          fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+      - if: steps.probe.outputs.failed == 'true'
+        run: exit 1
+
+  revert:
+    needs: check
+    if: always() && needs.check.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.client_payload.git.sha || inputs.sha }}
+      # A test run labels what it creates, so it can be closed without a second look.
+      LABEL: ${{ inputs.test_failure && '[Test] ' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Prepare the revert PR
+        id: pr
+        run: |
+          sha=${SHA:-$(git rev-parse HEAD)}
+          short=$(git rev-parse --short "$sha")
+          branch="revert-$short"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          parents=$(git rev-list --parents -n 1 "$sha" | wc -w)
+          if [ "$parents" -gt 2 ]; then git revert --no-edit -m 1 "$sha"; else git revert --no-edit "$sha"; fi
+          git push origin "HEAD:refs/heads/$branch"
+          url=$(gh pr create --draft --base main --head "$branch" \
+            --title "${LABEL}Revert $short: the post-deploy check failed" \
+            --body "The post-deploy check failed after deploying $sha, so this reverts it. Merge only on the owner's \"merge\". In an emergency, promote the previous deployment in Vercel first.") || url=""
+          # Pull requests opened by this workflow don't start CI on their own; start it for the branch.
+          gh workflow run ci.yml --ref "$branch" || true
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Open an issue
+        if: always()
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sha=${{ steps.pr.outputs.sha }}
+          if [ -n "$PR_URL" ]; then
+            next="A revert PR is ready: $PR_URL. It merges only on the owner's \"merge\"."
+          else
+            next="The revert PR couldn't be created (check Settings → Actions → General → Workflow permissions). Ask Claude to \"undo the last change\"."
+          fi
+          gh issue create --title "${LABEL}Post-deploy check failed for ${sha:-the latest deployment}" \
+            --body "The landing page, the health endpoint or the sign-in page didn't load after the production deployment. Details: $RUN_URL
+
+          $next
+
+          First aid: in Vercel, promote the previous production deployment."

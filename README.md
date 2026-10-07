@@ -97,10 +97,14 @@ All optional; see `.env.example`.
 
 ## Tests
 
+Every pull request runs these on GitHub (`.github/workflows/ci.yml`); changes are made with
+`/change` and `/release` (see `docs/PROCESS.md`).
+
 ```bash
 npm run typecheck
 npm test                                   # API/domain tests on embedded PostgreSQL (PGlite)
 DATABASE_URL=postgres://… npm test         # the same tests on a real PostgreSQL server
+npm run check:docs                         # docs/AREAS.md and docs/SCHEMA.md match the code
 
 # Browser checks against a running server (uses the pre-installed Chromium):
 npm run build && npm start &
