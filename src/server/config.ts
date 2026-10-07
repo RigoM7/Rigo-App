@@ -37,6 +37,9 @@ export const config = {
     dailyLimit: Number(env.RIGO_AI_DAILY_LIMIT || 50),
   },
   emailProvider: env.RIGO_EMAIL_PROVIDER || '',
+  // Email and texts to customers and account email (D1, D10): off until these are set.
+  email: { provider: (env.RIGO_EMAIL_PROVIDER || '').toLowerCase(), apiKey: env.RIGO_EMAIL_API_KEY || '', from: env.RIGO_EMAIL_FROM || '' },
+  sms: { provider: (env.RIGO_SMS_PROVIDER || '').toLowerCase(), accountSid: env.TWILIO_ACCOUNT_SID || '', authToken: env.TWILIO_AUTH_TOKEN || '', from: env.TWILIO_FROM_NUMBER || '' },
   cronSecret: env.CRON_SECRET || '',
   // Trust X-Forwarded-For only behind a proxy that sets it (Vercel overwrites it; tests opt in).
   trustProxy: !!env.VERCEL || env.RIGO_TRUST_PROXY === '1',

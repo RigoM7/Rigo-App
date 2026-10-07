@@ -116,3 +116,15 @@ export async function audit(q: Q, cc: { company: { id: string }; user: { id: str
   await q.query(`insert into rigo.audit_log (company_id, actor_user_id, action, detail) values ($1, $2, $3, $4)`,
     [cc?.company.id ?? null, cc?.user.id ?? null, action, JSON.stringify(detail)]);
 }
+
+/**
+ * Inviting staff and emailing customers need a confirmed email address once email can actually be
+ * sent (D2). Until then nobody could confirm one, so nothing is blocked. Demo companies never send.
+ */
+export async function needConfirmedEmail(cc: CompanyCtx, what: string) {
+  if (cc.isDemo) return;
+  const { systemEmailChannel } = await import('../adapters/index.js');
+  if (systemEmailChannel() !== 'email') return;
+  const { rows } = await cc.db.query<{ v: boolean }>(`select email_verified_at is not null as v from rigo.users where id = $1`, [cc.user.id]);
+  if (!rows[0]?.v) throw new HttpError(403, 'email_unconfirmed', `Confirm your email address before ${what}. Use the link we sent you, or send a new one from Account.`, { needsConfirmedEmail: true });
+}

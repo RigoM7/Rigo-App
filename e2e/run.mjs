@@ -1264,18 +1264,18 @@ await step('m5 and m8: tab titles, and the sign-in page has a big "Create a free
   await c.close();
 });
 
-await step('M1: the last tries before a pause are counted, then the pause names the wait', async () => {
+await step('M1: after five wrong tries the next one waits, and the message names the wait', async () => {
   const who = await apiAccount('Wanda Wrong');
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p = await c.newPage();
   await p.goto(`${BASE}/signin`);
   await p.getByLabel('Email').fill(who.email);
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 6; i++) {
     await p.getByLabel('Password', { exact: true }).fill(`wrong-guess-${i}-xyz`);
     await p.getByRole('button', { name: 'Sign in', exact: true }).click();
-    if (i === 8) await p.getByText('2 more tries before a 15-minute pause.').waitFor();
+    if (i <= 5) await p.getByText('That email and password do not match an account.').waitFor();
   }
-  await p.getByText(/Try again in 1[45] minutes/).waitFor();
+  await p.getByText(/Try again in 1[0-5] seconds/).waitFor();
   await p.getByRole('link', { name: 'reset your password' }).waitFor();
   await p.screenshot({ path: `${OUT}/signin-paused-390.png` });
   await c.close();
@@ -1298,7 +1298,7 @@ await step('m3: a used or made-up reset link says so instead of showing the form
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p = await c.newPage();
   await p.goto(`${BASE}/reset/not-a-real-token-123456`);
-  await p.getByText('This link has expired or was already used').waitFor();
+  await p.getByText('This link was already used.').waitFor();
   if (await p.getByLabel('New password').count()) throw new Error('form shown for an invalid link');
   await p.getByRole('link', { name: 'Send a new link' }).click();
   await p.waitForURL(/\/forgot$/);

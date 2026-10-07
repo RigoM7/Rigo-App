@@ -54,7 +54,7 @@ function EmailCard() {
         {pending ? (
           <Banner tone="success" title={`Check ${pending}`}>
             Open the link we sent there to finish the change. Until then, keep signing in with {user.email}.
-            {channel === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</> : null}
+            {channel === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</> : null}
           </Banner>
         ) : null}
         <form className="stack" onSubmit={(e) => { e.preventDefault(); s.run(); }} noValidate>

@@ -1,6 +1,7 @@
 import type { Q } from '../db/index.js';
 import { prepareInvoiceForJob, issueInvoice, invoiceEmail, invoiceViewLink } from '../modules/invoicing.js';
 import { deliverMessage } from '../adapters/index.js';
+import { recordDelivery } from '../modules/messaging.js';
 import { notifyRoles, notifyUsers } from '../modules/inbox.js';
 import { subjectLabel } from './engine.js';
 
@@ -71,11 +72,10 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
     if (['sent', 'delivered', 'simulated'].includes(m.status)) return { status: m.status === 'simulated' ? 'simulated' : 'completed', explanation: `Already ${m.status}.` };
     if (!m.recipient) return { status: 'blocked', explanation: 'The customer has no email address. Add one, then send the prepared message from Messages.', link: 'messages' };
     const r = await deliverMessage({ kind: i.companyKind }, m);
-    if (r.status === 'simulated') {
-      await i.q.query(`update rigo.messages set status = 'simulated', status_detail = $2, provider = $3, updated_at = now() where id = $1`, [m.id, r.detail, r.provider]);
-      if (m.invoice_id) await i.q.query(`update rigo.invoices set delivery_status = 'simulated' where id = $1`, [m.invoice_id]);
-      return { status: 'simulated', explanation: r.detail };
-    }
+    await recordDelivery(i.q, m, r);
+    if (r.status === 'simulated') return { status: 'simulated', explanation: r.detail };
+    if (r.status === 'sent') return { status: 'completed', explanation: r.detail };
+    if (r.status === 'failed') return { status: 'blocked', explanation: `Not sent. ${r.detail}`, link: 'messages' };
     // Blocked: the message stays "prepared" so a person can copy and send it themselves.
     return { status: 'blocked', explanation: `Not sent. ${r.detail}`, link: 'messages' };
   },

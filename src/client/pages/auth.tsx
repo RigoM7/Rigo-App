@@ -161,7 +161,7 @@ export function Forgot() {
         <>
           <Banner tone="success" title="Check your email">
             If an account uses {email.trim()}, we sent it a reset link. It works for one hour.
-            {sent === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</> : null}
+            {sent === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</> : null}
           </Banner>
           <OwnerHelp supportEmail={q.data?.supportEmail ?? null} heading="No email?" />
         </>
@@ -180,10 +180,12 @@ export function Forgot() {
   );
 }
 
-function ExpiredLink({ what, again }: { what: string; again: { to: string; label: string } }) {
+const LINK_TITLE = { used: 'This link was already used.', expired: 'This link has expired.', invalid: "This link doesn't work." } as const;
+
+function ExpiredLink({ what, again, reason }: { what: string; again: { to: string; label: string }; reason?: keyof typeof LINK_TITLE }) {
   return (
     <>
-      <Banner tone="warning" title="This link has expired or was already used">{what}</Banner>
+      <Banner tone="warning" title={reason ? LINK_TITLE[reason] : 'This link has expired or was already used'}>{what}</Banner>
       <LinkButton variant="primary" block size="lg" to={again.to}>{again.label}</LinkButton>
     </>
   );
@@ -196,7 +198,7 @@ export function Reset() {
   const toast = useToast();
   const [password, setPassword] = useState('');
   const [usedUp, setUsedUp] = useState(false);
-  const check = useQuery({ queryKey: ['reset-link', token], queryFn: () => get<{ valid: boolean }>(`/auth/reset/${encodeURIComponent(token)}`), staleTime: Infinity, retry: false });
+  const check = useQuery({ queryKey: ['reset-link', token], queryFn: () => get<{ valid: boolean; reason?: 'used' | 'expired' | 'invalid' }>(`/auth/reset/${encodeURIComponent(token)}`), staleTime: Infinity, retry: false });
   const s = useSubmit(async () => {
     try { await post('/auth/reset', { token, password }); } catch (e) {
       if ((e as ApiError).details?.invalidLink) setUsedUp(true);
@@ -210,7 +212,7 @@ export function Reset() {
   return (
     <AuthLayout title={invalid ? 'Link not valid' : 'Choose a new password'} sub={!invalid && check.data ? "You'll be signed in here. Other devices will need to sign in again." : undefined}>
       {check.isLoading ? <LoadingBlock rows={2} /> : check.error ? <ErrorState error={check.error} retry={() => check.refetch()} /> : invalid ? (
-        <ExpiredLink what="Reset links work once, and only for a limited time." again={{ to: '/forgot', label: 'Send a new link' }} />
+        <ExpiredLink reason={usedUp ? 'used' : check.data?.reason} what={check.data?.reason === 'invalid' && !usedUp ? 'Check that you copied the whole link. Reset links work once, and only for a limited time.' : 'Reset links work once, and only for a limited time.'} again={{ to: '/forgot', label: 'Send a new link' }} />
       ) : (
         <form onSubmit={(e) => { e.preventDefault(); s.run(); }} className="stack" noValidate>
           <ErrorSummary error={s.error} />

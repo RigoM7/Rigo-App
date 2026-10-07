@@ -94,7 +94,7 @@ export function Workspaces() {
               {demoCo ? <Pill tone="demo">Demo workspace</Pill> : null}
             </div>
           </Card>
-          {me.data.devMailbox && <p className="small muted">On this local copy, invitation and password emails appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</p>}
+          {me.data.devMailbox && <p className="small muted">On this local copy, invitation and password emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</p>}
         </div>
       </main>
     </div>

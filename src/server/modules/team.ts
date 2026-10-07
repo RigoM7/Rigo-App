@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, type Q } from '../db/index.js';
-import { type AppEnv, type CompanyCtx, need, needAny, audit, requireUser, can } from '../http/context.js';
+import { type AppEnv, type CompanyCtx, need, needAny, audit, requireUser, can, needConfirmedEmail } from '../http/context.js';
 import { body, normEmail, sha256, token } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { config } from '../config.js';
@@ -231,6 +231,7 @@ async function createInvitation(q: Q, cc: CompanyCtx, email: string, role: strin
  * ("Marcus already has a pending invite as Dispatcher. Replace with Driver?", R4-M1).
  */
 async function inviteOne(q: Q, cc: CompanyCtx, rawEmail: string, role: string, replace: boolean) {
+  await needConfirmedEmail(cc, 'inviting people');
   const email = normEmail(rawEmail);
   if ((await roleIsOwner(q, cc.company.id, role)) && !cc.isOwner) throw forbidden('Only owners can invite another owner.');
   const roleRow = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, role])).rows[0];
@@ -283,6 +284,7 @@ teamRoutes.post('/invitations', async (c) => {
 teamRoutes.post('/invitations/:id/resend', async (c) => {
   const cc = c.get('cc');
   need(cc, 'members.invite');
+  await needConfirmedEmail(cc, 'inviting people');
   const result = await cc.db.tx(async (q) => {
     const { rows } = await q.query<any>(`select * from rigo.invitations where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id]);
     const inv = rows[0];

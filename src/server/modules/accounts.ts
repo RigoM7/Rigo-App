@@ -39,14 +39,16 @@ export function clientIp(c: Context<AppEnv>): string {
 }
 
 const minutesText = (sec: number) => { const m = Math.max(1, Math.ceil(sec / 60)); return `${m} minute${m === 1 ? '' : 's'}`; };
+const waitText = (sec: number) => (sec < 60 ? `${Math.max(1, Math.ceil(sec))} seconds` : minutesText(sec));
 const tooMany = (message: string, retryAfter: number) => new HttpError(429, 'rate_limited', message, { retryAfter });
 
-/** Attempts recorded under a key in the window, and seconds until the oldest one leaves it. */
+/** Attempts recorded under a key in the window, seconds until the oldest one leaves it, and seconds since the latest. */
 async function attempts(q: Q, key: string, minutes: number) {
-  const { rows } = await q.query<{ n: number; wait: number | null }>(
-    `select count(*)::int as n, ceil(extract(epoch from (min(at) + ($2 || ' minutes')::interval - now())))::int as wait
+  const { rows } = await q.query<{ n: number; wait: number | null; since: number | null }>(
+    `select count(*)::int as n, ceil(extract(epoch from (min(at) + ($2 || ' minutes')::interval - now())))::int as wait,
+            floor(extract(epoch from (now() - max(at))))::int as since
        from rigo.auth_attempts where key = $1 and at > now() - ($2 || ' minutes')::interval`, [key, String(minutes)]);
-  return { n: rows[0].n, wait: Math.max(1, rows[0].wait ?? 1) };
+  return { n: rows[0].n, wait: Math.max(1, rows[0].wait ?? 1), since: rows[0].since ?? 0 };
 }
 
 /** A limit that counts every call (account creation, recovery emails). */
@@ -61,6 +63,9 @@ export const recordCall = (q: Q, key: string) => q.query(`insert into rigo.auth_
 export const SIGNIN_WINDOW_MIN = 15;
 export const SIGNIN_MAX_FAILURES = 10;
 export const SIGNIN_MAX_PER_IP = 100;
+/** From the 5th failure on, the next try waits 15 s, then 30 s, 1, 2 and 4 minutes (R1-M1). */
+export const SIGNIN_BACKOFF_FROM = 5;
+export const backoffSeconds = (failures: number) => (failures < SIGNIN_BACKOFF_FROM ? 0 : 15 * 2 ** (failures - SIGNIN_BACKOFF_FROM));
 const failKey = (em: string, ip: string) => `signin:${em}|${ip}`;
 const ipKey = (ip: string) => `signin-ip:${ip}`;
 
@@ -186,6 +191,8 @@ accounts.post('/signin', async (c) => {
   const db = await getDb();
   const mine = await attempts(db, failKey(em, ip), SIGNIN_WINDOW_MIN);
   if (mine.n >= SIGNIN_MAX_FAILURES) throw signinLocked(mine.wait);
+  const pause = backoffSeconds(mine.n) - mine.since;
+  if (pause > 0) throw tooMany(`Too many sign-in attempts. Try again in ${waitText(pause)}, or reset your password.`, pause);
   const net = await attempts(db, ipKey(ip), SIGNIN_WINDOW_MIN);
   if (net.n >= SIGNIN_MAX_PER_IP) throw signinLocked(net.wait, true);
 
@@ -255,8 +262,13 @@ async function findResetRow(q: Q, userId: string, companyId: string | null, issu
 /** Whether a reset link still works. Never reveals whose it is. */
 accounts.get('/reset/:token', async (c) => {
   const tok = c.req.param('token');
-  const valid = tok.length >= 10 && tok.length <= 200 && !!(await findReset(await getDb(), tok));
-  return c.json({ valid });
+  const db = await getDb();
+  const valid = tok.length >= 10 && tok.length <= 200 && !!(await findReset(db, tok));
+  if (valid) return c.json({ valid });
+  // Why it doesn't work, so the page can say so (R1-m3); still nothing about whose link it was.
+  const row = tok.length >= 10 && tok.length <= 200 ? (await db.query<{ used: boolean; expired: boolean }>(
+    `select used_at is not null as used, expires_at <= now() as expired from rigo.password_resets where token_hash = $1`, [sha256(tok)])).rows[0] : undefined;
+  return c.json({ valid, reason: row?.used ? 'used' : row?.expired ? 'expired' : 'invalid' });
 });
 
 accounts.post('/reset', async (c) => {

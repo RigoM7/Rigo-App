@@ -57,7 +57,7 @@ function InviteCard({ roles, onDone }: { roles: any[]; onDone: () => void }) {
       {result && (
         <div className="stack-sm" style={{ marginTop: 16 }}>
           <Banner tone={result.delivery?.how === 'emailed' ? 'success' : 'info'} title={result.delivery?.how === 'emailed' ? `Invitation emailed to ${result.preview.to}` : 'Invitation link created — not emailed'}>
-            {result.delivery?.how === 'emailed' ? 'They can also use this link. ' : result.delivery?.how === 'mailbox' ? 'On this test copy it went to the simulated mailbox. ' : result.delivery?.how === 'demo' ? 'Demo workspace: nothing is sent. ' : 'Email is not set up yet, so nothing was sent. '}Share the link with them yourself; it works only for {result.preview.to} and expires in 7 days.
+            {result.delivery?.how === 'emailed' ? 'They can also use this link. ' : result.delivery?.how === 'mailbox' ? 'On this test copy it went to the test inbox. ' : result.delivery?.how === 'demo' ? 'Demo workspace: nothing is sent. ' : 'Email is not set up yet, so nothing was sent. '}Share the link with them yourself; it works only for {result.preview.to} and expires in 7 days.
           </Banner>
           <div className="row" style={{ flexWrap: 'nowrap' }}><Input readOnly value={result.link} aria-label="Invitation link" onFocus={(e) => e.target.select()} /><Button icon={<Copy aria-hidden />} onClick={() => copy(result.link)}>Copy</Button></div>
           <div><a className="btn btn-sm" href={textBody(result.link)}><MessageSquare aria-hidden />Text the link from this phone</a></div>

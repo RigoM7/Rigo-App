@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Q } from '../db/index.js';
-import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.js';
+import { type AppEnv, type CompanyCtx, need, can, audit, needConfirmedEmail } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
@@ -11,6 +11,7 @@ import { emit, invalidateApprovalsFor, requestApproval, settleInvoiceSteps, adva
 import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, applyCredit, refreshPayment, creditBalance, termsFor, prepareInvoiceForJob, invoiceViewLink } from './invoicing.js';
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
+import { recordDelivery } from './messaging.js';
 
 // Invoices, payments and customer communications.
 
@@ -613,13 +614,11 @@ billingRoutes.post('/messages/:id/send', async (c) => {
     if (!m) throw notFound('Message');
     moneyMessageAllowed(cc, m);
     if (m.status !== 'prepared') throw conflict(`This message is already ${m.status}.`);
+    await needConfirmedEmail(cc, 'sending messages to customers');
     if (!m.recipient) throw badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
     const r = await deliverMessage(cc.company, m);
-    if (r.status === 'simulated') {
-      await q.query(`update rigo.messages set status = 'simulated', status_detail = $2, provider = $3, updated_at = now() where id = $1`, [m.id, r.detail, r.provider]);
-      if (m.invoice_id) await q.query(`update rigo.invoices set delivery_status = 'simulated' where id = $1`, [m.invoice_id]);
-    }
-    return { status: r.status === 'simulated' ? 'simulated' : 'not_sent', detail: r.detail };
+    await recordDelivery(q, m, r);
+    return { status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.detail };
   });
   return c.json(out);
 });
