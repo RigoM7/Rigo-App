@@ -5,6 +5,10 @@ import { DEFAULT_JOB_MINUTES } from '../../shared/jobs.js';
 import { visibleApprovals, approvalSummary } from './approvals.js';
 import { OOS_SQL, returnToService } from './jobs.js';
 
+const URGENCY = ['emergency', 'urgent', 'unassigned', 'late', 'problems', 'out_of_service', 'driver_records', 'approvals', 'unbilled', 'held', 'collected', 'overdue', 'ready', 'blocked', 'exceptions', 'drafts'];
+/** The order "Needs you" lists things in; anything new goes after the known ones. */
+export const urgency = (key: string) => { const i = URGENCY.indexOf(key); return i < 0 ? URGENCY.length : i; };
+
 // Owner/dispatcher dashboard: attention first, then today's operations, then a brief business
 // overview. Every number comes from real records; empty companies get setup actions instead.
 
@@ -104,5 +108,7 @@ overviewRoutes.get('/overview', async (c) => {
       waitingMinor: fin ? Number(b.waiting) : undefined, currency: cc.company.currency };
   }
   const empty = can(cc, 'jobs.view_all') ? (await db.query<any>(`select count(*)::int n from rigo.jobs where company_id = $1`, [cid])).rows[0].n === 0 : false;
+  // Most urgent first (R18-m5): people and trucks on the road today, then money waiting, then tidying up.
+  attention.sort((a, b) => urgency(a.key) - urgency(b.key));
   return c.json({ attention, invoiceApprovals, today: today_ops, rigo, business, empty });
 });

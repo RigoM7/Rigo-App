@@ -678,6 +678,34 @@ jobRoutes.post('/jobs/:id/start', async (c) => {
   return c.json(out);
 });
 
+/**
+ * "Reschedule" on a visit that couldn't be finished (R6-m6): a follow-up job for the same customer,
+ * place and service, with the reason carried over. Works whether or not a workflow already made one;
+ * there is never more than one follow-up per job.
+ */
+jobRoutes.post('/jobs/:id/follow-up', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'jobs.create');
+  const out = await cc.db.tx(async (q) => {
+    const job = await loadJob(cc, q, c.req.param('id'), true);
+    if (!['unsuccessful', 'partial'].includes(job.status)) throw conflict('Only a visit that was not completed, or only partly, can be rescheduled.');
+    const existing = (await q.query<{ id: string; number: number }>(`select id, number from rigo.jobs where company_id = $1 and details->>'_followupOf' = $2 and status <> 'cancelled' order by created_at limit 1`, [cc.company.id, job.id])).rows[0];
+    if (existing) return { id: existing.id, number: existing.number, already: true };
+    const reason = job.completion ? outcomeReason(job.completion.reasonCode ?? null, job.completion.reason ?? '') : '';
+    const seq = await q.query<{ job_seq: number }>(`update rigo.companies set job_seq = job_seq + 1 where id = $1 returning job_seq`, [cc.company.id]);
+    const details = Object.fromEntries(Object.entries(job.details ?? {}).filter(([k]) => !k.startsWith('_')));
+    const ins = await q.query<{ id: string }>(
+      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, priority, contact_name, contact_phone, access_instructions, notes, details, created_by)
+       values ($1,$2,$3,$4,$5,'draft',$6,$7,$8,$9,$10,$11,$12) returning id`,
+      [cc.company.id, seq.rows[0].job_seq, job.customer_id, job.location_id, job.service_id, job.priority ?? 'normal', job.contact_name, job.contact_phone, job.access_instructions,
+        [`Follow-up to job #${job.number}.`, reason ? `Last visit: ${reason}.` : '', job.notes ?? ''].filter(Boolean).join(' ').slice(0, 4000), JSON.stringify({ ...details, _followupOf: job.id }), cc.user.id]);
+    await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'created',$3,$4)`, [cc.company.id, ins.rows[0].id, cc.user.id, JSON.stringify({ followupOf: job.number })]);
+    await event(q, cc, job.id, 'note', { text: `Rescheduled as job #${seq.rows[0].job_seq}` });
+    return { id: ins.rows[0].id, number: seq.rows[0].job_seq, already: false };
+  });
+  return c.json(out);
+});
+
 // "On my way" (R15-M2): the assigned driver says they are heading to the stop, with an optional
 // arrival estimate. It doesn't change the job's status; workflows on "A driver is on the way" can
 // prepare a customer update, which is only sent once a text or email service is set up (D10).

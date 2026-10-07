@@ -899,9 +899,48 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase3') {
       await p.waitForTimeout(400);
       const text = await p.locator('body').innerText();
       for (const re of MACHINE) { const m = re.exec(text); if (m) bad.push(`${path || '/'}: "${m[0]}"`); }
+      // The same pages, scanned for serious or critical accessibility problems (WP17), the workflow editor included.
+      try { await axe(p, path || '/'); } catch (e) { bad.push(String(e.message).slice(0, 300)); }
     }
     if (bad.length) throw new Error(bad.slice(0, 8).join('; '));
     await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP17: at 200% text the driver screens keep their layout; Reschedule follows an unsuccessful visit (R18-m4, R9-m2, R6-m6)', async () => {
+    const f = await fieldCompany('p3-big');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp17-big');
+    await driverSignIn(p, f);
+    await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+    for (const path of ['today', `today/${job.id}`]) {
+      await p.goto(`${f.C}/${path}`);
+      await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+      await p.locator('main h1').first().waitFor();
+      const r = await p.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth, small: [...document.querySelectorAll('.driver-page *')].filter((el) => el.childNodes.length && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 30 && (el.offsetParent !== null)).map((el) => `${el.tagName}.${el.className}:${getComputedStyle(el).fontSize}:${el.textContent.trim().slice(0, 30)}`).slice(0, 4) }));
+      if (r.over > 1) throw new Error(`${path}: ${r.over}px sideways scroll at 200% text`);
+      if (r.small.length) throw new Error(`${path}: text under 15px (30px at 200%): ${r.small.join(', ')}`);
+    }
+    // The address keeps most of the card's width.
+    const ratio = await p.evaluate(() => { const addr = document.querySelector('.job-address'); const card = addr?.closest('.card'); return addr && card ? addr.getBoundingClientRect().width / card.getBoundingClientRect().width : 0; });
+    if (ratio < 0.6) throw new Error(`address uses only ${Math.round(ratio * 100)}% of the card`);
+    const icon = await p.evaluate(() => { const b = document.querySelector('.topbar .icon-btn'); return b ? b.getBoundingClientRect().width : 0; });
+    if (icon < 44) throw new Error(`header buttons are ${icon}px wide`);
+    await c.close();
+    // The office reschedules the visit the driver couldn't finish.
+    const j2 = await f.mkJob(soon(1));
+    const dctx = await browser.newContext(); const dp = await dctx.newPage();
+    await driverSignIn(dp, f);
+    const api = dp.request;
+    const mine = await (await api.get(`${BASE}/api/c/${f.cid}/my/jobs`, { headers: H })).json();
+    const v = mine.jobs.find((x) => x.id === j2.id).version;
+    await api.post(`${BASE}/api/c/${f.cid}/jobs/${j2.id}/complete`, { headers: H, data: { submissionId: `e2e-${Math.random()}`, baseVersion: v, outcome: 'unsuccessful', reasonCode: 'dog', reason: '' } });
+    await dctx.close();
+    const { c: oc, p: op } = await ownerContext(f); watch(op, 'wp17-resched');
+    await op.goto(`${f.C}/jobs/${j2.id}`);
+    await op.getByRole('button', { name: 'Reschedule' }).click();
+    await op.waitForURL(/\/jobs\/[0-9a-f-]+\/edit$/);
+    await op.getByText(/Follow-up job #\d+ created/).waitFor();
+    await oc.close(); await f.owner.dispose();
   });
 }
 if (process.env.E2E_ONLY === 'phase3') {

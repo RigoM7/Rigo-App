@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Send, Ban, AlertTriangle, CheckCircle2, Receipt, History, Wrench, MapPin, UserCheck, ShieldCheck, ChevronLeft, CalendarClock, UserRound, Contact, Smartphone, FileText } from 'lucide-react';
 import { useCompany } from '../lib/session';
@@ -114,6 +114,9 @@ export function JobDetail() {
   const status = useSubmit(async (to: string, r?: string) => { await post(`/c/${c.cid}/jobs/${id}/status`, { to, version: q.data.job.version, reason: r }); setCancelOpen(false); toast(to === 'open' ? 'Job opened for scheduling' : to === 'cancelled' ? 'Job cancelled' : 'Moved back to draft'); refresh(); });
   const report = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem`, { text: problem }); setProblemOpen(false); setProblem(''); toast('Problem reported to dispatch'); refresh(); });
   const resolve = useSubmit(async () => { await post(`/c/${c.cid}/jobs/${id}/problem/resolve`, { note: '' }); toast('Problem marked resolved'); refresh(); });
+  // Reschedule a visit that couldn't be finished (R6-m6): the follow-up opens for a time and driver.
+  const nav = useNavigate();
+  const followUp = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/follow-up`); toast(r.already ? `Job #${r.number} is already the follow-up` : `Follow-up job #${r.number} created`); refresh(); nav(c.to(`jobs/${r.id}/edit`)); });
   const prep = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/invoice`); toast(r.covered ? r.covered : r.held ? 'Invoice prepared on hold. See the reasons on the invoice.' : 'Invoice draft prepared'); refresh(); });
   const correct = useSubmit(async () => { const r = await post(`/c/${c.cid}/jobs/${id}/correct`, { ...corr, version: q.data.job.version }); setCorrectOpen(false); toast(r.invoiceNote || 'Correction saved with history'); refresh(); });
   if (q.isLoading) return <div className="page"><LoadingBlock rows={8} /></div>;
@@ -144,10 +147,11 @@ export function JobDetail() {
             {can.edit && !finished && <Button variant="danger" icon={<Ban aria-hidden />} onClick={() => setCancelOpen(true)}>Cancel job</Button>}
             {can.work && <LinkButton variant="primary" to={c.to(`today/${id}`)} icon={<Smartphone aria-hidden />}>Open driver view</LinkButton>}
             {can.edit && job.status === 'draft' && <Button variant="primary" icon={<Send aria-hidden />} busy={status.busy} onClick={() => status.run('open')}>Open for scheduling</Button>}
+            {c.can('jobs.create') && (job.status === 'unsuccessful' || job.status === 'partial') && <Button variant={job.status === 'unsuccessful' ? 'primary' : 'default'} icon={<CalendarClock aria-hidden />} busy={followUp.busy} onClick={() => followUp.run()}>Reschedule</Button>}
           </div>
         </div>
       </div>
-      <ErrorSummary error={status.error ?? prep.error ?? resolve.error} />
+      <ErrorSummary error={status.error ?? prep.error ?? resolve.error ?? followUp.error} />
       {job.status === 'draft' && job.missing?.length > 0 && <Banner tone="warning" title="This draft still needs information before it can be scheduled">{<ul style={{ margin: 0 }}>{job.missing.map((m: string) => <li key={m}>{m}</li>)}</ul>}</Banner>}
       {job.problem_open && (
         <Banner tone="danger" title="A problem was reported" action={c.can('jobs.edit') ? <Button size="sm" busy={resolve.busy} onClick={() => resolve.run()}>Mark resolved</Button> : undefined}>

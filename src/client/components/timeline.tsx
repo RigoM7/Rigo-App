@@ -17,6 +17,12 @@ import { QuickAssign } from './assign';
 
 type Job = any;
 const ROW_H = 68;
+/** Larger text makes blocks taller (R18-m4): rows are spaced in the same proportion as the text size. */
+function textScale() {
+  if (typeof window === 'undefined') return 1;
+  const px = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  return Math.max(1, px / 16);
+}
 const STATUS_ICON: Record<string, ReactElement> = {
   draft: <CircleDot aria-hidden />, open: <Clock aria-hidden />, in_progress: <PlayCircle aria-hidden />, completed: <CheckCircle2 aria-hidden />,
   partial: <AlertTriangle aria-hidden />, unsuccessful: <XCircle aria-hidden />,
@@ -66,6 +72,7 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
   const c = useCompany();
   const qc = useQueryClient();
   const tz = c.company.timezone;
+  const ts = textScale();
   const [sp, setSp] = useSearchParams();
   const today = localDate(new Date(), tz);
   const day = sp.get('day') ?? today;
@@ -189,7 +196,7 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                   const trucks = [...new Set(items.flatMap((i) => (i.job.resources ?? []).filter((r: any) => r.kind === 'truck').map((r: any) => r.name)))];
                   const unassigned = lane.id === '';
                   return (
-                    <div key={lane.id || 'none'} className={`tl-lane${unassigned ? ' unassigned' : ''}`} style={{ minHeight: 16 + rowsN * ROW_H + (hiddenN ? 36 : 0) }}>
+                    <div key={lane.id || 'none'} className={`tl-lane${unassigned ? ' unassigned' : ''}`} style={{ minHeight: (16 + rowsN * ROW_H + (hiddenN ? 36 : 0)) * ts }}>
                       <div className="tl-lane-head">
                         <span className="who">{unassigned ? <UserX aria-hidden /> : <span className="tl-avatar" aria-hidden>{initials(lane.name)}</span>}<span>{lane.name}</span></span>
                         <span className="what">{unassigned ? (packed.length ? `${packed.length} job${packed.length === 1 ? ' needs' : 's need'} a driver` : 'Every job has a driver') : trucks.length ? trucks.join(', ') : items.length ? 'No truck on these jobs' : 'No jobs this day'}</span>
@@ -200,7 +207,7 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                           {items.map(({ job: j, s, e, row }) => (
                             <li key={j.id} style={{ border: 0 }}>
                               <button type="button" className={`tl-block st-${j.status}${j.problem_open ? ' problem' : ''}${((e - s) / 60) * hourPx < 180 ? ' compact' : ''}${j.priority === 'emergency' ? ' emergency' : ''}`}
-                                style={{ left: x(s), width: `calc(${(pct(e) - pct(s)).toFixed(3)}% - 4px)`, top: 8 + row * ROW_H }}
+                                style={{ left: x(s), width: `calc(${(pct(e) - pct(s)).toFixed(3)}% - 4px)`, top: (8 + row * ROW_H) * ts }}
                                 title={label(j)} onClick={() => setOpenJob(j)}>
                                 <span className="c">{j.customer_name ?? j.service_name ?? 'Job'}</span>
                                 <span className="t">{j.status === 'in_progress' ? <LiveDot /> : null}{fmtTime(j.scheduled_start, tz)}<span aria-hidden>·</span>#{j.number}</span>
@@ -213,8 +220,8 @@ export function DispatchTimeline({ title = "Today's timeline", allowFeed = true 
                           ))}
                         </ul>
                         {items.length === 0 && !unassigned ? <span className="tl-empty-lane" aria-hidden>Free</span> : null}
-                        {hiddenN > 0 && <button type="button" className="tl-more" style={{ top: 8 + rowsN * ROW_H }} onClick={() => setMoreOpen(true)}>+{hiddenN} more without a driver</button>}
-                        {unassigned && moreOpen && packed.some((i) => i.row >= 2) && <button type="button" className="tl-more" style={{ top: 8 + rowsN * ROW_H }} onClick={() => setMoreOpen(false)}>Show fewer</button>}
+                        {hiddenN > 0 && <button type="button" className="tl-more" style={{ top: (8 + rowsN * ROW_H) * ts }} onClick={() => setMoreOpen(true)}>+{hiddenN} more without a driver</button>}
+                        {unassigned && moreOpen && packed.some((i) => i.row >= 2) && <button type="button" className="tl-more" style={{ top: (8 + rowsN * ROW_H) * ts }} onClick={() => setMoreOpen(false)}>Show fewer</button>}
                       </div>
                     </div>
                   );

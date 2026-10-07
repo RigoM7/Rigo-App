@@ -109,7 +109,8 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
   },
 
   async 'job.create_followup'(i) {
-    const existing = await i.q.query<{ id: string; number: number }>(`select id, number from rigo.jobs where company_id = $1 and details->>'_followupAction' = $2`, [i.companyId, i.actionId]);
+    // One follow-up per job, whether a person rescheduled it or a workflow did (R6-m6).
+    const existing = await i.q.query<{ id: string; number: number }>(`select id, number from rigo.jobs where company_id = $1 and (details->>'_followupAction' = $2 or (details->>'_followupOf' = $3 and status <> 'cancelled')) limit 1`, [i.companyId, i.actionId, i.subject.id]);
     if (existing.rows[0]) return { status: 'completed', explanation: `Follow-up job #${existing.rows[0].number} already exists.`, context: { followupJobId: existing.rows[0].id } };
     const { rows } = await i.q.query<any>(`select * from rigo.jobs where id = $1`, [i.subject.id]);
     const j = rows[0];

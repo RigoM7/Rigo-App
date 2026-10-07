@@ -245,7 +245,8 @@ export function WorkflowEditor() {
                     </button>
                   </div>
                 ))}
-                {canEdit && <><div className="flow-connector" aria-hidden /><Button size="sm" className="flow-add" icon={<Plus aria-hidden />} onClick={() => addStep(def.steps.length)}>Add step at end</Button></>}
+                {/* Only list items sit directly in the list (R18-m3). */}
+                {canEdit && <div role="listitem"><div className="flow-connector" aria-hidden /><Button size="sm" className="flow-add" icon={<Plus aria-hidden />} onClick={() => addStep(def.steps.length)}>Add step at end</Button></div>}
               </div>
               <div className="card" aria-live="polite">{sel === 'trigger' ? triggerEditor : selIndex >= 0 ? stepPanel(selIndex) : triggerEditor}</div>
             </div>
