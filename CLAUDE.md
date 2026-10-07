@@ -41,8 +41,9 @@ https://rigo-app-dun.vercel.app (Vercel project `rigo-app`, team `rigo9`). Start
   owner's go-ahead.
 
 ## Settings
-`.claude/settings.json` allows the routine commands and denies force pushes and
-`git reset --hard`. Only the owner changes it. Its `defaultMode` has no effect in a repository;
-the owner sets the permission mode in their own session. Never push to `main` or edit an
-applied migration. Commits that only touch docs, `.claude/`, `.github/` or this file skip Vercel builds; a
+`.claude/settings.json` allows the routine commands, installs packages at session start
+(`.claude/hooks/session-start.sh`), denies force pushes, `git reset --hard` and pushing to
+`main`, and blocks editing a migration already on `main` (`.claude/hooks/protect-migrations.sh`).
+Only the owner approves changes to it. Its `defaultMode` has no effect in a repository; the owner
+sets the permission mode in their own session. Commits that only touch docs, `.claude/`, `.github/` or this file skip Vercel builds; a
 first line containing `[checkpoint]` skips them on branches other than `main`.
