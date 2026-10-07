@@ -4,6 +4,7 @@ import { deliverMessage } from '../adapters/index.js';
 import { recordDelivery } from '../modules/messaging.js';
 import { notifyRoles, notifyUsers } from '../modules/inbox.js';
 import { subjectLabel } from './engine.js';
+import { jobUpdateText, textNumber } from '../../shared/messages.js';
 
 // Workflow action primitives. Each handler is idempotent for its action id / subject so a retry
 // never duplicates an invoice, message or job.
@@ -14,7 +15,7 @@ export interface HandlerInput {
 }
 export interface HandlerResult { status: 'completed' | 'simulated' | 'blocked'; explanation: string; result?: unknown; context?: Record<string, string>; link?: string }
 
-async function prepareMessage(q: Q, companyId: string, actionId: string, m: { channel: 'email'; recipient: string; subject: string; body: string; customerId: string | null; jobId: string | null; invoiceId: string | null; userId: string | null }) {
+async function prepareMessage(q: Q, companyId: string, actionId: string, m: { channel: 'email' | 'sms'; recipient: string; subject: string; body: string; customerId: string | null; jobId: string | null; invoiceId: string | null; userId: string | null }) {
   const existing = await q.query<{ id: string }>(`select id from rigo.messages where company_id = $1 and source_key = $2`, [companyId, `action:${actionId}`]);
   if (existing.rows[0]) return existing.rows[0].id;
   const { rows } = await q.query<{ id: string }>(
@@ -57,12 +58,19 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
   },
 
   async 'message.prepare_job_update'(i) {
-    const { rows } = await i.q.query<any>(`select j.*, c.name as customer_name, c.email, co.name as company_name from rigo.jobs j left join rigo.customers c on c.id = j.customer_id join rigo.companies co on co.id = j.company_id where j.id = $1`, [i.subject.id]);
+    const { rows } = await i.q.query<any>(`select j.*, c.name as customer_name, c.email, nullif(coalesce(nullif(j.contact_phone, ''), c.phone), '') as phone, co.name as company_name,
+        s.name as service_name, l.address, coalesce(m.display_name, u.name) as driver_name
+      from rigo.jobs j left join rigo.customers c on c.id = j.customer_id join rigo.companies co on co.id = j.company_id left join rigo.services s on s.id = j.service_id
+      left join rigo.locations l on l.id = j.location_id left join rigo.users u on u.id = j.assigned_user_id left join rigo.memberships m on m.company_id = j.company_id and m.user_id = j.assigned_user_id
+      where j.id = $1`, [i.subject.id]);
     const j = rows[0];
-    const outcome = j.status === 'unsuccessful' ? 'we were not able to complete the visit' : j.status === 'partial' ? 'we completed part of the visit' : 'the visit is complete';
-    const body = `Hello ${j.customer_name ?? ''},\n\nAn update on job #${j.number}: ${outcome}. ${i.params.text ?? ''}\n\nWe will follow up with next steps.\n\n${j.company_name}`.replace(/ +\n/g, '\n');
-    const id = await prepareMessage(i.q, i.companyId, i.actionId, { channel: 'email', recipient: j.email ?? '', subject: `${j.company_name}: update on your service`, body, customerId: j.customer_id, jobId: j.id, invoiceId: null, userId: i.actorUserId });
-    return { status: 'completed', explanation: 'Customer update prepared.', context: { messageId: id } };
+    const u = jobUpdateText(j, i.params.text);
+    // A live update ("on the way", "started") goes by text when there is a number to text; anything
+    // else by email. Either way it is only prepared here: message.send decides whether it can leave.
+    const sms = u.live && !!j.phone;
+    const recipient: string = (sms ? textNumber(j.phone) : j.email) ?? '';
+    const id = await prepareMessage(i.q, i.companyId, i.actionId, { channel: sms ? 'sms' : 'email', recipient, subject: u.subject, body: sms ? u.short : u.body, customerId: j.customer_id, jobId: j.id, invoiceId: null, userId: i.actorUserId });
+    return { status: 'completed', explanation: `${u.what} prepared${sms ? ' as a text' : ''}.${recipient ? '' : ' The customer has no email address on file.'}`, context: { messageId: id } };
   },
 
   async 'message.send'(i) {
@@ -70,7 +78,7 @@ export const handlers: Record<string, (i: HandlerInput) => Promise<HandlerResult
     const m = rows[0];
     if (!m) return { status: 'blocked', explanation: 'The prepared message no longer exists.' };
     if (['sent', 'delivered', 'simulated'].includes(m.status)) return { status: m.status === 'simulated' ? 'simulated' : 'completed', explanation: `Already ${m.status}.` };
-    if (!m.recipient) return { status: 'blocked', explanation: 'The customer has no email address. Add one, then send the prepared message from Messages.', link: 'messages' };
+    if (!m.recipient) return { status: 'blocked', explanation: `The customer has no ${m.channel === 'sms' ? 'phone number' : 'email address'}. Add one, then send the prepared message from Messages.`, link: 'messages' };
     const r = await deliverMessage({ kind: i.companyKind }, m);
     await recordDelivery(i.q, m, r);
     if (r.status === 'simulated') return { status: 'simulated', explanation: r.detail };

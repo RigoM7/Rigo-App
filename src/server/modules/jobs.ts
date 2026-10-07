@@ -4,7 +4,7 @@ import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, needAny, can, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
-import { canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, OUTCOMES, type JobStatus } from '../../shared/jobs.js';
+import { JOB_STATUSES, canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, OUTCOMES, type JobStatus } from '../../shared/jobs.js';
 import { customFieldsSchema, validateValues, readPricing, fieldApplies, type FieldDef } from '../../shared/services.js';
 import { quantityChecks, formatMoney, type JobTruck } from '../../shared/billing.js';
 import { paymentState } from '../../shared/invoices.js';
@@ -208,7 +208,7 @@ jobRoutes.get('/my/jobs', async (c) => {
   need(cc, 'jobs.work');
   const { rows } = await cc.db.query<any>(
     `select j.id, j.number, j.status, j.priority, j.scheduled_start, j.scheduled_end, j.contact_name, j.contact_phone, j.access_instructions, j.notes, j.details,
-            j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at, j.driver_changes,
+            j.version, j.problem_open, j.completion, j.completion_submission_id, j.updated_at, j.driver_changes, j.en_route_at, j.en_route_eta_minutes,
             c.name as customer_name, coalesce(j.location_snapshot->>'address', l.address) as address, coalesce(j.location_snapshot->>'label', l.label) as location_label,
             coalesce(j.location_snapshot->>'access', l.access_instructions) as location_access, coalesce(j.location_snapshot->>'siteContact', l.site_contact) as site_contact, l.custom as location_custom, l.site_contact_phone, l.tanks as location_tanks, s.pricing as service_pricing,
             s.id as service_id, s.name as service_name, s.category, s.fields, s.requires_photo, s.requires_signature,
@@ -665,7 +665,29 @@ jobRoutes.post('/jobs/:id/start', async (c) => {
     if (!canTransition(job.status, 'in_progress')) throw conflict(`This job is ${job.status.replace('_', ' ')} and cannot be started.`);
     await q.query(`update rigo.jobs set status = 'in_progress', version = version + 1, updated_at = now() where id = $1`, [job.id]);
     await event(q, cc, job.id, 'started');
+    await emit(q, cc.company.id, 'job.started', { type: 'job', id: job.id }, {}, { actorUserId: cc.user.id });
     return { version: job.version + 1 };
+  });
+  return c.json(out);
+});
+
+// "On my way" (R15-M2): the assigned driver says they are heading to the stop, with an optional
+// arrival estimate. It doesn't change the job's status; workflows on "A driver is on the way" can
+// prepare a customer update, which is only sent once a text or email service is set up (D10).
+jobRoutes.post('/jobs/:id/en-route', async (c) => {
+  const cc = c.get('cc');
+  const input = await body(c, z.object({ etaMinutes: z.number().int().min(1, 'Enter at least 1 minute').max(600, 'Enter 600 minutes or fewer').nullable().optional() }));
+  const out = await cc.db.tx(async (q) => {
+    const job = await loadJob(cc, q, c.req.param('id'), true);
+    if (!isAssignedWorker(cc, job)) throw forbidden('Only the assigned driver can say they are on the way.');
+    if (job.status !== 'open') throw conflict(job.status === 'in_progress' ? 'This job is already started.' : `This job is ${(JOB_STATUSES as any)[job.status]?.toLowerCase() ?? job.status}.`);
+    const eta = input.etaMinutes ?? null;
+    const { rows } = await q.query<{ en_route_at: string }>(`update rigo.jobs set en_route_at = now(), en_route_eta_minutes = $2, updated_at = now() where id = $1 returning en_route_at`, [job.id, eta]);
+    // Tapping again (a new estimate) is recorded, but the customer update is prepared once per job.
+    const again = !!job.en_route_at;
+    await event(q, cc, job.id, 'en_route', { etaMinutes: eta, again });
+    if (!again) await emit(q, cc.company.id, 'job.en_route', { type: 'job', id: job.id }, { etaMinutes: eta }, { actorUserId: cc.user.id });
+    return { enRouteAt: rows[0].en_route_at, etaMinutes: eta };
   });
   return c.json(out);
 });

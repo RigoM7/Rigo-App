@@ -7,7 +7,7 @@ import { get, post, newId, ApiError, OFFLINE } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, syncPending, onDraftsChanged, isUnsent, needsAttention, WAITING_FOR_SIGNAL, type Draft, type DraftState, type JobSnapshot } from '../lib/offline';
 import { syncSummaryText } from '../lib/autosync';
 import { newerDraft } from '../lib/draft-rev';
-import { Button, Card, Field, Textarea, Input, Select, Checkbox, Dialog, Banner, LoadingBlock, Empty, JobStatus, PriorityPill, GuideTarget, useToast, useConfirm } from '../components/ui';
+import { Button, Card, ErrorSummary, Field, Textarea, Input, Select, Checkbox, Dialog, Banner, LoadingBlock, Empty, JobStatus, PriorityPill, GuideTarget, useToast, useConfirm } from '../components/ui';
 import { fmtTime, fmtDate, relTime, mapsUrl } from '../lib/format';
 import { localDate } from '../../shared/schedule';
 import { DynamicField } from './jobform';
@@ -613,6 +613,7 @@ export function DriverJob() {
             <div className="sticky-actions stack-sm">
               <div className="row-between"><SyncState state={draft ? d.state : null} /><span className="small muted">{draft ? `Saved ${relTime(d.updatedAt)}` : 'Changes save on this phone as you type'}</span></div>
               {/* One primary action at a time, never hidden under the bar (R9-M1). */}
+              {!started && job.status === 'open' && <OnMyWay job={job} onDone={reload} />}
               {!started
                 ? <GuideTarget id="driver-start" block><Button variant="primary" size="lg" block icon={<Play aria-hidden />} busy={busy === 'start'} onClick={start}>{busy === 'start' ? 'Starting…' : 'Start job'}</Button></GuideTarget>
                 : <Button variant="primary" size="lg" block icon={<Send aria-hidden />} busy={busy === 'submit'} onClick={submit} disabled={d.state === 'conflict'}>{busy === 'submit' ? 'Sending…' : 'Submit to office'}</Button>}
@@ -622,6 +623,34 @@ export function DriverJob() {
       )}
       {handover && <HandoverDialog job={job} draft={draft} onClose={() => setHandover(false)} onDone={() => { setHandover(false); qc.invalidateQueries({ queryKey: [c.cid] }); nav(c.to('today')); }} />}
       {node}
+    </div>
+  );
+}
+
+/** "On my way" (R15-M2): tells the office, and the customer once a text or email service is set up. */
+function OnMyWay({ job, onDone }: { job: any; onDone: () => Promise<unknown> | void }) {
+  const c = useCompany();
+  const toast = useToast();
+  const [eta, setEta] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<ApiError | null>(null);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await post(`/c/${c.cid}/jobs/${job.id}/en-route`, { etaMinutes: eta ? Number(eta) : null });
+      toast(job.en_route_at ? 'Arrival estimate updated' : 'The office knows you are on the way');
+      await onDone();
+    } catch (e) { const a = e as ApiError; setErr(a.code === OFFLINE ? new ApiError(0, OFFLINE, 'No signal. Try again when you have signal, or just start the job when you arrive.') : a); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="stack-sm">
+      <ErrorSummary error={err} />
+      {job.en_route_at ? <p className="small" style={{ margin: 0 }}><Truck aria-hidden style={{ width: 16, verticalAlign: 'middle' }} /> On the way since {fmtTime(job.en_route_at, c.company.timezone)}{job.en_route_eta_minutes ? `, about ${job.en_route_eta_minutes} min` : ''}.</p> : null}
+      <div className="row" style={{ alignItems: 'flex-end', flexWrap: 'nowrap' }}>
+        <Field label="Arriving in" optionalText id={`eta-${job.id}`}>{(p) => <Select {...p} value={eta} onChange={(e) => setEta(e.target.value)}><option value="">No estimate</option>{[5, 10, 15, 20, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} minutes</option>)}</Select>}</Field>
+        <Button size="lg" icon={<Truck aria-hidden />} busy={busy} onClick={go}>{job.en_route_at ? 'Update estimate' : 'On my way'}</Button>
+      </div>
     </div>
   );
 }

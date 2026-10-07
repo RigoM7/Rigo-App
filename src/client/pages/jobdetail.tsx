@@ -17,10 +17,11 @@ import { DynamicField } from './jobform';
 import { TruckPicker } from '../components/trucks';
 import { useDocumentTitle } from '../lib/title';
 import { useUnsavedGuard } from '../lib/unsaved';
+import { MessageCustomerButton } from './messages';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Created', edited: 'Edited', status: 'Status changed', assigned: 'Assigned', reassigned: 'Reassigned', unassigned: 'Unassigned', rescheduled: 'Rescheduled',
-  started: 'Started by driver', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', report_prepared: 'Report email prepared', hold_released: 'Invoice hold released after review', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
+  started: 'Started by driver', en_route: 'Driver on the way', completion: 'Outcome recorded', problem: 'Problem reported', problem_resolved: 'Problem resolved', note: 'Note', correction: 'Record corrected', invoice_prepared: 'Invoice prepared', report_prepared: 'Report email prepared', hold_released: 'Invoice hold released after review', not_billed: 'Not billed', payment_collected: 'Payment collected at the stop',
   handed_over: 'Handed over by driver', resources_changed: 'Truck swapped', record_held: 'Driver record waiting for review', late_record: 'Late driver record added', record_dismissed: 'Driver record dismissed',
 };
 
@@ -31,6 +32,7 @@ function eventText(e: any, members: Record<string, string>) {
     case 'assigned': case 'reassigned': case 'unassigned': case 'rescheduled': return [d.to ? `Driver: ${members[d.to] ?? 'member'}` : d.from ? 'Driver removed' : '', d.resources?.length ? `Equipment: ${d.resources.join(', ')}` : '', d.reason ?? '', d.overlapAccepted ? `Assigned despite an overlap: ${d.overlapAccepted.join(' ')}` : ''].filter(Boolean).join(' · ');
     case 'resources_changed': return `Truck swapped: ${d.from} → ${d.to}`;
     case 'completion': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}${d.reason ? `: ${d.reason}` : ''}${d.photos ? ` · ${d.photos} photo(s)` : ''}${d.signed ? (d.typedSignature ? ' · typed signature' : ' · signed') : ''}${d.acceptedFrom ? ' · sent late, accepted by the office' : ''}`;
+    case 'en_route': return `${d.etaMinutes ? `Expected in about ${d.etaMinutes} minutes` : 'No arrival estimate'}${d.again ? ' (updated)' : ''}`;
     case 'started': return d.implicit ? 'Not started on the app first; recorded with the outcome.' : '';
     case 'handed_over': return `To ${d.toName ?? members[d.to] ?? 'another driver'}${d.note ? `: ${d.note}` : ''}`;
     case 'record_held': return `${(OUTCOMES as any)[d.outcome] ?? d.outcome}. ${d.reason === 'finished' ? 'The job was already finished.' : d.reason === 'removed' ? 'The driver was no longer a member.' : 'The job had been given to someone else.'}`;
@@ -131,13 +133,14 @@ export function JobDetail() {
             <div className="record-meta">
               <span><Contact aria-hidden />{customer?.name ?? 'No customer'}</span>
               <span><CalendarClock aria-hidden /><span className="num">{job.scheduled_start ? `${fmtDateTime(job.scheduled_start, c.company.timezone)}${job.scheduled_end ? ` – ${fmtTime(job.scheduled_end, c.company.timezone)}` : ''}` : 'Not scheduled'}</span></span>
-              <span><UserRound aria-hidden />{job.assignee_name ?? 'No driver yet'}</span>
+              <span><UserRound aria-hidden />{job.assignee_name ?? 'No driver yet'}{job.status === 'open' && job.en_route_at ? `, on the way since ${fmtTime(job.en_route_at, c.company.timezone)}${job.en_route_eta_minutes ? ` (about ${job.en_route_eta_minutes} min)` : ''}` : ''}</span>
               {job.billing_status ? <span><Receipt aria-hidden />Billing: {(BILLING_STATUSES as any)[job.billing_status]}</span> : null}
             </div>
           </div>
           <div className="row">
             {can.edit && <LinkButton to={c.to(`jobs/${id}/edit`)} icon={<Pencil aria-hidden />}>Edit</LinkButton>}
             {can.reportProblem && !finished && <Button icon={<AlertTriangle aria-hidden />} onClick={() => setProblemOpen(true)}>Report problem</Button>}
+            {customer && <MessageCustomerButton customerId={customer.id} customerName={customer.name} jobId={job.id} jobNumber={job.number} />}
             {can.edit && !finished && <Button variant="danger" icon={<Ban aria-hidden />} onClick={() => setCancelOpen(true)}>Cancel job</Button>}
             {can.work && <LinkButton variant="primary" to={c.to(`today/${id}`)} icon={<Smartphone aria-hidden />}>Open driver view</LinkButton>}
             {can.edit && job.status === 'draft' && <Button variant="primary" icon={<Send aria-hidden />} busy={status.busy} onClick={() => status.run('open')}>Open for scheduling</Button>}

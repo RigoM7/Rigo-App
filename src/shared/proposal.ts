@@ -1,4 +1,4 @@
-import type { Definition, Step, TriggerEvent } from './workflows.js';
+import { TRIGGERS, type Definition, type Step, type TriggerEvent } from './workflows.js';
 
 // Rule-based (not AI) translation of a plain-language request into a workflow proposal.
 // It recognizes a small vocabulary and says exactly what it did not understand.
@@ -27,9 +27,11 @@ export function proposeFromText(text: string, ctx: ProposalContext = {}): Propos
   else if (/problem|issue reported|report(s|ed)? a problem/.test(t)) event = 'job.problem_reported';
   else if (/assign(ed|s)?/.test(t) && !/invoice/.test(t.split(/then|,/)[0] ?? '')) event = 'job.assigned';
   else if (/invoice (is )?issued/.test(t)) event = 'invoice.issued';
+  else if (/on (my|his|her|their|the) way|en ?route|heading (out|over)/.test(t)) event = 'job.en_route';
+  else if (/(driver|job|visit|work)[^.,]*?\b(starts?|started|begins?|began)\b/.test(t)) event = 'job.started';
   else if (/(job|visit|delivery|service|work)[^.]*?(is )?(complete|completed|finished|done)/.test(t) || /when .*complete/.test(t)) event = 'job.completed';
   else if (/new job|job is created|job created/.test(t)) event = 'job.created';
-  if (event) understood.push(`Trigger: ${event.replace('.', ' ').replace('_', ' ')}`);
+  if (event) understood.push(`Starts when: ${TRIGGERS[event].label.toLowerCase()}`);
   else notUnderstood.push('When it should start (for example "when a job is completed")');
 
   const conditions: Definition['conditions'] = [];
@@ -53,8 +55,10 @@ export function proposeFromText(text: string, ctx: ProposalContext = {}): Propos
   const wantsInvoice = /invoice|bill/.test(t);
   const wantsApproval = /approv|review|check with|ask me/.test(t) || named.length > 0;
   const wantsIssue = /issue|finali[sz]e/.test(t) || (wantsInvoice && wantsApproval);
-  const wantsEmail = /email|send (it|the invoice)|send to (the )?customer|let the customer know|tell the customer/.test(t);
-  const wantsNotify = /notify|tell|alert|let .* know|message (the )?(owner|dispatch|office|driver)/.test(t);
+  const wantsEmail = /email|\btext\b|send (it|the invoice)|send to (the )?customer|let the customer know|tell the customer|message the customer/.test(t);
+  // "Tell the customer" is a customer update, not a team notification.
+  const team = '(the )?(owner|dispatch(er)?s?|office|driver|me|us|team|billing)';
+  const wantsNotify = new RegExp(`notify|alert|tell ${team}\\b|let ${team}[^,.;]{0,20} know|message ${team}\\b`).test(t);
   const wantsFollowup = /follow[- ]?up|reschedul/.test(t);
 
   if (wantsNotify) {
@@ -91,7 +95,7 @@ export function proposeFromText(text: string, ctx: ProposalContext = {}): Propos
   } else if (wantsEmail && event?.startsWith('job.')) {
     steps.push({ id: 'update', action: 'message.prepare_job_update', params: {}, mode: null, approval: noApproval, onException: exc });
     steps.push({ id: 'send', action: 'message.send', params: {}, mode: null, approval: wantsApproval ? { ...noApproval, required: 'always', approverRoles: ['owner'] } : noApproval, onException: exc });
-    understood.push('Prepare and send a customer update');
+    understood.push('Prepare a customer update and send it (a text or email; it stays prepared until a text or email service is set up)');
   }
   if (wantsFollowup && event?.startsWith('job.')) {
     steps.push({ id: 'followup', action: 'job.create_followup', params: {}, mode: null, approval: noApproval, onException: exc });

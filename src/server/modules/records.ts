@@ -91,7 +91,7 @@ recordRoutes.get('/customers/:id', async (c) => {
   const today = localDate(new Date(), cc.company.timezone);
   const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor, greatest(0, coalesce(total_minor,0) - paid_minor - credited_minor) as balance_minor' : 'null as total_minor, null as balance_minor'}, currency, created_at from rigo.invoices where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows
     .map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today) })) : null;
-  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
+  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, direction, subject, status, status_detail, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
   // What they owe: open issued invoices (finance only, R5-m2).
   // Every issued invoice still owed counts, however old (the list above shows only the newest 50).
   const owes = can(cc, 'finance.view') && can(cc, 'invoices.view') ? await (async () => {

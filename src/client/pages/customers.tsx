@@ -13,6 +13,7 @@ import { PaymentPill } from './invoices';
 import { CustomerAccount } from './customer-account';
 import { DynamicField } from './jobform';
 import { CustomerPicker, DuplicateNotice } from '../components/customer-picker';
+import { MessageCustomerButton } from './messages';
 
 function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; onClose: () => void; existing?: any; onSaved: (id: string) => void }) {
   const c = useCompany();
@@ -176,6 +177,7 @@ export function CustomerDetail() {
       {confirm.node}
       <PageHeader back={{ to: c.to('customers'), label: 'Customers' }} title={customer.name} actions={archived ? undefined : <>
         {c.can('customers.edit') && <Button icon={<Pencil aria-hidden />} onClick={() => setEditing(true)}>Edit</Button>}
+        <MessageCustomerButton customerId={customer.id} customerName={customer.name} />
         {c.can('jobs.create') && <LinkButton variant="primary" to={c.to(`jobs/new?customer=${customer.id}`)} icon={<Plus aria-hidden />}>New job</LinkButton>}
       </>} />
       <ErrorSummary error={act.error} />
@@ -228,7 +230,7 @@ export function CustomerDetail() {
           <Card id="past" title="Past jobs">{past.length === 0 ? <p className="muted">No finished jobs yet.</p> : <ul className="list">{past.map(jobRow)}</ul>}</Card>
           {c.can('finance.view') && c.can('invoices.view') && <CustomerAccount customerId={customer.id} />}
           {invoices && <Card id="invs" title="Invoices" actions={c.can('invoices.edit') && c.can('finance.view') && !archived ? <LinkButton size="sm" to={c.to(`invoices/new?customer=${customer.id}`)} icon={<Plus aria-hidden />}>New invoice</LinkButton> : undefined}>{invoices.length === 0 ? <p className="muted">No invoices yet.</p> : <ul className="list">{invoices.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`invoices/${i.id}`)}>{i.number ?? 'Draft'}</Link><span className="row">{i.total_minor !== null ? <span className="num">{formatMoney(i.total_minor, i.currency)}</span> : null}{i.status === 'issued' || i.status === 'void' ? <PaymentPill payment={i.payment} /> : <InvoiceStatus status={i.status} />}</span></li>)}</ul>}</Card>}
-          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}<div className="small muted">{fmtDateTime(m.created_at, c.company.timezone)}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
+          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.direction === 'inbound' ? 'Reply: ' : ''}{m.subject}<div className="small muted">{m.channel === 'sms' ? 'Text' : 'Email'} · {fmtDateTime(m.created_at, c.company.timezone)}{m.status_detail ? ` · ${m.status_detail}` : ''}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
           {c.can('customers.edit') && !mergedInto && (
             <Card id="manage" title="Duplicates and archiving">
               <div className="stack">

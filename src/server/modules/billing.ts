@@ -12,6 +12,7 @@ import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, ap
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
 import { recordDelivery } from './messaging.js';
+import { textNumber } from '../../shared/messages.js';
 
 // Invoices, payments and customer communications.
 
@@ -590,8 +591,44 @@ billingRoutes.get('/messages', async (c) => {
     const hidden = !fin && (!!m.invoice_id || !!m.statement_id);
     return { ...m, body: hidden ? null : m.body, bodyHidden: hidden, recipient: contact ? m.recipient : null };
   });
-  return c.json({ messages, capability: capabilities(cc.company).email });
+  const caps = capabilities(cc.company);
+  return c.json({ messages, capability: caps.email, capabilities: { email: caps.email, sms: caps.sms } });
 });
+
+// A message written by a person to one customer (R15-M2), optionally about one of their jobs. The
+// address or number comes from the customer record on the server, so people who can't see contact
+// details can still write to a customer. It is prepared first; "send" tries the configured service.
+billingRoutes.post('/messages', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'messages.send');
+  const input = await body(c, z.object({
+    customerId: z.string().uuid(), jobId: z.string().uuid().nullable().optional(), channel: z.enum(['email', 'sms']),
+    subject: z.string().trim().max(200).optional(), body: z.string().trim().min(1, 'Write the message').max(10000), send: z.boolean().optional(),
+  }));
+  if (input.channel === 'sms' && input.body.length > 640) throw badRequest('A text can be at most 640 characters.', { fields: { body: 'Shorten the text to 640 characters or fewer' } });
+  const out = await cc.db.tx(async (q) => {
+    const cu = (await q.query<any>(`select id, name, email, phone from rigo.customers where id = $1 and company_id = $2 and merged_into is null`, [input.customerId, cc.company.id])).rows[0];
+    if (!cu) throw notFound('Customer');
+    let job: any = null;
+    if (input.jobId) {
+      job = (await q.query<any>(`select id, number, nullif(contact_phone, '') as contact_phone from rigo.jobs where id = $1 and company_id = $2 and customer_id = $3`, [input.jobId, cc.company.id, cu.id])).rows[0];
+      if (!job) throw notFound('Job');
+    }
+    const recipient: string = (input.channel === 'sms' ? textNumber(job?.contact_phone ?? cu.phone) : cu.email) ?? '';
+    const subject = input.subject || (job ? `${cc.company.name}: about job #${job.number}` : `${cc.company.name}: a message for you`);
+    const { rows } = await q.query<any>(`insert into rigo.messages (company_id, customer_id, job_id, channel, recipient, subject, body, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [cc.company.id, cu.id, job?.id ?? null, input.channel, recipient, subject, input.body, cc.user.id]);
+    const m = rows[0];
+    if (!input.send) return { id: m.id, status: 'prepared', detail: recipient ? 'Prepared, not sent.' : noRecipient(input.channel) };
+    await needConfirmedEmail(cc, 'sending messages to customers');
+    if (!recipient) return { id: m.id, status: 'not_sent', detail: noRecipient(input.channel) };
+    const r = await deliverMessage(cc.company, m);
+    await recordDelivery(q, m, r);
+    return { id: m.id, status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.status === 'blocked' ? `Prepared, not sent. ${r.detail}` : r.detail };
+  });
+  return c.json(out);
+});
+const noRecipient = (channel: string) => channel === 'sms' ? 'Prepared, not sent: the customer has no phone number on file.' : 'Prepared, not sent: the customer has no email address on file.';
 
 billingRoutes.patch('/messages/:id', async (c) => {
   const cc = c.get('cc');
@@ -615,7 +652,7 @@ billingRoutes.post('/messages/:id/send', async (c) => {
     moneyMessageAllowed(cc, m);
     if (m.status !== 'prepared') throw conflict(`This message is already ${m.status}.`);
     await needConfirmedEmail(cc, 'sending messages to customers');
-    if (!m.recipient) throw badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
+    if (!m.recipient) throw m.channel === 'sms' ? badRequest('Add a phone number to text first.', { fields: { recipient: 'Enter a phone number' } }) : badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
     const r = await deliverMessage(cc.company, m);
     await recordDelivery(q, m, r);
     return { status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.detail };
