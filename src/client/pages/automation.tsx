@@ -85,7 +85,7 @@ export function Automation() {
   return (
     <div className="page">
       <div className="page-header">
-        <div><h1>Automation</h1><div className="sub">What Rigo is preparing, waiting on and doing, and the controls to change it.</div></div>
+        <div><h1>Automation</h1><div className="sub">Rigo at work right now: what it is preparing, what waits for a person, and the switches to pause it or change how much it does on its own. The rules it follows are in <Link to={c.to('workflows')}>Workflows</Link>.</div></div>
         {c.can('automation.control') && (d.paused
           ? <Button variant="primary" icon={<PlayCircle aria-hidden />} busy={resume.busy} onClick={() => resume.run()}>Resume automation</Button>
           : <Button icon={<PauseCircle aria-hidden />} onClick={() => setPauseOpen(true)}>Pause all automation</Button>)}

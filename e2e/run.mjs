@@ -782,6 +782,86 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     return `${a1}; ${a2}`;
   });
 }
+// ---------------------------------------------------------------- Phase 3: polish (WP10–WP17)
+// Run only this section with E2E_ONLY=phase3.
+if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase3') {
+  await step('WP15: an unknown address shows "page not found" instead of jumping elsewhere (R17-m4)', async () => {
+    const c = await browser.newContext(); const p = await c.newPage(); watch(p, 'wp15-404');
+    await p.goto(`${BASE}/no-such-page`);
+    await p.getByText('This page does not exist').waitFor();
+    if (!p.url().endsWith('/no-such-page')) throw new Error(`moved to ${p.url()}`);
+    await c.close();
+  });
+
+  await step('WP15/WP13: a driver opening an office job link lands on the driver screen, says "On my way", and a denied page names the permission (R17-m4, R15-M2)', async () => {
+    const f = await fieldCompany('p3-driver');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp15-driver');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/jobs/${job.id}`);
+    await p.waitForURL(new RegExp(`/today/${job.id}$`));
+    await p.getByLabel('Arriving in').selectOption('20');
+    await p.getByRole('button', { name: 'On my way' }).click();
+    await p.getByText(/On the way since .*about 20 min/).waitFor();
+    await p.getByRole('button', { name: 'Update estimate' }).waitFor();
+    await p.goto(`${f.C}/invoices`);
+    await p.getByText("Your role doesn't include this page").waitFor();
+    await p.getByText('It needs permission to see invoices').waitFor().catch(async () => { throw new Error(await p.locator('.empty, .card').first().innerText()); });
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP13: "Message customer" prepares a text and Send says why it is off (R15-M2, R15-m3)', async () => {
+    const f = await fieldCompany('p3-msg');
+    const cust = await f.o.post('/customers', { name: 'Texting Tina', phone: '(555) 777-0101', location: { address: '3 Pine Rd' } });
+    const { c, p } = await ownerContext(f); watch(p, 'wp13-msg');
+    await p.goto(`${f.C}/customers/${cust.body.id}`);
+    await p.getByRole('button', { name: 'Message customer' }).click();
+    const d = p.getByRole('dialog', { name: 'Message Texting Tina' });
+    await d.getByLabel('Text message').check();
+    await d.getByLabel('Message', { exact: true }).fill('Running about 15 minutes late.');
+    if (!(await d.getByRole('button', { name: 'Send' }).isDisabled())) throw new Error('Send is on without a text service');
+    await d.getByText(/Send is off: Text messaging is not set up/).waitFor();
+    await d.getByRole('button', { name: 'Keep as prepared' }).click();
+    await p.getByRole('region', { name: 'Conversation' }).getByText(/^Text ·/).waitFor();
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP14: a Windows (Excel) file keeps its accents, and the review offers what to do with each row (R16-M1, R16-M3)', async () => {
+    const f = await fieldCompany('p3-import');
+    const { c, p } = await ownerContext(f); watch(p, 'wp14-import');
+    await p.goto(`${f.C}/imports`);
+    // "Núñez, José" and "Peña" written as Windows-1252 bytes.
+    const latin1 = (str) => Buffer.from([...str].map((ch) => ch.charCodeAt(0)));
+    const csv = latin1('Customer Name,Street,City,ZIP\r\n"Núñez, José",9 Sycamore Ct,Fairview,75002\r\nPeña Farms,1 Ranch Rd,Millbrook,75001\r\n');
+    await p.locator('input[type=file]').setInputFiles({ name: 'excel.csv', mimeType: 'text/csv', buffer: csv });
+    await p.getByText('Accented names as read: Núñez, José · Peña Farms').waitFor();
+    await p.getByRole('button', { name: 'Review rows' }).click();
+    await p.getByLabel('Turn 1 "Last, First" name(s) around to "First Last"').check();
+    await p.getByText('José Núñez').waitFor();
+    await p.getByText('9 Sycamore Ct, Fairview, 75002').first().waitFor();
+    await axe(p, 'imports review');
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP15: a long customer list shows 50 at a time (R17-m2)', async () => {
+    const f = await fieldCompany('p3-long');
+    for (let i = 0; i < 55; i++) await f.o.post('/customers', { name: `Long list ${String(i).padStart(2, '0')}`, allowDuplicate: true });
+    const { c, p } = await ownerContext(f); watch(p, 'wp15-long');
+    await p.goto(`${f.C}/customers`);
+    await p.getByText(/Showing 50 of 56/).waitFor();
+    await p.getByRole('button', { name: 'Show 6 more' }).click();
+    await p.getByText('Long list 54').waitFor();
+    await c.close(); await f.owner.dispose();
+  });
+}
+if (process.env.E2E_ONLY === 'phase3') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-phase3.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
 if (process.env.E2E_ONLY === 'phase2') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
   await browser.close();

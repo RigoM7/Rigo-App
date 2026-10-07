@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.js';
 import type { Q } from '../db/index.js';
-import { body } from '../lib/util.js';
+import { body, paging } from '../lib/util.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { customFieldsSchema, validateValues, serviceInputSchema, readPricing, storedPricing, datePriceChanges } from '../../shared/services.js';
 import { localDate } from '../../shared/schedule.js';
@@ -52,11 +52,13 @@ recordRoutes.get('/customers', async (c) => {
     const n = 2;
     where += ` and (rigo.fold(c.name) like $${n} ${can(cc, 'customers.contact') ? `or rigo.fold(c.email) like $${n}` : ''}${phone} or exists (select 1 from rigo.locations l where l.customer_id = c.id and rigo.fold(l.address || ' ' || l.label) like $${n}))`;
   }
-  const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 500) || 500));
+  // Pages of customers, searched on the server (R17-m2): `limit` and `offset`, with the total.
+  const { limit, offset } = paging(c.req.query('limit'), c.req.query('offset'), 500);
   const { rows } = await cc.db.query(`select c.*, (select count(*)::int from rigo.locations l where l.customer_id = c.id) as location_count,
       (select count(*)::int from rigo.jobs j where j.customer_id = c.id and j.status in ('draft','open','in_progress')) as open_jobs,
       (select l.address from rigo.locations l where l.customer_id = c.id order by l.created_at limit 1) as first_address
-      from rigo.customers c where ${where} order by lower(c.name) limit ${limit}`, vals);
+      from rigo.customers c where ${where} order by lower(c.name), c.id limit ${limit} offset ${offset}`, vals);
+  const total = rows.length < limit && offset === 0 ? rows.length : (await cc.db.query<{ n: number }>(`select count(*)::int as n from rigo.customers c where ${where}`, vals)).rows[0].n;
   // Nothing found: try names with a typo or two (R5-m1), still within this company and its active customers.
   if (search && !rows.length && /[a-z]{3}/i.test(search)) {
     const archived = c.req.query('archived') === '1';
@@ -70,7 +72,7 @@ recordRoutes.get('/customers', async (c) => {
       return c.json({ customers: near.rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers'), approximate: true });
     }
   }
-  return c.json({ customers: rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers') });
+  return c.json({ customers: rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers'), total, hasMore: offset + rows.length < total, limit, offset });
 });
 
 recordRoutes.get('/customers/:id', async (c) => {

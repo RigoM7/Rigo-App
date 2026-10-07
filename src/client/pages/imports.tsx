@@ -105,7 +105,7 @@ export function Imports() {
         <Card id="rev" title="3. Review and confirm">
           <div className="stack">
             <div className="row"><Pill tone="success">{review.summary.create} new</Pill>{review.summary.addLocation ? <Pill tone="info">{review.summary.addLocation} added as locations</Pill> : null}<Pill>{review.summary.skip} skipped</Pill>{review.summary.errors ? <Pill tone="danger">{review.summary.errors} with errors</Pill> : null}{review.summary.warnings ? <Pill tone="warning">{review.summary.warnings} with warnings</Pill> : null}{review.summary.openingBalances ? <Pill tone="info">{review.summary.openingBalances} opening balance(s)</Pill> : null}</div>
-            {review.summary.lastFirst > 0 && <Checkbox label={`Turn ${review.summary.lastFirst} "Last, First" name(s) around to "First Last"`} checked={flipNames} disabled={doReview.busy} onChange={(e) => doReview.run({ flip: e.target.checked })} />}
+            {review.summary.lastFirst > 0 && <Checkbox label={`Turn ${review.summary.lastFirst} "Last, First" name(s) around to "First Last"`} checked={flipNames} disabled={doReview.busy} onChange={(e) => { setFlipNames(e.target.checked); doReview.run({ flip: e.target.checked }); }} />}
             <p className="muted small">Rows are the same customer only when the name matches and the email or phone matches too. Choose what happens to each row; nothing is merged without you seeing it here.</p>
             {review.summary.openingBalances ? <p className="small" style={{ margin: 0 }}>Each opening balance becomes an invoice draft with one line, "Opening balance", for you to review and issue.</p> : null}
             <div className="table-wrap"><table className="table responsive">

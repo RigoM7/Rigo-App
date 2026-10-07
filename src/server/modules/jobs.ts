@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, needAny, can, audit } from '../http/context.js';
-import { body } from '../lib/util.js';
+import { body, paging } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { JOB_STATUSES, canTransition, completionProblems, outcomeReason, REASON_CODE_KEYS, billingAfterOutcome, missingForOpen, isFinished, DEFAULT_JOB_MINUTES, OUTCOMES, type JobStatus } from '../../shared/jobs.js';
 import { customFieldsSchema, validateValues, readPricing, fieldApplies, type FieldDef } from '../../shared/services.js';
@@ -195,9 +195,12 @@ jobRoutes.get('/jobs', async (c) => {
     number: () => 'j.number desc', updated: () => 'j.updated_at desc', customer: () => 'lower(c.name), j.number',
   };
   const order = (sorts[c.req.query('sort') ?? 'schedule'] ?? sorts.schedule)();
-  const { rows } = await cc.db.query(`${listSelect} where ${where.join(' and ')} order by ${first}${order} limit 500`, vals);
+  // Pages of jobs (R17-m2): `limit` and `offset`; one extra row says whether there are more.
+  const { limit, offset } = paging(c.req.query('limit'), c.req.query('offset'), 500);
+  const { rows } = await cc.db.query(`${listSelect} where ${where.join(' and ')} order by ${first}${order}, j.id limit ${limit + 1} offset ${offset}`, vals);
   return c.json({
-    jobs: rows.map((j: any) => ({ ...j, billing_status: can(cc, 'invoices.view') ? j.billing_status : undefined, nextAction: nextAction(j) })),
+    jobs: rows.slice(0, limit).map((j: any) => ({ ...j, billing_status: can(cc, 'invoices.view') ? j.billing_status : undefined, nextAction: nextAction(j) })),
+    hasMore: rows.length > limit, limit, offset,
     serverTime: new Date().toISOString(),
   });
 });

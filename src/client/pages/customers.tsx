@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, Users, MapPin, Upload, Search, Pencil, Trash2 } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch, del, ApiError } from '../lib/api';
@@ -94,6 +94,8 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
   );
 }
 
+const PAGE = 50;
+
 export function Customers() {
   const c = useCompany();
   const qc = useQueryClient();
@@ -102,8 +104,10 @@ export function Customers() {
   const search = sp.get('q') ?? '';
   const archived = sp.get('archived') === '1';
   const [creating, setCreating] = useState(() => sp.get('new') === '1' && c.can('customers.edit'));
-  const q = useQuery({ queryKey: [c.cid, 'customers', search, archived ? 'archived' : ''], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`) });
-  const setParam = (k: string, val: string) => { const n = new URLSearchParams(sp); if (val) n.set(k, val); else n.delete(k); setSp(n, { replace: true }); };
+  // 50 at a time, searched on the server, so a long list stays quick (R17-m2).
+  const [limit, setLimit] = useState(PAGE);
+  const q = useQuery({ queryKey: [c.cid, 'customers', search, archived ? 'archived' : '', limit], queryFn: () => get(`/c/${c.cid}/customers?limit=${limit}&q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`), placeholderData: keepPreviousData });
+  const setParam = (k: string, val: string) => { setLimit(PAGE); const n = new URLSearchParams(sp); if (val) n.set(k, val); else n.delete(k); setSp(n, { replace: true }); };
   return (
     <div className="page">
       <PageHeader title="Customers" sub="Customers and their service locations are shared by every service your company offers."
@@ -124,7 +128,9 @@ export function Customers() {
               <td data-label="Open jobs" className="right num">{cu.openJobs}</td>
             </tr>
           ))}</tbody>
-        </table></div></div>
+        </table></div>
+        {q.data.total > q.data.customers.length && <div className="row-between" style={{ padding: '12px 16px' }}><span className="small muted">Showing {q.data.customers.length} of {q.data.total}{search ? '' : '. Search to find one quickly.'}</span><Button busy={q.isFetching} onClick={() => setLimit(limit + PAGE)}>Show {Math.min(PAGE, q.data.total - q.data.customers.length)} more</Button></div>}
+        </div>
       )}
       {creating && <CustomerDialog open onClose={() => { setCreating(false); if (sp.get('new')) { const n = new URLSearchParams(sp); n.delete('new'); setSp(n, { replace: true }); } }} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: [c.cid, 'customers'] }); toast('Customer added'); }} />}
     </div>

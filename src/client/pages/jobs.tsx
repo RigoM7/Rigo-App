@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, List, Columns3, GanttChartSquare, Search, AlertTriangle, X, ClipboardList, Truck, ArrowRightLeft } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
@@ -16,6 +16,8 @@ type View = 'list' | 'board' | 'schedule';
 const FINISHED = ['completed', 'partial', 'unsuccessful', 'cancelled'];
 
 export { QuickAssign };
+
+const JOB_PAGE = 100;
 
 export function Jobs() {
   const c = useCompany();
@@ -35,7 +37,10 @@ export function Jobs() {
   const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}), ...(priority ? { priority } : {}), ...(late ? { late: '1' } : {}), ...(resource ? { resource } : {}), ...(oos ? { oos: '1' } : {}) });
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const resourceName = resources.data?.resources.find((r: any) => r.id === resource)?.name;
-  const q = useQuery({ queryKey: [c.cid, 'jobs', params.toString()], queryFn: () => get(`/c/${c.cid}/jobs?${params}`), refetchInterval: 30_000, enabled: view !== 'schedule' });
+  // 100 jobs at a time; "Show more" asks the server for the next ones (R17-m2).
+  const [limit, setLimit] = useState(JOB_PAGE);
+  useEffect(() => setLimit(JOB_PAGE), [params.toString()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const q = useQuery({ queryKey: [c.cid, 'jobs', params.toString(), limit], queryFn: () => get(`/c/${c.cid}/jobs?${params}&limit=${limit}`), refetchInterval: 30_000, enabled: view !== 'schedule', placeholderData: keepPreviousData });
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
   const jobs: any[] = q.data?.jobs ?? [];
   const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem') || priority || late || resource || oos);
@@ -64,7 +69,8 @@ export function Jobs() {
         {q.isLoading ? <LoadingBlock rows={6} /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} /> : jobs.length === 0 ? (
           <div className="card"><Empty icon={<ClipboardList />} title={filtered ? 'No jobs match' : 'No active jobs'} action={c.can('jobs.create') ? <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton> : undefined}>{filtered ? 'Try a different filter or search.' : 'Create a job when a customer contacts you.'}</Empty></div>
         ) : view === 'list' ? <JobTable jobs={jobs} onChange={refresh} resources={resources.data?.resources ?? []} preferFrom={resource} /> : <Board jobs={jobs} />}
-        {q.data && <p className="xsmall muted" aria-live="polite">{jobs.length} job{jobs.length === 1 ? '' : 's'} · updated {fmtTime(q.data.serverTime, c.company.timezone)}</p>}
+        {q.data?.hasMore && <div><Button busy={q.isFetching} onClick={() => setLimit(limit + JOB_PAGE)}>Show more jobs</Button></div>}
+        {q.data && <p className="xsmall muted" aria-live="polite">{q.data.hasMore ? `First ${jobs.length} jobs` : `${jobs.length} job${jobs.length === 1 ? '' : 's'}`} · updated {fmtTime(q.data.serverTime, c.company.timezone)}</p>}
       </>}
     </div>
   );

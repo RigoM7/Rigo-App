@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, need, can, audit, needConfirmedEmail } from '../http/context.js';
-import { body } from '../lib/util.js';
+import { body, paging } from '../lib/util.js';
+import { fold, jobNumberQuery } from '../../shared/customers.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
 import { balanceDue, paymentState, termsLabel, holdKind, PAYMENT_METHODS } from '../../shared/invoices.js';
@@ -49,7 +50,17 @@ billingRoutes.get('/invoices', async (c) => {
   else if (status && status !== 'all') { vals.push(status); where += ` and i.status = $2`; }
   const customer = c.req.query('customer');
   if (customer && /^[0-9a-f-]{36}$/i.test(customer)) { vals.push(customer); where += ` and i.customer_id = $${vals.length}`; }
-  const { rows } = await cc.db.query(`select i.*, c.name as customer_name, j.number as job_number from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id where ${where} order by i.created_at desc limit 300`, vals);
+  // Searched on the server (R17-m2): invoice number, customer name (accents don't matter) or job number.
+  const text = (c.req.query('q') ?? '').trim();
+  if (text) {
+    vals.push(`%${fold(text)}%`);
+    const n = vals.length;
+    const num = jobNumberQuery(text);
+    vals.push(num ?? -1);
+    where += ` and (rigo.fold(coalesce(i.number, '')) like $${n} or rigo.fold(c.name) like $${n} or j.number = $${n + 1})`;
+  }
+  const { limit } = paging(c.req.query('limit'), undefined, 300);
+  const { rows } = await cc.db.query(`select i.*, c.name as customer_name, j.number as job_number from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id where ${where} order by i.created_at desc limit ${limit}`, vals);
   return c.json({ invoices: rows.map((i) => serializeInvoice(cc, i)) });
 });
 
