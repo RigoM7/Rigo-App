@@ -333,7 +333,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const push = useCallback((text: string, tone: Toast['tone'] = 'success', action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, text, tone, action }]);
+    // The same message twice replaces the earlier one instead of stacking a copy (R3-m6).
+    setToasts((t) => [...t.filter((x) => x.text !== text).slice(-2), { id, text, tone, action }]);
     // Toasts with an action (Undo) stay longer so there is time to use it.
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 12000 : 6000);
   }, []);

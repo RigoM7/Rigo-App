@@ -105,7 +105,9 @@ export async function mePayload(db: Db | Q, user: User | null) {
   const extra = await db.query<{ email_verified_at: string | null }>(`select email_verified_at from rigo.users where id = $1`, [user.id]);
   const companies = await db.query(
     `select c.id, c.name, c.kind, c.branding, m.role_key, r.name as role_name, r.is_owner,
-            (c.settings->'setup'->>'completedAt') as setup_completed_at
+            (c.settings->'setup'->>'completedAt') as setup_completed_at,
+            -- What tells two companies with the same name apart (R17-M2).
+            c.created_at, c.address, c.archived_at, (c.settings->'setup'->>'start') = 'demo' as copied_from_demo
        from rigo.memberships m join rigo.companies c on c.id = m.company_id
        join rigo.roles r on r.company_id = c.id and r.key = m.role_key
       where m.user_id = $1 and m.status = 'active' order by c.kind desc, c.name`, [user.id]);

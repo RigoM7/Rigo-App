@@ -6,7 +6,7 @@ import {
   Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, CalendarCheck, WifiOff, FlaskConical, RotateCcw, Check, Zap, Search, PanelLeftClose, PanelLeftOpen,
   UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
-import { refreshMe, signOutAndForget, useCompany, useMe } from '../lib/session';
+import { refreshMe, signOutAndForget, useCompany, useMe, companyMeta } from '../lib/session';
 import { useAutoSync } from '../lib/autosync';
 import { get, patch, post } from '../lib/api';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
@@ -96,11 +96,11 @@ function CompanySwitcher() {
       {open && (
         <div className="menu" style={{ top: 'calc(100% + 8px)', left: 0 }}>
           <div className="menu-label">Signed in as {me.data?.user?.email}</div>
-          {me.data?.companies.map((co) => (
+          {me.data?.companies.filter((co) => !co.archived_at || co.id === c.cid).map((co) => (
             <a key={co.id} href={`/c/${co.id}`} aria-current={co.id === c.cid ? 'true' : undefined}>
               {co.id === c.cid ? <Check aria-hidden /> : co.kind === 'demo' ? <FlaskConical aria-hidden /> : <Building2 aria-hidden />}
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{co.name}</span>
-              <span className="xsmall muted">{co.kind === 'demo' ? 'Demo' : co.role_name}</span>
+              <span className="xsmall muted" style={{ textAlign: 'right' }}>{companyMeta(co)}</span>
             </a>
           ))}
           <hr />

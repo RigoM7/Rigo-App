@@ -11,6 +11,7 @@ import { paymentState } from '../../shared/invoices.js';
 import { localDate } from '../../shared/schedule.js';
 import { fold, jobNumberQuery } from '../../shared/customers.js';
 import { reportLines, reportText } from '../../shared/report.js';
+import { isAfterHours } from '../../shared/hours.js';
 import { deliveryLineSchema, lineKeys, lineProblems, lineQuantity, takesLines, totalQuantity, type DeliveryLine } from '../../shared/deliveries.js';
 import { emit, invalidateApprovalsFor } from '../automation/engine.js';
 import { prepareInvoiceForJob, rebuildHeldInvoice } from './invoicing.js';
@@ -359,7 +360,8 @@ async function validateRefs(q: Q, cc: CompanyCtx, input: z.infer<typeof jobInput
 jobRoutes.post('/jobs', async (c) => {
   const cc = c.get('cc');
   need(cc, 'jobs.create');
-  const input = await body(c, jobInput.extend({ intent: z.enum(['draft', 'open']).default('draft'), clientRequestId: z.string().min(8).max(80) }));
+  // No intent given: a job with everything it needs is created open, otherwise as a draft (R3-M7).
+  const input = await body(c, jobInput.extend({ intent: z.enum(['draft', 'open']).optional(), clientRequestId: z.string().min(8).max(80) }));
   const result = await cc.db.tx(async (q) => {
     // A double-click or retry with the same request id returns the job already created.
     const dup = await q.query<any>(`select id, number from rigo.jobs where company_id = $1 and details->>'_clientRequestId' = $2`, [cc.company.id, input.clientRequestId]);
@@ -367,25 +369,32 @@ jobRoutes.post('/jobs', async (c) => {
     const svc = await validateRefs(q, cc, input);
     const fields = (svc?.fields ?? []) as FieldDef[];
     const req = validateValues(fields.filter((f) => f.stage !== 'completion' && fieldApplies(f, input.details)), input.details ?? {}, { enforceRequired: false });
-    const custom = validateValues(customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).jobs, input.custom ?? {}, { enforceRequired: input.intent === 'open' });
+    const customDefs = customFieldsSchema.parse(cc.company.settings?.customFields ?? {}).jobs;
+    const custom = validateValues(customDefs, input.custom ?? {}, { enforceRequired: input.intent === 'open' });
     const fieldErrors = { ...Object.fromEntries(Object.entries(req.errors).map(([k, v]) => [`details.${k}`, v])), ...Object.fromEntries(Object.entries(custom.errors).map(([k, v]) => [`custom.${k}`, v])) };
     if (Object.keys(fieldErrors).length) throw badRequest('Some information needs attention.', { fields: fieldErrors });
+    // Outside business hours, a service with an after-hours field is marked after-hours (D16). Nothing
+    // is marked until the owner sets hours, and a value someone chose is kept.
+    const hours = cc.company.settings?.businessHours ?? null;
+    const ah = fields.find((f) => f.key === 'after_hours' && f.type === 'boolean');
+    if (ah && hours && input.scheduledStart && req.clean.after_hours === undefined && isAfterHours(input.scheduledStart, cc.company.timezone, hours)) req.clean.after_hours = true;
     const draftLike = { customer_id: input.customerId ?? null, location_id: input.locationId ?? null, service_id: input.serviceId ?? null, details: req.clean };
-    const missing = missingForOpen(draftLike, fields);
+    const missing = [...missingForOpen(draftLike, fields), ...customDefs.filter((d) => d.required && (custom.clean[d.key] === undefined || custom.clean[d.key] === '')).map((d) => `Enter ${d.label.toLowerCase()}`)];
     if (input.intent === 'open' && missing.length) throw badRequest('This job is missing required information. Save it as a draft or complete it.', { missing });
+    const intent = input.intent ?? (missing.length ? 'draft' : 'open');
     const seq = await q.query<{ job_seq: number }>(`update rigo.companies set job_seq = job_seq + 1 where id = $1 returning job_seq`, [cc.company.id]);
     const end = input.scheduledEnd ?? (input.scheduledStart ? new Date(new Date(input.scheduledStart).getTime() + DEFAULT_JOB_MINUTES * 60000).toISOString() : null);
     const { rows } = await q.query<{ id: string }>(
       `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, scheduled_start, scheduled_end, contact_name, contact_phone, access_instructions, notes, details, created_by, priority, booked_rates, bill_to_customer_id)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) returning id`,
-      [cc.company.id, seq.rows[0].job_seq, draftLike.customer_id, draftLike.location_id, draftLike.service_id, input.intent, input.scheduledStart ?? null, end,
+      [cc.company.id, seq.rows[0].job_seq, draftLike.customer_id, draftLike.location_id, draftLike.service_id, intent, input.scheduledStart ?? null, end,
         input.contactName ?? '', input.contactPhone ?? '', input.accessInstructions ?? '', input.notes ?? '',
         JSON.stringify({ ...req.clean, ...Object.fromEntries(Object.entries(custom.clean).map(([k, v]) => [`custom_${k}`, v])), _clientRequestId: input.clientRequestId }), cc.user.id, input.priority ?? 'normal',
         JSON.stringify(await bookedRates(q, svc, input.billToCustomerId ?? draftLike.customer_id)), input.billToCustomerId ?? null]);
-    await event(q, cc, rows[0].id, 'created', { status: input.intent });
+    await event(q, cc, rows[0].id, 'created', { status: intent });
     await emit(q, cc.company.id, 'job.created', { type: 'job', id: rows[0].id }, {}, { actorUserId: cc.user.id });
-    if (input.priority === 'emergency') await alertEmergency(q, cc, { id: rows[0].id, number: seq.rows[0].job_seq, priority: 'emergency', status: input.intent, assigned_user_id: null });
-    return { id: rows[0].id, number: seq.rows[0].job_seq, duplicate: false, missing };
+    if (input.priority === 'emergency') await alertEmergency(q, cc, { id: rows[0].id, number: seq.rows[0].job_seq, priority: 'emergency', status: intent, assigned_user_id: null });
+    return { id: rows[0].id, number: seq.rows[0].job_seq, duplicate: false, missing, status: intent };
   });
   return c.json(result);
 });
@@ -473,11 +482,23 @@ jobRoutes.post('/jobs/:id/assign', async (c) => {
     confirmStarted: z.boolean().default(false),
     /** Assign anyway although it overlaps (deliberate double-booking); recorded in history (R11-m4). */
     allowOverlap: z.boolean().default(false),
+    /** Open a draft while assigning it: drivers don't see drafts (R3-M7). */
+    openDraft: z.boolean().default(false),
   }));
   const out = await cc.db.tx(async (q) => {
     const job = await loadJob(cc, q, c.req.param('id'), true);
     if (job.version !== input.version) throw conflict('This job changed since you loaded it (it may already have been assigned). Reload and try again.');
     if (isFinished(job.status)) throw conflict('Finished jobs cannot be reassigned.');
+    if (job.status === 'draft' && input.userId) {
+      // A driver never sees a draft: assigning one asks to open it, and opens it when it's complete (R3-M7).
+      if (!input.openDraft) throw conflict(`Drivers can't see drafts. Open job #${job.number} now?`, { needsConfirm: 'draft' });
+      const svc = await service(q, cc.company.id, job.service_id);
+      const missing = missingForOpen(job, svc?.fields ?? null);
+      if (missing.length) throw badRequest(`Job #${job.number} can't be opened yet: ${missing.join(', ').toLowerCase()}.`, { missing });
+      await q.query(`update rigo.jobs set status = 'open', updated_at = now() where id = $1`, [job.id]);
+      await event(q, cc, job.id, 'status', { from: 'draft', to: 'open', reason: 'Opened when a driver was assigned' });
+      job.status = 'open';
+    }
     if (job.status === 'in_progress' && job.assigned_user_id && input.userId !== job.assigned_user_id && !input.confirmStarted) {
       // Taking a started job away needs a deliberate yes: the driver may be on site with work recorded (R9-M2).
       const name = (await q.query<any>(`select coalesce(m.display_name, u.name) as name from rigo.users u left join rigo.memberships m on m.user_id = u.id and m.company_id = $2 where u.id = $1`, [job.assigned_user_id, cc.company.id])).rows[0]?.name ?? 'The driver';

@@ -58,7 +58,10 @@ function AssignCard({ data, onDone }: { data: any; onDone: () => void }) {
   const s = useSubmit(async () => {
     // Taking a started job from its driver is a deliberate step (R9-M2).
     if (takingStarted && !(await confirm.ask({ title: `${j.assignee_name ?? 'The driver'} has already started this job`, body: <p>They are no longer assigned once you save. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' }))) return false;
-    const send = (allowOverlap: boolean) => post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version, confirmStarted: takingStarted, allowOverlap });
+    // Drivers don't see drafts: assigning one opens it, after a yes (R3-M7).
+    const openDraft = j.status === 'draft' && !!v.userId;
+    if (openDraft && !(await confirm.ask({ title: `Drivers can't see drafts. Open job #${j.number} now?`, body: <p>Opening the job puts it on the driver's list. It must have a customer, location and service.</p>, confirm: 'Open and assign' }))) return false;
+    const send = (allowOverlap: boolean) => post(`/c/${c.cid}/jobs/${j.id}/assign`, { userId: v.userId || null, resourceIds: v.resourceIds, scheduledStart: toIso(v.start), scheduledEnd: toIso(v.end), version: j.version, confirmStarted: takingStarted, allowOverlap, openDraft });
     try { await send(false); }
     catch (e) {
       // An overlap is listed plainly, and can be accepted on purpose (it is recorded in history).

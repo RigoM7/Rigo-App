@@ -388,7 +388,7 @@ export function serializeService(cc: CompanyCtx, s: any) {
   const fin = can(cc, 'finance.view');
   return {
     id: s.id, name: s.name, category: s.category, description: s.description, fields: s.fields, active: s.active, version: s.version,
-    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, invoiceShowsNotes: !!s.invoice_shows_notes,
+    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, invoiceShowsNotes: !!s.invoice_shows_notes, pricedPerJob: !!s.priced_per_job,
     // Rates are financial fields: removed from the response, not merely hidden, without finance.view.
     pricing: fin ? readPricing(s.pricing) : readPricing(s.pricing).map(({ rateE4, overageRateE4, minimumMinor, ...p }) => ({ ...p, rateSet: rateE4 !== null })),
     taxRateBp: fin ? s.tax_rate_bp : undefined,
@@ -408,6 +408,20 @@ recordRoutes.post('/services', async (c) => {
   const id = await insertService(cc.db, cc.company.id, input);
   await audit(cc.db, cc, 'service.created', { id, name: input.name });
   return c.json({ id });
+});
+
+/**
+ * "Prices are set on each invoice" (R3-M4): a service without fixed rates counts as priced for setup.
+ * Its invoices are still held until someone enters the price, never charged at zero.
+ */
+recordRoutes.post('/services/:id/priced-per-job', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'services.manage');
+  const input = await body(c, z.object({ value: z.boolean() }));
+  const { rows } = await cc.db.query(`update rigo.services set priced_per_job = $3 where id = $1 and company_id = $2 returning id, name`, [c.req.param('id'), cc.company.id, input.value]);
+  if (!rows.length) throw notFound('Service');
+  await audit(cc.db, cc, 'service.updated', { id: c.req.param('id'), pricedPerJob: input.value });
+  return c.json({ ok: true });
 });
 
 recordRoutes.put('/services/:id', async (c) => {

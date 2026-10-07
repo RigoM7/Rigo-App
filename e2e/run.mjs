@@ -828,7 +828,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByLabel('Driver for job #3').selectOption({ label: 'Dana Driver (fictional)' });
     await p.getByText('Dana Driver (fictional) assigned to job #3').waitFor();
     await guide.getByText(/Done\. Job #3 is assigned to Dana Driver/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 4 is the driver's: switch, start, record, submit.
     await guide.getByText('Step 4 of 7').waitFor();
     await guide.getByRole('button', { name: 'Switch to Driver to complete the job' }).click();
@@ -843,7 +843,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
     await p.getByText('Sent. The office has your record.').waitFor();
     await guide.getByText(/Done\. The office has the driver's record/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 5: back to the Owner, approve from a card that shows the bill.
     await guide.getByText('Step 5 of 7').waitFor();
     await guide.getByRole('button', { name: 'Switch to Owner to approve' }).click();
@@ -869,7 +869,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
     await p.getByText(/Approved\. Rigo will continue/).waitFor();
     await guide.getByText(/Done\. The invoice for job #3 is approved and issued/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 6: the prepared email opens with Send (simulated) highlighted.
     await guide.getByText('Step 6 of 7').waitFor();
     await guide.getByText('Press Send (simulated) to see what the customer would receive.').waitFor();
@@ -885,7 +885,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await guide.getByText(/Done\. Sent as Simulated/).waitFor();
     const msgs = (await v.api.get('/messages')).messages;
     if (!msgs.some((m) => m.status === 'simulated' && m.job_number === 3)) throw new Error('job #3 email is not marked simulated');
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     await guide.getByText('Step 7 of 7').waitFor();
     await guide.getByRole('button', { name: 'Done', exact: true }).click();
     await guide.waitFor({ state: 'hidden' });

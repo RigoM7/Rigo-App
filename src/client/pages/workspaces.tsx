@@ -3,12 +3,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, Plus, MailOpen, ChevronRight, LogOut, UserCircle2, ChevronLeft } from 'lucide-react';
-import { refreshMe, signOutAndForget, useMe } from '../lib/session';
+import { refreshMe, signOutAndForget, useMe, companyMeta } from '../lib/session';
 import { useDocumentTitle } from '../lib/title';
 import { ConfirmEmailNotice } from './account';
-import { post } from '../lib/api';
+import { post, ApiError } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, Pill, Banner, LoadingBlock, Checkbox, Wordmark, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, Pill, Banner, LoadingBlock, Checkbox, Wordmark, useToast, useConfirm } from '../components/ui';
 import { CompanyChip } from '../components/shell';
 import { SERVICE_CATEGORIES } from '../../shared/services';
 import { CURRENCIES } from '../../shared/billing';
@@ -45,7 +45,9 @@ export function Workspaces() {
   const accept = useSubmit(async (id: string) => { const r = await post(`/me/invitations/${id}/accept`); await refreshMe(qc); toast('Invitation accepted'); nav(`/c/${r.companyId}`); });
   useDocumentTitle('Workspaces');
   if (me.isLoading || !me.data) return <div className="auth-wrap"><LoadingBlock /></div>;
-  const real = me.data.companies.filter((c) => c.kind === 'real');
+  const allReal = me.data.companies.filter((c) => c.kind === 'real');
+  const real = allReal.filter((c) => !c.archived_at);
+  const archived = allReal.filter((c) => c.archived_at);
   const demoCo = me.data.companies.find((c) => c.kind === 'demo');
   return (
     <div className="shell">
@@ -76,9 +78,10 @@ export function Workspaces() {
               <ul className="workspace-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                 {real.map((c) => (
                   <li key={c.id} style={{ minWidth: 0 }}>
-                    <Link to={`/c/${c.id}`} className="workspace">
+                    {/* An owner whose setup isn't finished goes straight back to it (R3-M6). */}
+                    <Link to={c.is_owner && !c.setup_completed_at ? `/c/${c.id}/setup` : `/c/${c.id}`} className="workspace">
                       <CompanyChip cid={c.id} name={c.name} logo={c.branding?.logoFileId} accent={c.branding?.accent} />
-                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}</span><span className="small muted">{c.role_name}{c.setup_completed_at || !c.is_owner ? '' : ' · setup in progress'}</span></span>
+                      <span style={{ minWidth: 0 }}><span className="wname" style={{ display: 'block' }}>{c.name}{c.is_owner && !c.setup_completed_at ? <> <Pill tone="warning">Setup in progress</Pill></> : null}</span><span className="small muted">{companyMeta(c)}</span></span>
                       <ChevronRight aria-hidden />
                     </Link>
                   </li>
@@ -86,6 +89,11 @@ export function Workspaces() {
               </ul>
             )}
           </section>
+          {archived.length > 0 && (
+            <details className="advanced"><summary className="small">Archived companies ({archived.length})</summary>
+              <ul className="list">{archived.map((c) => <li key={c.id} className="row-between" style={{ padding: '8px 0' }}><span>{c.name}<div className="small muted">{companyMeta(c)}</div></span><Link className="btn btn-sm" to={`/c/${c.id}/settings?tab=company`}>Open to restore</Link></li>)}</ul>
+            </details>
+          )}
           <Card title={<h2 className="row" style={{ gap: 8 }}><FlaskConical aria-hidden style={{ width: 18 }} />Free demo</h2>}>
             <p>{real.length ? '' : 'Not sure yet? Try a sample company first; nothing is sent or charged. '}A fictional fuel, portable toilet and septic company where you can dispatch a job, finish it as a driver and approve the invoice.</p>
             <ErrorSummary error={demo.error} />
@@ -141,7 +149,17 @@ export function CompanyBasicsForm({ onSubmit, busy, error, submitLabel, initial 
 export function NewCompany() {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const s = useSubmit(async (v: any) => { const r = await post('/companies', v); await refreshMe(qc); nav(`/c/${r.id}/setup`); });
+  const confirm = useConfirm();
+  const s = useSubmit(async (v: any) => {
+    let r;
+    try { r = await post('/companies', v); } catch (e) {
+      // Same name as one of theirs: ask, since the two would be hard to tell apart (R3-m1).
+      if (!(e instanceof ApiError) || e.details?.needsConfirm !== 'duplicateName') throw e;
+      if (!(await confirm.ask({ title: e.message, body: <p>Both will show in your list as {v.name}, with the date each was created. Choose a different name if this is a mistake.</p>, confirm: 'Create another' }))) return;
+      r = await post('/companies', { ...v, allowDuplicateName: true });
+    }
+    await refreshMe(qc); nav(`/c/${r.id}/setup`);
+  });
   useDocumentTitle('Create a company');
   return (
     <div className="shell">
@@ -150,7 +168,8 @@ export function NewCompany() {
         <div className="page page-narrow">
           <div><Link className="back-link" to="/workspaces"><ChevronLeft aria-hidden />Workspaces</Link><h1 style={{ marginTop: 8 }}>Create a company</h1><p className="muted" style={{ marginTop: 6 }}>You become its owner. Creating a company is free. You can finish setup over several visits.</p></div>
           <Banner tone="info">A new company starts empty: no sample customers, jobs or invoices. Use the demo to try Rigo with fictional data.</Banner>
-          <div className="card"><CompanyBasicsForm onSubmit={(v) => s.run(v)} busy={s.busy} error={s.error} submitLabel="Create company" /></div>
+          {confirm.node}
+          <div className="card"><CompanyBasicsForm onSubmit={(v) => s.run(v)} busy={s.busy} error={s.error?.details?.needsConfirm ? null : s.error} submitLabel="Create company" /></div>
         </div>
       </main>
     </div>

@@ -4,18 +4,19 @@ import { useQueries } from '@tanstack/react-query';
 import { get } from '../lib/api';
 import { fmtDateTime } from '../lib/format';
 import { activityText } from '../../shared/activity';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react';
-import { useCompany } from '../lib/session';
-import { patch, api } from '../lib/api';
+import { useCompany, refreshMe } from '../lib/session';
+import { patch, post, api } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, LoadingBlock, useToast, useConfirm } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Tabs, Banner, Checkbox, Textarea, LoadingBlock, LinkButton, useToast, useConfirm } from '../components/ui';
 import { ACCENT_PRESETS, accentVariants, contrast } from '../../shared/branding';
 import { CURRENCIES } from '../../shared/billing';
 import { SERVICE_CATEGORIES } from '../../shared/services';
 import { CapabilityList } from './automation';
 import { useDirtySet, useReportDirty, useUnsavedGuard } from '../lib/unsaved';
+import { DAY_NAMES, hoursText } from '../../shared/hours';
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f_$1').slice(0, 40) || 'field';
 
@@ -83,7 +84,7 @@ function Branding({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
           variants.usable ? <Banner tone="info" title="Accessible variants">Light theme uses {variants.light} ({contrast(variants.light, '#FFFFFF').toFixed(1)}:1 on white); dark theme uses {variants.dark} ({contrast(variants.dark, '#161618').toFixed(1)}:1 on dark surfaces).<div className="row" style={{ marginTop: 8 }}><span className="pill" style={{ background: variants.light, color: '#fff' }}>Light</span><span className="pill" style={{ background: '#161618', color: variants.dark }}>Dark</span></div></Banner>
             : <Banner tone="warning">This color cannot be made readable in both themes. Choose another.</Banner>
         )}
-        <BrandPreview name={c.company.name} accent={variants.usable && /^#[0-9a-fA-F]{6}$/.test(accent) ? variants.light : '#B91C1C'} />
+        <BrandPreview name={c.company.name} logo={c.company.branding?.logoFileId ?? null} accent={variants.usable && /^#[0-9a-fA-F]{6}$/.test(accent) ? variants.light : '#B91C1C'} />
         <div><Button variant="primary" busy={s.busy} onClick={() => s.run()}>Save branding</Button></div>
       </div>
     </Card>
@@ -91,15 +92,19 @@ function Branding({ onDirty }: { onDirty?: (k: string, v: boolean) => void }) {
 }
 
 /** Live preview of exactly where the accent appears: switcher chip, invoice header, message preview. */
-function BrandPreview({ name, accent }: { name: string; accent: string }) {
+function BrandPreview({ name, accent, logo }: { name: string; accent: string; logo?: string | null }) {
+  const c = useCompany();
   const initial = (name.replace(/[^A-Za-z0-9]/g, '').charAt(0) || '?').toUpperCase();
+  // The uploaded logo, as it appears in the switcher, on invoices and in messages (R3-m6).
+  const mark = (size?: number) => logo ? <img className="company-logo" src={`/api/c/${c.cid}/branding/logo?v=${logo}`} alt="" style={size ? { width: size, height: size } : undefined} />
+    : <span className="company-chip" data-initial={initial} style={{ background: accent, ...(size ? { width: size, height: size, fontSize: 11 } : {}) }} />;
   return (
     <section className="stack-sm" aria-labelledby="bp-h">
       <h3 id="bp-h" className="label">Preview <span className="muted" style={{ fontWeight: 400 }}>(unsaved changes show here first)</span></h3>
       <div className="brand-preview" aria-hidden>
-        <div className="bp-chrome"><span className="company-chip" data-initial={initial} style={{ background: accent }} /><span>{name}</span></div>
-        <div className="bp-doc"><div style={{ height: 4, borderRadius: 2, background: accent }} /><div className="row-between" style={{ marginTop: 10 }}><strong>{name}</strong><span className="doc-title" style={{ fontSize: 'var(--fs-16)' }}>Invoice</span></div></div>
-        <div className="bp-msg"><span className="company-chip" data-initial={initial} style={{ background: accent, width: 20, height: 20, fontSize: 11 }} /><span><strong>{name}</strong><br /><span className="muted">Your invoice is ready</span></span></div>
+        <div className="bp-chrome">{mark()}<span>{name}</span></div>
+        <div className="bp-doc"><div style={{ height: 4, borderRadius: 2, background: accent }} /><div className="row-between" style={{ marginTop: 10 }}><span className="row" style={{ gap: 8 }}>{logo ? mark(28) : null}<strong>{name}</strong></span><span className="doc-title" style={{ fontSize: 'var(--fs-16)' }}>Invoice</span></div></div>
+        <div className="bp-msg">{mark(20)}<span><strong>{name}</strong><br /><span className="muted">Your invoice is ready</span></span></div>
       </div>
     </section>
   );
@@ -243,6 +248,8 @@ export function SettingsPage() {
           </form>
         </Card>
       )}
+      {tab === 'company' && <Card id="hours" title="Business hours"><BusinessHoursForm /></Card>}
+      {tab === 'company' && <CompanyAdmin />}
       {tab === 'invoices' && <InvoiceSettings onDirty={dirt.report} />}
       {tab === 'branding' && <Branding onDirty={dirt.report} />}
       {tab === 'fields' && <CustomFieldsEditor onDirty={dirt.report} />}
@@ -250,5 +257,86 @@ export function SettingsPage() {
       {tab === 'activity' && c.role.isOwner && <ActivityLog />}
       {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">These services stay off until they are set up for Rigo. Creating a company is free, and Rigo does not bill you yet.</p><CapabilityList /></Card>}
     </div>
+  );
+}
+
+/** Business hours (D16): visits outside them are marked after-hours. Used in Settings and in setup. */
+export function BusinessHoursForm({ onSaved }: { onSaved?: () => void }) {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cur = c.company.businessHours;
+  const [v, setV] = useState(() => cur ?? { days: [1, 2, 3, 4, 5], start: '07:00', end: '17:00' });
+  const s = useSubmit(async (clear?: boolean) => {
+    await patch(`/c/${c.cid}/settings`, { businessHours: clear ? null : v });
+    await qc.invalidateQueries({ queryKey: [c.cid] });
+    toast(clear ? 'Business hours cleared' : 'Business hours saved');
+    onSaved?.();
+  });
+  return (
+    <form className="stack" noValidate onSubmit={(e) => { e.preventDefault(); s.run(false); }}>
+      <p className="muted" style={{ margin: 0 }}>A visit booked outside these hours is marked "After-hours visit", so its fee is charged where your price list has one. {cur ? <>Now: <strong>{hoursText(cur)}</strong>.</> : 'Until you set them, nothing is marked after-hours automatically; you can still tick it on a job.'}</p>
+      <ErrorSummary error={s.error} labels={{ 'businessHours.end': 'f-hours-end', 'businessHours.start': 'f-hours-start' }} />
+      <fieldset><legend>Open on</legend>
+        <div className="chip-choice">{DAY_NAMES.map((d, i) => <label key={d}><input type="checkbox" checked={v.days.includes(i)} onChange={(e) => setV({ ...v, days: e.target.checked ? [...v.days, i].sort() : v.days.filter((x) => x !== i) })} />{d.slice(0, 3)}</label>)}</div>
+      </fieldset>
+      <div className="grid-2">
+        <Field label="Opens at" id="f-hours-start" error={s.fieldError('businessHours.start')}>{(p) => <Input {...p} type="time" value={v.start} onChange={(e) => setV({ ...v, start: e.target.value })} />}</Field>
+        <Field label="Closes at" id="f-hours-end" error={s.fieldError('businessHours.end')}>{(p) => <Input {...p} type="time" value={v.end} onChange={(e) => setV({ ...v, end: e.target.value })} />}</Field>
+      </div>
+      <div className="form-actions"><Button type="submit" variant="primary" busy={s.busy}>Save hours</Button>{cur ? <Button busy={s.busy} onClick={() => s.run(true)}>Clear hours</Button> : null}</div>
+    </form>
+  );
+}
+
+/** Setup progress, and the owner's archive and delete (R3-M6, R3-m1). */
+function CompanyAdmin() {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  const [typing, setTyping] = useState<null | 'archive' | 'delete'>(null);
+  const [name, setName] = useState('');
+  const archived = !!(c.company as any).archived_at;
+  const s = useSubmit(async (what: 'archive' | 'delete' | 'unarchive') => {
+    await post(`/c/${c.cid}/${what}`, what === 'unarchive' ? {} : { confirmName: name });
+    setTyping(null); setName('');
+    await refreshMe(qc);
+    if (what === 'delete') { nav('/workspaces'); return; }
+    await qc.invalidateQueries({ queryKey: [c.cid] });
+  });
+  return (
+    <>
+      {c.setup && (
+        <Card id="setup-link" title="Setup">
+          <div className="row-between" style={{ gap: 12, flexWrap: 'wrap' }}>
+            <span>{c.setup.done} of {c.setup.total} done{c.setup.ready ? ' · ready to run jobs' : ''}</span>
+            <LinkButton to={c.to('setup')}>{c.setup.ready ? 'Review setup' : 'Continue setup'}</LinkButton>
+          </div>
+        </Card>
+      )}
+      {c.role.isOwner && !c.demo && (
+        <Card id="danger" title="Archive or delete this company">
+          <div className="stack">
+            <ErrorSummary error={s.error} />
+            {archived ? (
+              <div className="row-between" style={{ gap: 12, flexWrap: 'wrap' }}><span>This company is archived. It is hidden from your company list.</span><Button busy={s.busy} onClick={() => s.run('unarchive')}>Restore company</Button></div>
+            ) : <>
+              <p className="muted" style={{ margin: 0 }}>Archiving hides the company from your list and keeps everything. Deleting removes it for good, and only works for a company that never issued an invoice or recorded a payment.</p>
+              {typing ? (
+                <div className="stack-sm">
+                  <Field label={`Type ${c.company.name} to confirm`} id="f-confirmName" error={s.fieldError('confirmName')}>{(p) => <Input {...p} maxLength={120} autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+                  <div className="form-actions">
+                    <Button variant="danger" busy={s.busy} disabled={name.trim().toLowerCase() !== c.company.name.trim().toLowerCase()} onClick={() => s.run(typing)}>{typing === 'delete' ? 'Delete company for good' : 'Archive company'}</Button>
+                    <Button onClick={() => { setTyping(null); setName(''); }}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="form-actions"><Button onClick={() => setTyping('archive')}>Archive company…</Button><Button variant="danger" onClick={() => setTyping('delete')}>Delete company…</Button></div>
+              )}
+            </>}
+          </div>
+        </Card>
+      )}
+    </>
   );
 }

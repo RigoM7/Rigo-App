@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Circle, ChevronRight, Truck, UserPlus, FlaskConical, Zap, Wrench, Building2 } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, Truck, UserPlus, FlaskConical, Zap, Wrench, Building2, Receipt, Clock } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch } from '../lib/api';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Banner, LinkButton, useToast } from '../components/ui';
+import { Button, Card, Field, Input, Select, ErrorSummary, PageHeader, Banner, LinkButton, Checkbox, useToast } from '../components/ui';
 import { ModePicker } from './automation';
+import { BusinessHoursForm } from './settings';
 import { SERVICE_CATEGORIES, starterService } from '../../shared/services';
+import { zonedToUtc } from '../../shared/schedule';
 
 export function SetupChecklist({ compact }: { compact?: boolean }) {
   const c = useCompany();
@@ -33,6 +35,8 @@ export function SetupChecklist({ compact }: { compact?: boolean }) {
 
 const STEPS = [
   { key: 'services', label: 'Services', icon: <Wrench aria-hidden /> },
+  { key: 'prices', label: 'Prices', icon: <Receipt aria-hidden /> },
+  { key: 'hours', label: 'Hours', icon: <Clock aria-hidden /> },
   { key: 'automation', label: 'Automation', icon: <Zap aria-hidden /> },
   { key: 'resources', label: 'Trucks', icon: <Truck aria-hidden /> },
   { key: 'team', label: 'Team', icon: <UserPlus aria-hidden /> },
@@ -70,9 +74,18 @@ export function Setup() {
   const addTruck = useSubmit(async () => { await post(`/c/${c.cid}/resources`, { kind: 'truck', ...truck }); setTruck({ name: '', identifier: '', capacity: '' }); refresh(); toast('Truck added'); });
   const invite = useSubmit(async () => { const r = await post(`/c/${c.cid}/invitations`, inv); setInvLink(r.link); setInv({ ...inv, email: '' }); refresh(); });
   const testJob = useSubmit(async () => {
+    // A complete, open job (R3-M7): the first choice for each required detail, tomorrow at 9:00.
     const svc = services.data?.services.find((s: any) => s.active);
-    const cust = await post(`/c/${c.cid}/customers`, { name: 'Test customer (setup check)', notes: 'Created during setup to try a job. Safe to cancel.', location: { address: 'Test address — replace or cancel' } });
-    const r = await post(`/c/${c.cid}/jobs`, { customerId: cust.id, serviceId: svc?.id ?? null, notes: 'Setup test job. Cancel it when you are done.', intent: 'draft', clientRequestId: `setup-${c.cid}` });
+    const details: Record<string, unknown> = {};
+    for (const f of (svc?.fields ?? []).filter((x: any) => x.stage !== 'completion' && x.required)) {
+      details[f.key] = f.type === 'select' ? f.options?.[0] : f.type === 'number' ? '1' : f.type === 'boolean' ? false : f.type === 'date' ? new Date().toISOString().slice(0, 10) : 'Setup test';
+    }
+    const cust = await post(`/c/${c.cid}/customers`, { name: 'Test customer (setup check)', notes: 'Created during setup to try a job. Safe to cancel.', allowDuplicate: true, location: { label: 'Test stop', address: 'Test address (setup check), not a real stop' } });
+    const loc = (await get(`/c/${c.cid}/customers/${cust.id}`)).locations[0]?.id ?? null;
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: c.company.timezone }).format(tomorrow);
+    const start = zonedToUtc(day, '09:00', c.company.timezone).toISOString();
+    const r = await post(`/c/${c.cid}/jobs`, { customerId: cust.id, locationId: loc, serviceId: svc?.id ?? null, details, scheduledStart: start, notes: 'Setup test job. Cancel it when you are done.', intent: svc ? 'open' : 'draft', clientRequestId: `setup-${c.cid}` });
     refresh(); nav(c.to(`jobs/${r.id}`));
   });
   if (!c.can('company.settings')) return <div className="page"><Banner tone="warning">Only owners can change company setup.</Banner></div>;
@@ -89,8 +102,17 @@ export function Setup() {
             <ul className="list">{(['fuel', 'portable_toilet', 'septic', 'other'] as const).map((k) => (
               <li key={k} className="row-between" style={{ padding: '10px 0' }}><span>{SERVICE_CATEGORIES[k]}</span>{have.has(k) ? <span className="row small"><CheckCircle2 aria-hidden style={{ color: 'var(--success)', width: 18 }} />Added</span> : <Button size="sm" busy={addSvc.busy} onClick={() => addSvc.run(k)}>Add</Button>}</li>
             ))}</ul>
-            <p className="small muted">Set prices later in <Link to={c.to('services')}>Services &amp; pricing</Link>. Invoices are held, not priced at zero, until rates are set.</p>
+            <p className="small muted">Next you set their prices. Invoices are held, not priced at zero, until rates are set.</p>
             <div className="form-actions"><Button variant="primary" onClick={next}>Continue</Button></div>
+          </div>
+        </Card>
+      )}
+      {step === 'prices' && <PricesStep services={services.data?.services ?? []} onNext={next} />}
+      {step === 'hours' && (
+        <Card id="s-hours" title="When are you open? (optional)">
+          <div className="stack">
+            <BusinessHoursForm onSaved={next} />
+            <div className="form-actions"><Button variant="ghost" onClick={next}>Skip for now</Button></div>
           </div>
         </Card>
       )}
@@ -138,7 +160,7 @@ export function Setup() {
       {step === 'test' && (
         <Card id="s5" title="Try a test job (optional)">
           <div className="stack">
-            <p>Creates a clearly labeled test customer and a draft job so you can try assigning, completing and invoicing. Cancel it afterwards. If you'd rather practice with fictional data, use the demo instead.</p>
+            <p>Creates a clearly labeled test customer and an open job for tomorrow at 9:00 so you can try assigning, completing and invoicing. Cancel it afterwards. If you'd rather practice with fictional data, use the demo instead.</p>
             <ErrorSummary error={testJob.error} />
             <div className="form-actions"><Button variant="primary" busy={testJob.busy} onClick={() => testJob.run()}>Create a test job</Button><Button variant="ghost" onClick={async () => { await mark('testJobSkipped'); await mark('completed'); nav(c.to('')); }}>Skip and finish</Button></div>
           </div>
@@ -147,5 +169,48 @@ export function Setup() {
       <SetupChecklist />
       <p className="small muted row"><Building2 aria-hidden style={{ width: 16 }} />Company basics, branding and custom fields are in <Link to={c.to('settings')}>Settings</Link>. A logo is optional.</p>
     </div>
+  );
+}
+
+/**
+ * Setup's Prices step (R3-M4): each active service's rates, set in the service editor with its
+ * example bill, or marked "priced on each invoice". Setup isn't "ready" until every one is done.
+ */
+function PricesStep({ services, onNext }: { services: any[]; onNext: () => void }) {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const perJob = useSubmit(async (id: string, value: boolean) => { await post(`/c/${c.cid}/services/${id}/priced-per-job`, { value }); await qc.invalidateQueries({ queryKey: [c.cid] }); });
+  const active = services.filter((s) => s.active);
+  const status = (s: any) => {
+    const lines = s.pricing ?? [];
+    const set = lines.filter((p: any) => (p.rateE4 ?? null) !== null || p.rateSet).length;
+    return { set, total: lines.length, done: s.pricedPerJob || (lines.length > 0 && set === lines.length) };
+  };
+  const allDone = active.length > 0 && active.every((s) => status(s).done);
+  return (
+    <Card id="s-prices" title="Set your prices">
+      <div className="stack">
+        <p className="muted">Each service's price list has an example bill that shows exactly what a job is charged. Rates can have up to 4 decimals ($3.8995 per gallon). If you price every job by hand, say so and the invoice asks for the price instead.</p>
+        <ErrorSummary error={perJob.error} />
+        {active.length === 0 ? <Banner tone="warning">Add a service first.</Banner> : (
+          <ul className="list">{active.map((s) => {
+            const st = status(s);
+            return (
+              <li key={s.id} className="row-between" style={{ padding: '10px 0', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ minWidth: 0 }}><strong>{s.name}</strong>
+                  <div className="small muted">{s.pricedPerJob ? 'Priced on each invoice' : `${st.set} of ${st.total} rates set`}</div></span>
+                <span className="row" style={{ gap: 8 }}>
+                  {st.done ? <span className="row small"><CheckCircle2 aria-hidden style={{ color: 'var(--success)', width: 18 }} />Done</span> : null}
+                  {!s.pricedPerJob && <LinkButton size="sm" variant={st.done ? 'default' : 'primary'} to={c.to(`services/${s.id}#pricing`)}>{st.done ? 'Review prices' : 'Set prices'}</LinkButton>}
+                  <Checkbox label="Priced on each invoice" checked={!!s.pricedPerJob} onChange={(e) => perJob.run(s.id, e.target.checked)} />
+                </span>
+              </li>
+            );
+          })}</ul>
+        )}
+        {!allDone && active.length > 0 && <p className="small muted" style={{ margin: 0 }}>You can continue and come back: Home keeps a "Finish setting up" card until prices are done.</p>}
+        <div className="form-actions"><Button variant="primary" onClick={onNext}>Continue</Button></div>
+      </div>
+    </Card>
   );
 }

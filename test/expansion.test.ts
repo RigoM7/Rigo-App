@@ -65,7 +65,10 @@ describe('demo workspace', () => {
     expect((await a.get(`/c/${real}/invoices`)).body.invoices).toHaveLength(0);
     expect((await a.get(`/c/${real}/resources`)).body.resources).toHaveLength(0);
     const svcs = (await a.get(`/c/${real}/services`)).body.services;
-    expect(svcs.length).toBe(3);
+    // The services chosen, from the same starters as "Create a company" (R3-m9).
+    expect(svcs.map((s: any) => s.name)).toEqual(['Fuel delivery']);
+    const { starterService } = await import('../src/shared/services');
+    expect(svcs[0].fields).toEqual(starterService('fuel').fields);
     // Fictional demo rates are not copied.
     expect(svcs.every((s: any) => s.pricing.every((p: any) => p.rateE4 === null && p.overageRateE4 === null && p.minimumMinor === null))).toBe(true);
     const wfs = (await a.get(`/c/${real}/workflows`)).body.workflows;
