@@ -57,6 +57,8 @@ export interface Draft {
   /** Start was tapped without signal: the record is sent with an implicit start, which history flags. */
   startedOffline?: boolean;
   base?: JobSnapshot;
+  /** Goes up with each edit on this phone, so an older stored copy never replaces newer typing. */
+  rev?: number;
   state: DraftState; message?: string; fields?: Record<string, string>; updatedAt: string; attempts?: number;
 }
 

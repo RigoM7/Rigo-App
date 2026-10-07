@@ -6,6 +6,7 @@ import { useCompany } from '../lib/session';
 import { get, post, newId, ApiError, OFFLINE } from '../lib/api';
 import { cacheJobs, cachedJobs, getDraft, saveDraft, deleteDraft, listDrafts, syncDraft, syncPending, onDraftsChanged, isUnsent, needsAttention, WAITING_FOR_SIGNAL, type Draft, type DraftState, type JobSnapshot } from '../lib/offline';
 import { syncSummaryText } from '../lib/autosync';
+import { newerDraft } from '../lib/draft-rev';
 import { Button, Card, Field, Textarea, Input, Select, Checkbox, Dialog, Banner, LoadingBlock, Empty, JobStatus, PriorityPill, GuideTarget, useToast, useConfirm } from '../components/ui';
 import { fmtTime, fmtDate, relTime, mapsUrl } from '../lib/format';
 import { localDate } from '../../shared/schedule';
@@ -271,7 +272,7 @@ export function DriverJob() {
   }, [job?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [acked, setAcked] = useState(false);
   useEffect(() => {
-    const read = async () => setDraft((await getDraft(uid, c.cid, jobId)) ?? null);
+    const read = async () => { const stored = (await getDraft(uid, c.cid, jobId)) ?? null; setDraft((cur) => newerDraft(cur, stored)); };
     void read();
     return onDraftsChanged(() => { void read(); });
   }, [uid, c.cid, jobId]);
@@ -283,7 +284,8 @@ export function DriverJob() {
     outcome: null, values: prefill(), notes: '', reason: '', reasonCode: null, problem: '', photos: [], signature: null, signerName: '', state: 'local', updatedAt: new Date().toISOString(),
   };
   const update = (patch: Partial<Draft>) => {
-    const next = { ...ensureDraft(), ...patch, state: (draft?.state === 'accepted' ? 'accepted' : 'local') as DraftState, message: undefined };
+    const base = ensureDraft();
+    const next = { ...base, ...patch, rev: (base.rev ?? 0) + 1, state: (draft?.state === 'accepted' ? 'accepted' : 'local') as DraftState, message: undefined };
     setDraft(next);
     void saveDraft(next);
   };

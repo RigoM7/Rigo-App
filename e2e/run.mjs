@@ -754,7 +754,8 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     await p.getByRole('button', { name: 'Another tank or product' }).click();
     const second = p.getByRole('group', { name: 'Delivery 2' });
     await second.getByLabel(/Tank or machine/).selectOption('Loader');
-    if ((await second.getByLabel('Product').inputValue()) !== 'Dyed diesel') throw new Error('choosing the tank did not fill in its product');
+    await p.waitForFunction(() => [...document.querySelectorAll('[aria-labelledby="dl-1"] select')][0]?.value === 'Dyed diesel', null, { timeout: 5000 })
+      .catch(async () => { throw new Error(`choosing the tank did not fill in its product (${await second.getByLabel('Product').inputValue()})`); });
     await second.getByLabel(/Meter start/).fill('20410');
     await second.getByLabel(/Meter end/).fill('20490');
     await second.getByLabel('Quantity (gal)', { exact: true }).fill('95');
@@ -1612,8 +1613,13 @@ await step('create a job through the form (draft explains missing info)', async 
   await page.goto(`${BASE}${cidPath()}/jobs/new`);
   // The customer picker: open it and take the first customer with the keyboard.
   const box = page.getByRole('combobox', { name: 'Customer' });
-  await box.click();
-  await page.getByRole('option').first().waitFor();
+  await page.waitForLoadState('networkidle');
+  let opened = false;
+  for (let i = 0; i < 3 && !opened; i++) {
+    await box.click();
+    opened = await page.getByRole('option').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+  }
+  if (!opened) throw new Error(`the customer list did not open: focus on ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 200))}; ${await page.locator('.combo').first().innerHTML()}`);
   await box.press('Enter');
   await page.getByRole('button', { name: 'Save as draft' }).click();
   await page.waitForURL(/\/jobs\/[0-9a-f-]+$/);
