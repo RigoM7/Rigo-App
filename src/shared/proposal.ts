@@ -43,9 +43,10 @@ export function proposeFromText(text: string, ctx: ProposalContext = {}): Propos
   const roles = ROLE_WORDS.filter(([re]) => re.test(t)).map(([, r]) => r);
   // "Priya approves", "approved by Marcus" (R15-m1): named approvers, by first name.
   const named = (ctx.people ?? []).filter((p) => {
-    const first = p.name.trim().split(/\s+/)[0]?.toLowerCase();
-    if (!first || first.length < 2) return false;
-    const re = new RegExp(`\\b${first.replace(/[^a-z0-9]/g, '')}\\b[^,.;]{0,25}approv|approv[^,.;]{0,25}\\b${first.replace(/[^a-z0-9]/g, '')}\\b`);
+    // Letters in any alphabet; a name with nothing left after cleaning never matches (security review).
+    const first = (p.name.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    if (first.length < 2) return false;
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${first}(?![\\p{L}\\p{N}])[^,.;]{0,25}approv|approv[^,.;]{0,25}(?<![\\p{L}\\p{N}])${first}(?![\\p{L}\\p{N}])`, 'u');
     return re.test(t);
   });
   // "over $1,500", "above 1500": approval only for larger invoices.

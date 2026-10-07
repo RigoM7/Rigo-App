@@ -421,6 +421,7 @@ recordRoutes.post('/services', async (c) => {
  */
 recordRoutes.post('/services/:id/priced-per-job', async (c) => {
   const cc = c.get('cc');
+  if (!/^[0-9a-f-]{36}$/i.test(c.req.param('id'))) throw notFound('Service');
   need(cc, 'services.manage');
   const input = await body(c, z.object({ value: z.boolean() }));
   const { rows } = await cc.db.query(`update rigo.services set priced_per_job = $3 where id = $1 and company_id = $2 returning id, name`, [c.req.param('id'), cc.company.id, input.value]);

@@ -141,8 +141,10 @@ export async function prepareCollections(db: Db, companyId: string) {
 export async function runCollections() {
   const db = await getDb();
   const { rows } = await db.query<{ company_id: string }>(
-    `select distinct company_id from rigo.invoices where status = 'issued' and payment_status <> 'paid' and due_date is not null and due_date <= current_date + 4
-     union select distinct company_id from rigo.customers where monthly_statement`);
+    `select company_id from (select distinct company_id from rigo.invoices where status = 'issued' and payment_status <> 'paid' and due_date is not null and due_date <= current_date + 4
+     union select distinct company_id from rigo.customers where monthly_statement) x
+     -- An archived company is at rest: no reminders or statements (security review).
+     where not exists (select 1 from rigo.companies co where co.id = x.company_id and co.archived_at is not null)`);
   let reminders = 0;
   for (const r of rows) {
     try { reminders += (await prepareCollections(db, r.company_id)).reminders; } catch (e) { console.error('[collections]', r.company_id, e); }

@@ -27,11 +27,11 @@ export function changeItems(before: any, after: any, tz: string, addresses: { be
     const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
     items.push({ k: sameDay ? 'notice.movedSameDay' : 'notice.moved', from: iso(before.scheduled_start), to: iso(after.scheduled_start) });
   }
-  if (before.location_id !== after.location_id || (addresses.before && addresses.after && addresses.before !== addresses.after)) items.push(addresses.after ? { k: 'notice.newAddress', v: { address: addresses.after } } : { k: 'notice.newAddress', v: { address: translate('en', 'notice.seeJob') } });
+  if (before.location_id !== after.location_id || (addresses.before && addresses.after && addresses.before !== addresses.after)) items.push(addresses.after ? { k: 'notice.newAddress', v: { address: addresses.after } } : { k: 'notice.newAddressSeeJob' });
   if ((before.access_instructions ?? '') !== (after.access_instructions ?? '')) items.push(after.access_instructions ? { k: 'notice.newAccess', v: { text: after.access_instructions } } : { k: 'notice.accessRemoved' });
   if ((before.contact_name ?? '') !== (after.contact_name ?? '') || (before.contact_phone ?? '') !== (after.contact_phone ?? '')) {
     const text = [after.contact_name, after.contact_phone].filter(Boolean).join(', ');
-    items.push(text ? { k: 'notice.newContact', v: { text } } : { k: 'notice.newContact', v: { text: translate('en', 'notice.none') } });
+    items.push(text ? { k: 'notice.newContact', v: { text } } : { k: 'notice.contactRemoved' });
   }
   if ((before.notes ?? '') !== (after.notes ?? '')) items.push({ k: 'notice.notesChanged' });
   if (before.priority !== after.priority && after.priority === 'emergency') items.push({ k: 'notice.nowEmergency' });

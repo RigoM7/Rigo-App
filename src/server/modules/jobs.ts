@@ -695,9 +695,9 @@ jobRoutes.post('/jobs/:id/follow-up', async (c) => {
     const seq = await q.query<{ job_seq: number }>(`update rigo.companies set job_seq = job_seq + 1 where id = $1 returning job_seq`, [cc.company.id]);
     const details = Object.fromEntries(Object.entries(job.details ?? {}).filter(([k]) => !k.startsWith('_')));
     const ins = await q.query<{ id: string }>(
-      `insert into rigo.jobs (company_id, number, customer_id, location_id, service_id, status, priority, contact_name, contact_phone, access_instructions, notes, details, created_by)
-       values ($1,$2,$3,$4,$5,'draft',$6,$7,$8,$9,$10,$11,$12) returning id`,
-      [cc.company.id, seq.rows[0].job_seq, job.customer_id, job.location_id, job.service_id, job.priority ?? 'normal', job.contact_name, job.contact_phone, job.access_instructions,
+      `insert into rigo.jobs (company_id, number, customer_id, bill_to_customer_id, location_id, service_id, status, priority, contact_name, contact_phone, access_instructions, notes, details, created_by)
+       values ($1,$2,$3,$4,$5,$6,'draft',$7,$8,$9,$10,$11,$12,$13) returning id`,
+      [cc.company.id, seq.rows[0].job_seq, job.customer_id, job.bill_to_customer_id ?? null, job.location_id, job.service_id, job.priority ?? 'normal', job.contact_name, job.contact_phone, job.access_instructions,
         [`Follow-up to job #${job.number}.`, reason ? `Last visit: ${reason}.` : '', job.notes ?? ''].filter(Boolean).join(' ').slice(0, 4000), JSON.stringify({ ...details, _followupOf: job.id }), cc.user.id]);
     await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'created',$3,$4)`, [cc.company.id, ins.rows[0].id, cc.user.id, JSON.stringify({ followupOf: job.number })]);
     await event(q, cc, job.id, 'note', { text: `Rescheduled as job #${seq.rows[0].job_seq}` });

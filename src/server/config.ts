@@ -40,6 +40,14 @@ export const config = {
   // Email and texts to customers and account email (D1, D10): off until these are set.
   email: { provider: (env.RIGO_EMAIL_PROVIDER || '').toLowerCase(), apiKey: env.RIGO_EMAIL_API_KEY || '', from: env.RIGO_EMAIL_FROM || '' },
   sms: { provider: (env.RIGO_SMS_PROVIDER || '').toLowerCase(), accountSid: env.TWILIO_ACCOUNT_SID || '', authToken: env.TWILIO_AUTH_TOKEN || '', from: env.TWILIO_FROM_NUMBER || '' },
+  // Which companies may really send to customers once a provider is set (security review): company
+  // ids separated by commas, or "*" for every company. Empty: nobody sends; messages stay prepared.
+  sendingCompanies: (env.RIGO_SENDING_COMPANIES || '').split(',').map((s) => s.trim()).filter(Boolean),
+  // Daily ceilings per company, so a mistake or a misused account can't run up a bill.
+  dailyEmailLimit: Number(env.RIGO_DAILY_EMAIL_LIMIT || 300),
+  dailyTextLimit: Number(env.RIGO_DAILY_TEXT_LIMIT || 100),
+  // Texts go only to US and Canada numbers (+1) unless this is "1".
+  smsAnyCountry: env.RIGO_SMS_ANY_COUNTRY === '1',
   cronSecret: env.CRON_SECRET || '',
   // Trust X-Forwarded-For only behind a proxy that sets it (Vercel overwrites it; tests opt in).
   trustProxy: !!env.VERCEL || env.RIGO_TRUST_PROXY === '1',

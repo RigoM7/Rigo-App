@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { makeT, pickLang, LANGS, isLang, type Lang } from '../../shared/i18n';
 import { useMe } from './session';
 
@@ -27,16 +27,14 @@ export function usePersonLang(): Lang {
   return pickLang(me.data?.user?.language ?? device, nav);
 }
 
-/** Screens inside speak the person's language; the page's lang attribute follows for screen readers. */
+/**
+ * Screens inside speak the person's language. The wrapper carries `lang`, so screen readers switch
+ * voice for exactly this part of the page, however these are nested (review finding).
+ */
 export function PersonLanguage({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const person = usePersonLang();
   const lang = enabled ? person : 'en';
-  useEffect(() => {
-    const prev = document.documentElement.lang || 'en';
-    document.documentElement.lang = lang;
-    return () => { document.documentElement.lang = prev; };
-  }, [lang]);
-  return <LangContext.Provider value={lang}>{children}</LangContext.Provider>;
+  return <LangContext.Provider value={lang}><div lang={lang} style={{ display: 'contents' }}>{children}</div></LangContext.Provider>;
 }
 
 export function useT() {

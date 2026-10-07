@@ -872,7 +872,7 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase3') {
     await p.getByRole('button', { name: 'Empezar trabajo' }).waitFor();
     await p.getByRole('button', { name: 'Voy en camino' }).waitFor();
     await p.getByRole('link', { name: 'Mis trabajos' }).first().waitFor();
-    if ((await p.evaluate(() => document.documentElement.lang)) !== 'es') throw new Error('page language is not es');
+    if ((await p.evaluate(() => document.querySelector('main h1')?.closest('[lang]')?.getAttribute('lang'))) !== 'es') throw new Error('the job screen is not marked as Spanish');
     await p.getByRole('button', { name: 'Empezar trabajo' }).click();
     await p.getByRole('heading', { name: 'Anotar el resultado' }).waitFor();
     await p.getByText('Completado con éxito').waitFor();
@@ -1467,7 +1467,8 @@ await step('m3: a used or made-up reset link says so instead of showing the form
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p = await c.newPage();
   await p.goto(`${BASE}/reset/not-a-real-token-123456`);
-  await p.getByText('This link was already used.').waitFor();
+  // A made-up link says it doesn't work; a used one says it was used (WP10).
+  await p.getByText("This link doesn't work.").waitFor();
   if (await p.getByLabel('New password').count()) throw new Error('form shown for an invalid link');
   await p.getByRole('link', { name: 'Send a new link' }).click();
   await p.waitForURL(/\/forgot$/);
@@ -1615,7 +1616,7 @@ async function scenarioS1(base, label) {
   await p.screenshot({ path: `${OUT}/s1-${label}-after-reset-390.png` });
   // The used link now says so.
   await p.goto(resetLink.replace(/^https?:\/\/[^/]+/, base));
-  await p.getByText('This link has expired or was already used').waitFor();
+  await p.getByText('This link was already used.').waitFor();
   await c.close();
 }
 await step('S1 on the local copy (simulated mailbox), 390px', () => scenarioS1(BASE, 'local'));

@@ -150,7 +150,8 @@ async function whyCantApprove(cc: CompanyCtx): Promise<Reply> {
   const waiting = (await cc.db.query<any>(`select a.id, a.title, a.approver_user_ids, a.approver_roles from rigo.approvals a where a.company_id = $1 and a.status = 'pending' order by a.created_at desc limit 20`, [cc.company.id])).rows;
   const notMine = waiting.filter((a) => (a.approver_user_ids?.length && !a.approver_user_ids.includes(cc.user.id)) || (a.approver_roles?.length && !a.approver_roles.includes(cc.roleKey) && !a.approver_user_ids?.includes(cc.user.id)));
   if (!notMine.length) return { content: 'You can approve invoices. If one is on hold, fix the hold first: its page lists what is missing. A draft someone is still editing can be approved once it is saved.', links: [{ label: 'Invoices on hold', to: 'invoices?status=held' }] };
-  return { content: `You can approve invoices, but ${notMine.length === 1 ? 'this approval names' : 'these approvals name'} someone else:\n${notMine.slice(0, 5).map((a) => `• ${a.title}`).join('\n')}\n\nA workflow step can say who approves (for example the owner over $5,000). Owners can always decide.`, links: [{ label: 'Approvals', to: 'inbox' }] };
+  // Only how many: what they are about is for the people they name (review finding).
+  return { content: `You can approve invoices, but ${notMine.length === 1 ? '1 waiting approval names' : `${notMine.length} waiting approvals name`} someone else. A workflow step can say who approves (for example the owner over $5,000). Owners can always decide.`, links: [{ label: 'Approvals', to: 'inbox' }] };
 }
 
 function cantYet(cc: CompanyCtx, what: 'text' | 'statement' | 'route' | 'payment'): Reply {

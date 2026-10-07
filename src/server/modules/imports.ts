@@ -71,6 +71,8 @@ importRoutes.post('/imports', async (c) => {
   const cc = c.get('cc');
   need(cc, 'imports.run');
   const input = await body(c, z.object({ kind: z.enum(['customers', 'resources']), fileName: z.string().max(200), text: z.string().max(MAX_BYTES, 'The file is larger than 1 MB. Split it into smaller files.'), encoding: z.enum(['utf-8', 'windows-1252']).optional() }));
+  // Customer files carry email addresses and phone numbers: importing them is for people who see those (security review).
+  if (input.kind === 'customers' && !(can(cc, 'customers.edit') && can(cc, 'customers.contact'))) throw forbidden('Importing customers needs permission to edit customers and see their contact details.');
   if (/\.(xlsx|xls|ods|numbers)$/i.test(input.fileName)) throw badRequest('Spreadsheet files are not read directly yet. Save the sheet as CSV (File > Save as > CSV) and upload that.');
   const parsed = Papa.parse<Record<string, string>>(input.text.replace(/^﻿/, ''), { header: true, skipEmptyLines: 'greedy', transformHeader: (h) => cleanCell(h).value.trim().slice(0, 80) });
   const headers = [...new Set((parsed.meta.fields ?? []).filter(Boolean))];
@@ -113,9 +115,12 @@ importRoutes.get('/imports/:id', async (c) => {
   if (!rows[0]) throw notFound('Import');
   const imp = rows[0];
   // Everything needed to pick up an import left half done (R16-m3).
+  // Opening balances are amounts: only for people who see money (review finding).
+  const fin = can(cc, 'finance.view');
+  const hideMoney = (rows: RowReview[]) => (fin ? rows : rows.map((r) => ({ ...r, values: Object.fromEntries(Object.entries(r.values).filter(([k]) => k !== 'opening_balance')) })));
   return c.json({
     import: { id: imp.id, kind: imp.kind, fileName: imp.file_name, status: imp.status, headers: imp.headers, mapping: imp.mapping, sample: imp.rows.slice(0, 5), rowCount: imp.rows.length, accented: accentedSamples(imp.rows), createdAt: imp.created_at, result: imp.result },
-    review: imp.status === 'reviewed' && imp.review ? { ...imp.review, rows: imp.review.rows.slice(0, 500) } : null,
+    review: imp.status === 'reviewed' && imp.review ? { ...imp.review, rows: hideMoney(imp.review.rows.slice(0, 500)) } : null,
     fields: IMPORT_FIELDS[imp.kind as Kind],
   });
 });
@@ -184,16 +189,19 @@ importRoutes.post('/imports/:id/review', async (c) => {
       const extra = notesColumns.map((h) => (r[h] ? `${h}: ${r[h]}` : '')).filter(Boolean);
       const notes = [raw.notes ?? '', ...extra].filter(Boolean).join('\n');
       if (notes) v.notes = notes;
+      if (!v.name) rv.errors.push('Missing customer name');
+      if (v.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) rv.errors.push('Email is not valid');
       if (mapping.opening_balance) {
         const b = balanceMinor(raw.opening_balance ?? '');
         if (b.error) rv.errors.push(b.error);
         else if (b.minor) v.opening_balance = (b.minor / 100).toFixed(2);
       }
-      if (!v.name) rv.errors.push('Missing customer name');
-      if (v.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) rv.errors.push('Email is not valid');
+
       if ((raw.city || raw.state || raw.zip || raw.address2) && !raw.address) rv.warnings.push('Has a town or ZIP but no street address; no location will be created');
       else if (!v.address) rv.warnings.push('No service address; no location will be created');
       const key = v.address ? addressKey(v.address) : '';
+      // A row with an error is skipped, so it can't be what later rows attach to (review finding).
+      if (rv.errors.length) { rv.action = 'skip'; rv.options = [{ value: 'skip', label: 'Skip this row' }]; out.push(rv); return; }
       const opt = (value: string, label: string) => rv.options.push({ value, label });
       opt('create', 'Create a separate customer');
       // Earlier rows in this file with the same name (R16-M3): the same customer only when the email or phone matches too.
@@ -299,7 +307,7 @@ importRoutes.post('/imports/:id/commit', async (c) => {
             custId = ins.rows[0].id; created.set(r.index, custId); counts.customers++;
             if (v.opening_balance) {
               const minor = Math.round(Number(v.opening_balance) * 100);
-              await manualInvoice(q, cc, { customerId: custId, lines: [{ description: 'Opening balance', quantity: '1', unit: '', rateE4: minor * 100, taxable: false, kind: 'charge', note: `Brought over from ${imp.file_name}` }], notes: '', taxRateBp: null, allowFree: false, clientRequestId: `import-${imp.id}-${r.index}` }, { quiet: true });
+              await manualInvoice(q, cc, { customerId: custId, lines: [{ description: 'Opening balance', quantity: '1', unit: '', rateE4: minor * 100, taxable: false, kind: 'charge', note: '' }], notes: `Opening balance brought over from ${imp.file_name}.`, taxRateBp: null, allowFree: false, clientRequestId: `import-${imp.id}-${r.index}` }, { quiet: true });
               counts.openingBalances++;
             }
           }

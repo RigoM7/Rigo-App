@@ -623,6 +623,7 @@ billingRoutes.post('/messages', async (c) => {
     customerId: z.string().uuid(), jobId: z.string().uuid().nullable().optional(), channel: z.enum(['email', 'sms']),
     subject: z.string().trim().max(200).optional(), body: z.string().trim().min(1, 'Write the message').max(10000), send: z.boolean().optional(),
   }));
+  if (input.send) await needConfirmedEmail(cc, 'sending messages to customers');
   if (input.channel === 'sms' && input.body.length > 640) throw badRequest('A text can be at most 640 characters.', { fields: { body: 'Shorten the text to 640 characters or fewer' } });
   const out = await cc.db.tx(async (q) => {
     const cu = (await q.query<any>(`select id, name, email, phone from rigo.customers where id = $1 and company_id = $2 and merged_into is null`, [input.customerId, cc.company.id])).rows[0];
@@ -638,9 +639,8 @@ billingRoutes.post('/messages', async (c) => {
       [cc.company.id, cu.id, job?.id ?? null, input.channel, recipient, subject, input.body, cc.user.id]);
     const m = rows[0];
     if (!input.send) return { id: m.id, status: 'prepared', detail: recipient ? 'Prepared, not sent.' : noRecipient(input.channel) };
-    await needConfirmedEmail(cc, 'sending messages to customers');
     if (!recipient) return { id: m.id, status: 'not_sent', detail: noRecipient(input.channel) };
-    const r = await deliverMessage(cc.company, m);
+    const r = await deliverMessage(cc.company, m, { q });
     await recordDelivery(q, m, r);
     return { id: m.id, status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.status === 'blocked' ? `Prepared, not sent. ${r.detail}` : r.detail };
   });
@@ -652,6 +652,8 @@ billingRoutes.patch('/messages/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.send');
   const input = await body(c, z.object({ subject: z.string().max(200).optional(), body: z.string().min(1).max(10000).optional(), recipient: z.string().max(254).optional() }));
+  // Pointing a message somewhere else is a contact-details decision (security review).
+  if (input.recipient !== undefined && !can(cc, 'customers.contact')) throw forbidden('Changing where a message goes needs permission to see customer contact details.');
   // Messages about money are edited only by people who can read them.
   const money = can(cc, 'finance.view') ? '' : ' and invoice_id is null and statement_id is null';
   const { rows } = await cc.db.query(`update rigo.messages set subject = coalesce($3, subject), body = coalesce($4, body), recipient = coalesce($5, recipient), updated_at = now() where id = $1 and company_id = $2 and status = 'prepared'${money} returning id`,
@@ -671,7 +673,7 @@ billingRoutes.post('/messages/:id/send', async (c) => {
     if (m.status !== 'prepared') throw conflict(`This message is already ${m.status}.`);
     await needConfirmedEmail(cc, 'sending messages to customers');
     if (!m.recipient) throw m.channel === 'sms' ? badRequest('Add a phone number to text first.', { fields: { recipient: 'Enter a phone number' } }) : badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
-    const r = await deliverMessage(cc.company, m);
+    const r = await deliverMessage(cc.company, m, { q });
     await recordDelivery(q, m, r);
     return { status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.detail };
   });

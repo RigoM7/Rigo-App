@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, Users, MapPin, Upload, Search, Pencil, Trash2 } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch, del, ApiError } from '../lib/api';
@@ -106,22 +106,26 @@ export function Customers() {
   const archived = sp.get('archived') === '1';
   const [creating, setCreating] = useState(() => sp.get('new') === '1' && c.can('customers.edit'));
   // 50 at a time, searched on the server, so a long list stays quick (R17-m2).
-  const [limit, setLimit] = useState(PAGE);
-  const q = useQuery({ queryKey: [c.cid, 'customers', search, archived ? 'archived' : '', limit], queryFn: () => get(`/c/${c.cid}/customers?limit=${limit}&q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`), placeholderData: keepPreviousData });
-  const setParam = (k: string, val: string) => { setLimit(PAGE); const n = new URLSearchParams(sp); if (val) n.set(k, val); else n.delete(k); setSp(n, { replace: true }); };
+  const q = useInfiniteQuery({
+    queryKey: [c.cid, 'customers', search, archived ? 'archived' : ''], initialPageParam: 0, placeholderData: keepPreviousData,
+    queryFn: ({ pageParam }) => get(`/c/${c.cid}/customers?limit=${PAGE}&offset=${pageParam}&q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`),
+    getNextPageParam: (last: any) => (last.hasMore ? last.offset + last.customers.length : undefined),
+  });
+  const list = q.data ? { customers: q.data.pages.flatMap((pg: any) => pg.customers), total: q.data.pages[0].total ?? q.data.pages[0].customers.length } : null;
+  const setParam = (k: string, val: string) => { const n = new URLSearchParams(sp); if (val) n.set(k, val); else n.delete(k); setSp(n, { replace: true }); };
   return (
     <div className="page">
       <PageHeader title="Customers" sub="Customers and their service locations are shared by every service your company offers."
         actions={<>{c.can('imports.run') && <LinkButton to={c.to('imports')} icon={<Upload aria-hidden />}>Import</LinkButton>}{c.can('customers.edit') && <Button variant="primary" icon={<Plus aria-hidden />} onClick={() => setCreating(true)}>New customer</Button>}</>} />
       <form role="search" onSubmit={(e) => e.preventDefault()}><Field label="Search customers" id="f-search">{(p) => <div className="input-group"><Input {...p} type="search" placeholder="Name, email, phone or address" defaultValue={search} onChange={(e) => setParam('q', e.target.value)} /><span className="icon-btn" aria-hidden><Search /></span></div>}</Field></form>
       <Tabs label="Which customers" value={archived ? 'archived' : 'active'} onChange={(k) => setParam('archived', k === 'archived' ? '1' : '')} tabs={[{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }]} />
-      {q.isLoading ? <LoadingBlock /> : q.error ? <ErrorState error={q.error} /> : q.data.customers.length === 0 ? (
+      {q.isLoading ? <LoadingBlock /> : q.error || !list ? <ErrorState error={q.error as any} /> : list.customers.length === 0 ? (
         archived ? <Card><Empty icon={<Users aria-hidden />} title={search ? 'No archived customers match' : 'No archived customers'}>Archived customers are hidden from lists and pickers but keep their jobs and invoices.</Empty></Card> :
         <Card><Empty icon={<Users aria-hidden />} title={search ? 'No customers match' : 'No customers yet'} action={c.can('customers.edit') ? <Button variant="primary" icon={<Plus aria-hidden />} onClick={() => setCreating(true)}>Add a customer</Button> : undefined}>{search ? 'Try another search.' : 'Add customers one at a time or import a CSV file.'}</Empty></Card>
       ) : (
         <div className="card card-flush"><div className="table-wrap"><table className="table responsive">
           <thead><tr><th>Customer</th>{c.can('customers.contact') && <th>Contact</th>}<th className="right">Locations</th><th className="right">Open jobs</th></tr></thead>
-          <tbody>{q.data.customers.map((cu: any) => (
+          <tbody>{list.customers.map((cu: any) => (
             <tr key={cu.id}>
               <td data-primary><Link className="row-link" to={c.to(`customers/${cu.id}`)}>{cu.name}</Link>{cu.firstAddress && <div className="small muted">{cu.firstAddress}</div>}</td>
               {c.can('customers.contact') && <td data-label="Contact">{cu.email || cu.phone ? <>{cu.email}<div className="small muted">{cu.phone}</div></> : <span className="muted">—</span>}</td>}
@@ -130,7 +134,7 @@ export function Customers() {
             </tr>
           ))}</tbody>
         </table></div>
-        {q.data.total > q.data.customers.length && <div className="row-between" style={{ padding: '12px 16px' }}><span className="small muted">Showing {q.data.customers.length} of {q.data.total}{search ? '' : '. Search to find one quickly.'}</span><Button busy={q.isFetching} onClick={() => setLimit(limit + PAGE)}>Show {Math.min(PAGE, q.data.total - q.data.customers.length)} more</Button></div>}
+        {q.hasNextPage && <div className="row-between" style={{ padding: '12px 16px' }}><span className="small muted">Showing {list.customers.length} of {list.total}{search ? '' : '. Search to find one quickly.'}</span><Button busy={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Show {Math.min(PAGE, list.total - list.customers.length)} more</Button></div>}
         </div>
       )}
       {creating && <CustomerDialog open onClose={() => { setCreating(false); if (sp.get('new')) { const n = new URLSearchParams(sp); n.delete('new'); setSp(n, { replace: true }); } }} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: [c.cid, 'customers'] }); toast('Customer added'); }} />}

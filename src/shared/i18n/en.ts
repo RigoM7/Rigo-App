@@ -346,6 +346,8 @@ export const en = {
   'notice.noTrucks': 'Truck: none',
   'notice.alreadyStarted': 'It is already started.',
   'notice.onYourList': 'It is now on your list.',
+  'notice.newAddressSeeJob': 'New address: see the job',
+  'notice.contactRemoved': 'New site contact: none',
   'notice.truckChanged': 'Truck changed: {from} → {to}',
   'notice.siteChanged': 'The site details changed',
   'notice.raw': '{text}',

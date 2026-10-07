@@ -340,6 +340,8 @@ export const es: Partial<Record<MessageKey, string>> = {
   'notice.noTrucks': 'Camión: ninguno',
   'notice.alreadyStarted': 'Ya está empezado.',
   'notice.onYourList': 'Ya está en tu lista.',
+  'notice.newAddressSeeJob': 'Nueva dirección: ver el trabajo',
+  'notice.contactRemoved': 'Nuevo contacto en el sitio: ninguno',
   'notice.truckChanged': 'Cambio de camión: {from} → {to}',
   'notice.siteChanged': 'Cambiaron los datos del sitio',
   'notice.newAccessShort': 'Nuevas instrucciones de acceso',

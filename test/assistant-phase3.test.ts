@@ -67,7 +67,7 @@ async function assigned(t: TriCounty, who: 'luis' | 'sam' = 'luis') {
 const messagesFor = async (jobId: string) => (await (await getDb()).query<any>(`select channel, recipient, subject, body, status, status_detail from rigo.messages where job_id = $1 order by created_at`, [jobId])).rows;
 
 describe('On my way (R15-M2)', () => {
-  it('the assigned driver says they are on the way; a workflow prepares a text, kept unsent without a text service', async () => {
+  it('the assigned driver says they are on the way; a workflow prepares the update, kept unsent without a service', async () => {
     const t = await triCounty();
     await activate(t, 'job.en_route');
     const j = await assigned(t);
@@ -80,8 +80,9 @@ describe('On my way (R15-M2)', () => {
     await processAll();
     const ms = await messagesFor(j.id);
     expect(ms).toHaveLength(1);
-    expect(ms[0]).toMatchObject({ channel: 'sms', recipient: '+15552010003', status: 'prepared' });
-    expect(ms[0].body).toBe('Tri-County Field Services: Luis is on the way for your fuel delivery at 812 Willow Ln, Fairview, arriving in about 20 minutes.');
+    // No text service here, so the update is an email (review finding); it stays prepared.
+    expect(ms[0]).toMatchObject({ channel: 'email', recipient: 'grace@example.test', status: 'prepared', subject: 'Tri-County Field Services: Luis is on the way' });
+    expect(ms[0].body).toBe('Hello Grace Okafor,\n\nLuis from Tri-County Field Services is on the way for your fuel delivery at 812 Willow Ln, Fairview, arriving in about 20 minutes.\n\nTri-County Field Services');
     // A new estimate is recorded on the job, without a second message.
     await t.luis.post(`/c/${t.cid}/jobs/${j.id}/en-route`, { etaMinutes: 10 });
     await processAll();
@@ -103,7 +104,7 @@ describe('On my way (R15-M2)', () => {
     await processAll();
     const ms = await messagesFor(j.id);
     expect(ms).toHaveLength(1);
-    expect(ms[0].body).toBe('Tri-County Field Services: Luis has started your fuel delivery at 812 Willow Ln, Fairview.');
+    expect(ms[0].body).toMatch(/Luis from Tri-County Field Services has started your fuel delivery at 812 Willow Ln, Fairview\./);
   });
 
   it('the proposal reads "on the way" and "text the customer"', () => {
