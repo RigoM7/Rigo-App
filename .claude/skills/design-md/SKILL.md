@@ -53,13 +53,15 @@ Pin the version as above so results don't change under you. On Windows/PowerShel
 
 ## In this repository (Rigo)
 
-Rigo's design source of truth is `src/client/styles.css` (tokens) and `docs/DESIGN-SYSTEM.md`
-(rules and measured contrast), with `docs/UI-GUI-PROMPT.md` for screens. Rigo uses plain CSS
-custom properties, not Tailwind.
+Rigo's design doc is `DESIGN.md` at the repository root, in this format: light-theme tokens in the
+front matter, the dark theme and the rules in the body. The real values live in
+`src/client/styles.css` (plain CSS custom properties, not Tailwind); fonts are Geist and Geist
+Mono.
 
-- Create a root `DESIGN.md` only when the owner asks for one. Generate it from `styles.css` and
-  `docs/DESIGN-SYSTEM.md` (both themes, the red/white/black palette, Poppins/Open Sans) and
-  keep it in sync with them in the same change.
-- Never change Rigo's palette or tokens to satisfy the linter or another skill; report the
-  finding instead.
+- Keep `DESIGN.md` and `styles.css` in sync in the same change: when a look request changes a
+  token, change both.
+- Lint after every edit to `DESIGN.md`. Its `orphaned-tokens` warnings are expected (colours the
+  prose uses but no component token references); fix errors and any contrast finding.
+- Don't change a token just to silence a warning; look changes follow `DESIGN.md`'s
+  "Your words → skill" rules.
 - Use `export` output for comparison or hand-off only, not to replace `styles.css`.

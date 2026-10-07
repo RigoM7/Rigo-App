@@ -34,7 +34,7 @@ jobs:
           files=$(git diff --name-only "$BASE"...HEAD)
           echo "$files"
           code=false; client=false
-          if echo "$files" | grep -qvE '^(docs/|\.claude/|CLAUDE\.md$|README\.md$|THIRD_PARTY_NOTICES\.md$|\.github/pull_request_template\.md$)'; then code=true; fi
+          if echo "$files" | grep -qvE '^(docs/|\.claude/|CLAUDE\.md$|README\.md$|PRODUCT\.md$|DESIGN\.md$|THIRD_PARTY_NOTICES\.md$|\.github/pull_request_template\.md$)'; then code=true; fi
           if echo "$files" | grep -qE '^(src/client/|src/shared/|static/|e2e/|vite\.config\.ts$|package(-lock)?\.json$)'; then client=true; fi
           echo "code=$code" >> "$GITHUB_OUTPUT"; echo "client=$client" >> "$GITHUB_OUTPUT"
 

@@ -1,6 +1,6 @@
 import type { MessageKey } from './en.js';
 
-// Español. Needs review by a Spanish speaker (see docs/IMPLEMENTATION-STATUS.md). The driver side
+// Español. Needs review by a Spanish speaker (see docs/FEATURES.md). The driver side
 // uses "tú"; messages to customers use "usted". Missing keys fall back to English.
 
 export const es: Partial<Record<MessageKey, string>> = {

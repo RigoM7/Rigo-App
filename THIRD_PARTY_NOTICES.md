@@ -1,6 +1,6 @@
 # Third-party notices
 
-Rigo's visual work studies open-source projects (see `docs/DESIGN-RESEARCH.md`). Code or assets
+Rigo's visual work studies open-source projects (see "Research and licences" in `DESIGN.md`). Code or assets
 copied or adapted from a permissively licensed project are listed here, with the project's
 copyright notice and license, as those licenses require.
 
@@ -10,8 +10,8 @@ under the SIL Open Font License 1.1).
 ## Copied or adapted code
 
 None yet. Round 1 of the visual research (October 2026) rebuilt its patterns in Rigo's own CSS and
-components without copying code or assets. The pattern sources are credited in
-`docs/DESIGN-RESEARCH.md`.
+components without copying code or assets. The pattern sources are credited in `DESIGN.md`,
+"Research and licences".
 
 When code is copied or adapted, add an entry:
 
