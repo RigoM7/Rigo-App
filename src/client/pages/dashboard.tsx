@@ -15,7 +15,65 @@ import { useDocumentTitle } from '../lib/title';
 
 const NEED_ACTION: Record<string, string> = {
   approvals: 'Review', ready: 'Run steps', blocked: 'See why', held: 'Fix holds', problems: 'Open', unassigned: 'Assign', urgent: 'Assign', late: 'See late jobs', exceptions: 'Review', drafts: 'Complete',
+  emergency: 'Open', out_of_service: 'Move jobs', driver_records: 'Review', unbilled: 'Bill', overdue: 'See overdue', collected: 'Confirm',
 };
+
+// "Needs you" in three tiers, after the USWDS alert hierarchy (emergency site alert first, then
+// warnings, then information) and Novu's inbox rows (each item carries its own action). The server
+// already ranks items by urgency; the tier decides how loudly each one is shown (R18-m5).
+const ACT_NOW = new Set(['emergency', 'urgent', 'out_of_service', 'driver_records']);
+const LATER = new Set(['exceptions', 'drafts']);
+type Need = { key: string; label: string; count: number; link: string; tone: 'action' | 'warning' };
+
+function NeedRow({ a, primary = false }: { a: Need; primary?: boolean }) {
+  const c = useCompany();
+  const action = NEED_ACTION[a.key] ?? 'Open';
+  return (
+    <li className={`need-row tone-${a.tone}`}>
+      <span className="need-ico" aria-hidden>{ACT_NOW.has(a.key) ? <Siren /> : a.tone === 'warning' ? <AlertTriangle /> : <Hand />}</span>
+      <span className="need-count num" aria-hidden>{a.count}</span>
+      <span className="need-label"><span className="sr-only">{a.count} </span>{a.label}</span>
+      <Link className={`btn btn-sm${primary ? ' btn-primary' : ''}`} to={c.to(a.link)} aria-label={`${action}: ${a.label}`}>{action}<ArrowRight aria-hidden /></Link>
+    </li>
+  );
+}
+
+function NeedsYou({ items }: { items: Need[] }) {
+  const now = items.filter((a) => ACT_NOW.has(a.key));
+  const later = items.filter((a) => LATER.has(a.key));
+  const today = items.filter((a) => !ACT_NOW.has(a.key) && !LATER.has(a.key));
+  const total = items.reduce((n, a) => n + a.count, 0);
+  return (
+    <section aria-labelledby="att-h" className="needs" data-guide-target="needs-you">
+      <div className="needs-head">
+        <h2 id="att-h">Needs you</h2>
+        {items.length > 0 && <span className="small muted"><span className="num">{total}</span> item{total === 1 ? '' : 's'}, most urgent first</span>}
+      </div>
+      {items.length === 0 ? (
+        <p className="all-clear"><CheckCircle2 aria-hidden />Nothing needs your attention right now.</p>
+      ) : <>
+        {now.length > 0 && (
+          <div className="needs-now" role="group" aria-label="Act now">
+            <p className="needs-tier-h"><Siren aria-hidden />Act now</p>
+            <ul className="list">{now.map((a, i) => <NeedRow key={a.key} a={a} primary={i === 0} />)}</ul>
+          </div>
+        )}
+        {today.length > 0 && (
+          <div className="needs-today" role="group" aria-label="To do today">
+            <p className="needs-tier-h">To do today</p>
+            <ul className="list">{today.map((a, i) => <NeedRow key={a.key} a={a} primary={now.length === 0 && i === 0} />)}</ul>
+          </div>
+        )}
+        {later.length > 0 && (
+          <details className="needs-later">
+            <summary>When you have a minute <span className="muted num">({later.reduce((n, a) => n + a.count, 0)})</span></summary>
+            <ul className="list">{later.map((a) => <NeedRow key={a.key} a={a} />)}</ul>
+          </details>
+        )}
+      </>}
+    </section>
+  );
+}
 
 function useClock(tz: string) {
   const fmt = () => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date());
@@ -46,20 +104,7 @@ export function Dashboard() {
         {c.can('jobs.create') && <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton>}
       </div>
 
-      <section aria-labelledby="att-h" className="needs-strip" data-guide-target="needs-you">
-        <h2 id="att-h" className="needs-strip-label">Needs you</h2>
-        {d.attention.length === 0 ? (
-          <span className="all-clear"><CheckCircle2 aria-hidden />Nothing needs your attention right now.</span>
-        ) : d.attention.map((a: any, i: number) => (
-          // Ranked by urgency on the server (R18-m5): the first item gets the one primary action.
-          <div key={a.key} className={`need tone-${a.tone}${i === 0 ? ' is-first' : ''}`}>
-            {a.key === 'emergency' ? <Siren aria-hidden /> : a.tone === 'warning' ? <AlertTriangle aria-hidden /> : <Hand aria-hidden />}
-            <span className="n" aria-hidden>{a.count}</span>
-            <span><span className="sr-only">{a.count} </span>{a.label}</span>
-            <Link className={`btn btn-sm${i === 0 ? ' btn-primary' : ''}`} to={c.to(a.link)} aria-label={`${NEED_ACTION[a.key] ?? 'Open'}: ${a.label}`}>{NEED_ACTION[a.key] ?? 'Open'}</Link>
-          </div>
-        ))}
-      </section>
+      <NeedsYou items={d.attention} />
 
       {d.invoiceApprovals?.length > 0 && (
         <section className="card stack-sm" aria-labelledby="inv-ap-h">

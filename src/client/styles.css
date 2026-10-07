@@ -228,6 +228,9 @@ kbd { display: inline-flex; align-items: center; min-width: 20px; height: 20px; 
 .tank-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .summary-strip { display: flex; flex-wrap: wrap; gap: 12px 32px; padding: 14px 16px; margin-bottom: var(--space-4); border: 1px solid var(--border); border-radius: var(--card-radius); background: var(--surface); }
 .summary-strip > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Two big facts a caller asks about (Medusa order summary / Crater "amount due" pattern). */
+.summary-fact { font-size: var(--fs-18); font-weight: 600; letter-spacing: -0.01em; }
+.summary-fact.money { font-family: var(--font-mono); font-size: var(--fs-22); }
 .dup-card { border-color: var(--warning, var(--border)); padding: 12px 14px; }
 .combo-note { padding: 10px; color: var(--text-2); font-size: var(--fs-14); }
 .check { display: flex; gap: 10px; align-items: flex-start; min-height: var(--tap); padding: 10px 0; cursor: pointer; }
@@ -532,15 +535,33 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .home-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; }
 .home-head .when { color: var(--text-2); font-size: var(--fs-14); margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .home-head .clock { font-family: var(--font-mono); color: var(--text); font-weight: 500; }
-.needs-strip { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
-.needs-strip-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-14); padding-right: 4px; }
-.need { display: inline-flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 8px 10px; padding: 6px 6px 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); font-size: var(--fs-14); min-height: 48px; }
-.need .n { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-16); min-width: 1.2em; text-align: right; }
-.need > svg { width: 16px; height: 16px; flex: none; }
-.need.tone-warning > svg { color: var(--warning); }
-.need.tone-action > svg { color: var(--primary-text); }
-.need .btn { min-height: 36px; }
-.all-clear { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-14); }
+/* "Needs you" in tiers (USWDS alert hierarchy + Novu inbox rows; see docs/DESIGN-RESEARCH.md). */
+.needs { display: flex; flex-direction: column; gap: 10px; }
+.needs-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.needs-head h2 { font-size: var(--fs-16); margin: 0; }
+.needs-tier-h { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: var(--fs-13); font-weight: 600; color: var(--text-2); }
+.needs-tier-h svg { width: 15px; height: 15px; }
+.needs-now, .needs-today, .needs-later { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: 8px 12px; }
+.needs-now { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: var(--danger-soft); }
+.needs-now .needs-tier-h { color: var(--danger); }
+.need-row { display: grid; grid-template-columns: 20px minmax(2ch, auto) 1fr auto; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-14); }
+.need-row:last-child { border-bottom: 0; }
+.needs-now .need-row { border-color: color-mix(in srgb, var(--danger) 25%, transparent); font-weight: 500; }
+.need-ico svg { width: 16px; height: 16px; display: block; }
+.need-row.tone-warning .need-ico { color: var(--warning); }
+.need-row.tone-action .need-ico { color: var(--primary-text); }
+.needs-now .need-ico { color: var(--danger); }
+.need-count { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-16); text-align: right; }
+.need-label { min-width: 0; }
+.need-row .btn { min-height: 36px; gap: 6px; }
+.need-row .btn svg { width: 14px; height: 14px; }
+.needs-later summary { cursor: pointer; font-size: var(--fs-14); font-weight: 600; padding: 4px 0; color: var(--text-2); }
+.needs-later[open] summary { margin-bottom: 4px; }
+@media (max-width: 560px) {
+  .need-row { grid-template-columns: 20px minmax(2ch, auto) 1fr; }
+  .need-row .btn { grid-column: 2 / -1; justify-self: start; }
+}
+.all-clear { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-14); margin: 0; }
 .all-clear svg { width: 16px; height: 16px; color: var(--success); }
 
 .cc-grid { display: grid; gap: var(--space-5); grid-template-columns: 1fr; align-items: start; }
@@ -668,7 +689,18 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .driver-job.is-live { border-color: color-mix(in srgb, var(--live) 55%, var(--border-strong)); box-shadow: inset 3px 0 0 var(--live); }
 .next-action { display: flex; align-items: center; gap: 8px; color: var(--primary-text); font-weight: 650; margin-top: 10px; font-size: var(--fs-16); }
 .next-action svg { width: 18px; height: 18px; }
-.sticky-actions { position: sticky; bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--surface) 96%, transparent); border-top: 1px solid var(--border); padding: 12px var(--space-4); margin: 0 calc(-1 * var(--space-4)); z-index: 5; }
+/* Driver footer toolbar (Ionic pattern): solid, one primary action, a one-line sync status. */
+.sticky-actions { position: sticky; bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border-strong); box-shadow: 0 -6px 16px -12px rgb(0 0 0 / 0.35); padding: 10px var(--space-4) 12px; margin: 0 calc(-1 * var(--space-4)); z-index: 5; }
+.sticky-actions .sticky-meta { gap: 8px; flex-wrap: wrap; }
+/* Summary list (GOV.UK pattern): on narrow screens and large text the label sits above its value,
+   so values like addresses and site notes keep the full width (R18-m4). */
+@media (max-width: 520px) {
+  .driver-page .kv { grid-template-columns: 1fr; gap: 2px; }
+  .driver-page .kv dt { font-weight: 600; color: var(--text-2); margin-top: 8px; }
+  .driver-page .kv dt:first-child { margin-top: 0; }
+  .driver-page .job-address { flex: 1 1 0 !important; }
+  .driver-page .job-address + .row { flex-basis: 100%; padding-left: 32px; }
+}
 @media (min-width: 1024px) { .sticky-actions { bottom: 0; } }
 .big-choice { display: grid; gap: 10px; }
 .big-choice label { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 16px; border: 1px solid var(--control-border); border-radius: var(--radius-lg); cursor: pointer; font-weight: 600; font-size: var(--fs-16); background: var(--surface); transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease); }

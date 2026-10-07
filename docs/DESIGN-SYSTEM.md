@@ -226,8 +226,8 @@ Motion explains state and makes the business feel live; it never decorates.
 
 ## Screens (summary)
 
-Home is the command center: date, live clock and company; a slim **Needs you** strip (each item
-with its action as a visible button); the timeline; then **What Rigo is doing** and **Last 30
+Home is the command center: date, live clock and company; **Needs you** in three tiers (see
+below); the timeline; then **What Rigo is doing** and **Last 30
 days** (side by side below the timeline, or a right column at ≥1680px). Records (job, invoice)
 use a header with a mono number chip, the title, status and a metadata row, with a two-column
 detail layout. Invoices are grouped by work state and show invoice, approval, delivery,
@@ -239,11 +239,38 @@ and no eyebrow labels, metric tiles or icon-card rows. Standalone pages
 (workspaces, account, dev mailbox) use the black chrome bar. Full screen list:
 `docs/UI-GUI-PROMPT.md`.
 
+### Needs you: three tiers
+
+Adapted from the USWDS alert hierarchy (an emergency site alert above warnings above
+information) and Novu's inbox rows (each item carries its own action); see
+`docs/DESIGN-RESEARCH.md`. The server ranks items by urgency; the client decides how loudly each
+is shown:
+
+- **Act now** (emergencies, urgent jobs without a driver, jobs on an out-of-service truck, driver
+  records to review): one box on `--danger-soft` with a 1px danger border and a siren icon. Its
+  first row carries the page's one red primary action.
+- **To do today** (approvals, unassigned and late jobs, problems, unbilled work, holds, overdue
+  invoices, payments to confirm): a plain list; every row is icon · count · label · its own
+  secondary button. If there is nothing to act on now, the first row gets the primary button.
+- **When you have a minute** (partial visits, incomplete drafts): folded into a `<details>`.
+
+Rows, not chips: one item per line, so a low-tech owner reads top to bottom and never compares
+six equal boxes. On phones the button moves under the label.
+
 ## Density by role
 
 - **Owner/dispatcher:** timeline, tables, filters, board and bulk actions.
 - **Driver:** one column (max 640px), big time in mono, address first, 56px choice rows,
-  large quantity inputs in mono, sticky "Submit to office", sync state always visible.
+  large quantity inputs in mono, sync state always visible.
+  - **Footer toolbar** (Ionic pattern): a solid bar above the bottom navigation with a one-line
+    sync status and exactly one full-width primary action (Start job, then Submit to office).
+    Secondary actions such as "On my way" live in the page, never in the bar.
+  - **Summary list** (GOV.UK pattern): below 520px, job details stack the label above its value
+    so addresses and site notes keep the full width at large text sizes; the map pin stays beside
+    the address and "Open in Maps" / "Copy" wrap underneath it.
+- **Money facts:** the customer page leads with two facts a caller asks about, **Next visit**
+  (date as a link) and **Owes** (amount in mono at 22px, unpaid and overdue counts underneath),
+  after Medusa's order summary and Crater's "amount due".
 
 ## Accessibility checklist (verified by `e2e/run.mjs` unless noted)
 

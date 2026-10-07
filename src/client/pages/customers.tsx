@@ -196,9 +196,9 @@ export function CustomerDetail() {
         : archived ? <Banner tone="info" action={c.can('customers.edit') ? <Button size="sm" busy={act.busy} onClick={() => act.run('unarchive')}>Restore customer</Button> : undefined}>Archived {fmtDate(customer.archivedAt, c.company.timezone)}. Hidden from lists and pickers; jobs and invoices are kept.</Banner> : null}
       <section className="summary-strip" aria-label="At a glance">
         <div><span className="label">Next visit</span>
-          {next ? <span><Link to={c.to(`jobs/${next.id}`)}>{fmtDateTime(next.scheduled_start, c.company.timezone)}</Link> · {next.service_name ?? 'Job'}{next.address ? ` · ${next.address}` : ''}</span> : <span className="muted">Nothing scheduled</span>}</div>
+          {next ? <><Link className="summary-fact" to={c.to(`jobs/${next.id}`)}>{fmtDateTime(next.scheduled_start, c.company.timezone)}</Link><span className="small muted">{next.service_name ?? 'Job'}{next.address ? ` · ${next.address}` : ''}</span></> : <span className="muted">Nothing scheduled</span>}</div>
         {summary.owes && <div><span className="label">Owes</span>
-          {summary.owes.unpaid > 0 ? <span><strong className="num">{formatMoney(summary.owes.balanceMinor, c.company.currency)}</strong> · {summary.owes.unpaid} unpaid{summary.owes.overdue ? <> · <Pill tone="danger">{summary.owes.overdue} overdue</Pill></> : null}</span> : <span className="muted">Nothing owed</span>}</div>}
+          {summary.owes.unpaid > 0 ? <><strong className="summary-fact money">{formatMoney(summary.owes.balanceMinor, c.company.currency)}</strong><span className="small muted row" style={{ gap: 6 }}>{summary.owes.unpaid} unpaid invoice{summary.owes.unpaid === 1 ? '' : 's'}{summary.owes.overdue ? <Pill tone="danger">{summary.owes.overdue} overdue</Pill> : null}</span></> : <span className="summary-fact muted">Nothing owed</span>}</div>}
       </section>
       <div className="grid-2" style={{ alignItems: 'start' }}>
         <div className="stack">

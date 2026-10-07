@@ -208,6 +208,18 @@ Phase 1 and 2 results are in their PRs.
 | Accessibility and large text (R18-m3, R18-m4, R9-m2) | Verified | Workflow builder list markup fixed; axe (serious and critical) on the same 22 pages, the workflow editor included; at 200% text the driver screens don't scroll sideways, the address keeps the card's width, buttons wrap, header buttons stay at least 44 px; driver text at least 15 px; timeline blocks and rows grow with the text. The 3 px status edge on timeline blocks is written into `docs/DESIGN-SYSTEM.md` as the one exception |
 | Needs you by urgency (R18-m5) | Verified | Emergencies, unassigned and late work first, then approvals and money, then tidying up; the first item has the one primary button |
 
+## F. Visual look, round 1 (open-source research)
+
+Research rule in `CLAUDE.md`; findings, licenses and what was taken in `docs/DESIGN-RESEARCH.md`.
+No third-party code or assets were copied in this round: patterns only (`THIRD_PARTY_NOTICES.md`).
+
+| Item | Status | Evidence / notes |
+|---|---|---|
+| Needs you in three tiers (USWDS alert hierarchy, Novu inbox rows) | Implemented · browser-checked | "Act now" box (emergency, urgent without a driver, out-of-service truck, driver records), "To do today" list with a button per row, "When you have a minute" folded. Server ranking unchanged. Screenshots at 1440 and 390px, light and dark |
+| Driver footer toolbar (Ionic) | Implemented · browser-checked | Solid bar with one primary action and a one-line sync status; "On my way" moved into its own card on the page. Existing e2e checks that Start job is fully on screen above the bottom navigation |
+| Summary list on phones (GOV.UK) | Implemented · browser-checked | Below 520px job details stack label above value; the map pin stays beside the address, Maps/Copy wrap under it |
+| Customer money facts (Medusa, Crater) | Implemented · browser-checked | Next visit and Owes shown as two large facts; amount in mono 22px with unpaid/overdue counts |
+
 ## Simulated or disabled by design
 
 | Capability | Behavior |
