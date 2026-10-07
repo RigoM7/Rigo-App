@@ -19,6 +19,8 @@
 | Product rules, pricing, job states, workflows | `docs/PRODUCT-VISION.md` |
 | UI, screens, styling | `docs/DESIGN-SYSTEM.md`, then `docs/UI-GUI-PROMPT.md` |
 | What is built, verified or deferred | `docs/IMPLEMENTATION-STATUS.md` (keep it in sync with every change) |
+| Which files belong to which part of the app | `docs/AREAS.md` (one section) |
+| How to build, check and publish a change | `docs/WORKFLOW.md` |
 | Setup, scripts, layout | `README.md` |
 
 ## Project
@@ -39,7 +41,7 @@
 - Checks: `npm run typecheck`, `npm test` (PGlite; set `DATABASE_URL` to run on
   PostgreSQL), and browser checks: `npm run build && npm start &` then
   `NODE_PATH=$(npm root -g) npm run test:browser` (uses `/opt/pw-browsers`).
-- Commits that only touch `.claude/` or this file skip Vercel builds
+- Commits that only touch `.claude/`, `docs/`, `.github/`, `README.md` or this file skip Vercel builds
   (`ignoreCommand`). On branches other than `main`, a commit whose first line
   contains `[checkpoint]` is also skipped; use it for work-in-progress and docs-only pushes.
   `main` always builds (squash merges carry checkpoint lines in their body).
@@ -50,14 +52,14 @@
   repository's settings); only the owner changes the permission mode.
 
 ## Prompts
-The owner's reusable prompts live in `.claude/commands/`; each runs as `/<name>`. Write new
-ones with `/new-prompt`. Changes that only touch `.claude/` and this file don't trigger a build.
-- `/new-prompt <idea>`: turn an idea into a new prompt in this library.
-- `/feature <feature>`: build a feature end to end (server, client, tests, docs).
-- `/screen <screen and change>`: design, build or redesign a screen to the design system.
-- `/fix <bug>`: reproduce a bug with a test, fix the root cause.
-- `/review [PR or branch]`: check changes against Rigo's rules before they ship.
-- `/ship [summary]`: run the checks, update the docs, push once and open a draft PR.
+Four commands in `.claude/commands/`, run as `/<name>`. How changes are made is in
+`docs/WORKFLOW.md`; where things live is in `docs/AREAS.md`.
+- `/change <area> <what>`: make a change to one area (jobs, invoices, customers, services,
+  automation, inbox, team, account, recurring, templates, assistant, dashboard, demo, or `new`).
+- `/release [summary]`: run the release gate, push once, open a draft PR, merge on the owner's say-so.
+- `/review [PR or branch]`: check changes against Rigo's rules.
+- `/new-prompt <idea>`: save a new reusable command (keep its description to a few words).
+Changes that only touch `.claude/`, `docs/`, `.github/`, `README.md` and this file don't trigger a build.
 
 ## Skills
 Kept small on purpose, since every skill is listed in every session. In `.claude/skills/`:
