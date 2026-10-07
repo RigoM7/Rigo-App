@@ -117,6 +117,18 @@ export function DemoGuide() {
   const [focusRequest, setFocusRequest] = useState(0);
   const stepLabel = `Step ${step + 1}`;
   useGuideHighlight(done || needs ? undefined : g.targets, stepLabel, focusRequest);
+  // When the visitor finishes the step it shows "Done" for a moment, then moves on by itself (R2-M1).
+  // Coming back to a step that was already done doesn't move on.
+  const seen = useRef({ step, done });
+  const [moving, setMoving] = useState(false);
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { step, done };
+    if (!(was.step === step && !was.done && done && step < GUIDE.length - 1)) return;
+    setMoving(true);
+    const t = setTimeout(() => { setMoving(false); void set({ step: step + 1 }); }, 2500);
+    return () => { clearTimeout(t); setMoving(false); };
+  }, [step, done]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = () => { const n = !collapsed; setCollapsed(n); try { localStorage.setItem('rigo-guide-collapsed', n ? '1' : '0'); } catch { /* ignore */ } };
   const set = async (patch: { step?: number; dismissed?: boolean }) => { await post(`/c/${c.cid}/demo/guide`, patch); await qc.invalidateQueries({ queryKey: [c.cid, 'boot'] }); };
   const showMe = async () => {
@@ -160,7 +172,7 @@ export function DemoGuide() {
       </div>
       <p className="small" style={{ margin: 0, maxWidth: '75ch' }}>{g.body(p)}</p>
       <div role="status" className="stack-sm">
-        {done ? <p className="guide-done"><CheckCircle2 aria-hidden />Done. {g.doneText?.(p)}</p> : null}
+        {done ? <p className="guide-done"><CheckCircle2 aria-hidden />Done. {g.doneText?.(p)}{moving ? ' Next step in a moment…' : ''}</p> : null}
         {needs ? <p className="guide-note"><Info aria-hidden /><span>{needs.text}</span></p> : null}
         {note ? <p className="guide-note"><Info aria-hidden /><span>{note}</span></p> : null}
         {wrongRole && !done && !needs ? <p className="guide-note"><Info aria-hidden /><span>This step is done as the {ROLE_NAME[role]}. You are viewing as {ROLE_NAME[demo.simRole] ?? demo.simRole}.</span></p> : null}

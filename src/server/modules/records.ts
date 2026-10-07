@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.js';
 import type { Q } from '../db/index.js';
-import { body } from '../lib/util.js';
+import { body, paging } from '../lib/util.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { customFieldsSchema, validateValues, serviceInputSchema, readPricing, storedPricing, datePriceChanges } from '../../shared/services.js';
 import { localDate } from '../../shared/schedule.js';
@@ -33,7 +33,7 @@ function serializeCustomer(cc: CompanyCtx, r: any) {
     priceOverrides: can(cc, 'finance.view') ? (r.price_overrides ?? {}) : undefined,
     // A separate billing / accounts-payable contact (R5-m3); contact details only with customers.contact.
     billingContact: contact ? (r.billing_contact ?? {}) : (r.billing_contact?.name ? { name: r.billing_contact.name } : {}),
-    archivedAt: r.archived_at ?? null, mergedInto: r.merged_into ?? null,
+    archivedAt: r.archived_at ?? null, mergedInto: r.merged_into ?? null, language: r.language ?? 'en',
     firstAddress: r.first_address ?? undefined, town: r.first_address ? townOf(r.first_address) : undefined };
 }
 
@@ -52,11 +52,13 @@ recordRoutes.get('/customers', async (c) => {
     const n = 2;
     where += ` and (rigo.fold(c.name) like $${n} ${can(cc, 'customers.contact') ? `or rigo.fold(c.email) like $${n}` : ''}${phone} or exists (select 1 from rigo.locations l where l.customer_id = c.id and rigo.fold(l.address || ' ' || l.label) like $${n}))`;
   }
-  const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') ?? 500) || 500));
+  // Pages of customers, searched on the server (R17-m2): `limit` and `offset`, with the total.
+  const { limit, offset } = paging(c.req.query('limit'), c.req.query('offset'), 500);
   const { rows } = await cc.db.query(`select c.*, (select count(*)::int from rigo.locations l where l.customer_id = c.id) as location_count,
       (select count(*)::int from rigo.jobs j where j.customer_id = c.id and j.status in ('draft','open','in_progress')) as open_jobs,
       (select l.address from rigo.locations l where l.customer_id = c.id order by l.created_at limit 1) as first_address
-      from rigo.customers c where ${where} order by lower(c.name) limit ${limit}`, vals);
+      from rigo.customers c where ${where} order by lower(c.name), c.id limit ${limit} offset ${offset}`, vals);
+  const total = rows.length < limit && offset === 0 ? rows.length : (await cc.db.query<{ n: number }>(`select count(*)::int as n from rigo.customers c where ${where}`, vals)).rows[0].n;
   // Nothing found: try names with a typo or two (R5-m1), still within this company and its active customers.
   if (search && !rows.length && /[a-z]{3}/i.test(search)) {
     const archived = c.req.query('archived') === '1';
@@ -70,7 +72,7 @@ recordRoutes.get('/customers', async (c) => {
       return c.json({ customers: near.rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers'), approximate: true });
     }
   }
-  return c.json({ customers: rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers') });
+  return c.json({ customers: rows.map((r) => serializeCustomer(cc, r)), customFields: customDefs(cc, 'customers'), total, hasMore: offset + rows.length < total, limit, offset });
 });
 
 recordRoutes.get('/customers/:id', async (c) => {
@@ -91,7 +93,7 @@ recordRoutes.get('/customers/:id', async (c) => {
   const today = localDate(new Date(), cc.company.timezone);
   const invoices = can(cc, 'invoices.view') ? (await cc.db.query<any>(`select id, number, status, payment_status, due_date, ${can(cc, 'finance.view') ? 'total_minor, greatest(0, coalesce(total_minor,0) - paid_minor - credited_minor) as balance_minor' : 'null as total_minor, null as balance_minor'}, currency, created_at from rigo.invoices where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows
     .map((i) => ({ ...i, payment: paymentState({ status: i.status, paymentStatus: i.payment_status, dueDate: i.due_date }, today) })) : null;
-  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, subject, status, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
+  const messages = can(cc, 'messages.view') ? (await cc.db.query(`select id, channel, direction, subject, status, status_detail, created_at from rigo.messages where customer_id = $1 and company_id = $2 order by created_at desc limit 50`, [c.req.param('id'), cc.company.id])).rows : null;
   // What they owe: open issued invoices (finance only, R5-m2).
   // Every issued invoice still owed counts, however old (the list above shows only the newest 50).
   const owes = can(cc, 'finance.view') && can(cc, 'invoices.view') ? await (async () => {
@@ -151,6 +153,8 @@ const customerInput = z.object({
   billingContact: z.object({ name: z.string().trim().max(120).default(''), email: z.string().trim().max(254).email('Enter a valid email').or(z.literal('')).default(''), phone: z.string().trim().max(40).default('') }).optional(),
   /** Create it even though it looks like an existing customer (the person chose "Create anyway"). */
   allowDuplicate: z.boolean().optional(),
+  /** The language of the messages Rigo prepares for this customer (D8). */
+  language: z.enum(['en', 'es']).optional(),
 });
 
 /** Existing customers that look like this one, with the reasons (R5-M1). */
@@ -197,8 +201,8 @@ recordRoutes.post('/customers', async (c) => {
       if (dups.length) throw conflict(`This looks like ${dups.length === 1 ? 'a customer you already have' : `${dups.length} customers you already have`}.`, { needsConfirm: 'duplicate', candidates: dups });
     }
     const overrides = input.priceOverrides ? await cleanOverrides(q, cc, input.priceOverrides) : {};
-    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides, payment_terms_days, monthly_statement, billing_contact) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id`,
-      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides), input.paymentTermsDays ?? null, !!input.monthlyStatement, JSON.stringify(can(cc, 'customers.contact') ? input.billingContact ?? {} : {})]);
+    const { rows } = await q.query<{ id: string }>(`insert into rigo.customers (company_id, name, email, phone, billing_address, notes, custom, tax_exempt, tax_exempt_note, price_overrides, payment_terms_days, monthly_statement, billing_contact, language) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
+      [cc.company.id, input.name, input.email || null, input.phone || null, input.billingAddress || null, input.notes ?? '', JSON.stringify(custom.clean), !!input.taxExempt, input.taxExemptNote ?? '', JSON.stringify(overrides), input.paymentTermsDays ?? null, !!input.monthlyStatement, JSON.stringify(can(cc, 'customers.contact') ? input.billingContact ?? {} : {}), input.language ?? 'en']);
     if (input.location) {
       // The first location is named after its street, not "Location" (R5-m5).
       await q.query(`insert into rigo.locations (company_id, customer_id, label, address, access_instructions, site_contact, site_contact_phone) values ($1,$2,$3,$4,$5,$6,$7)`,
@@ -226,10 +230,11 @@ recordRoutes.patch('/customers/:id', async (c) => {
         notes = coalesce($7, notes), custom = coalesce($8::jsonb, custom), tax_exempt = coalesce($11, tax_exempt), tax_exempt_note = coalesce($12, tax_exempt_note),
         price_overrides = coalesce($13::jsonb, price_overrides), payment_terms_days = case when $14 then $15 else payment_terms_days end, monthly_statement = coalesce($16, monthly_statement),
         billing_contact = case when $9 then coalesce($17::jsonb, billing_contact) else billing_contact end,
+        language = coalesce($18, language),
         version = version + 1, updated_at = now()
       where id = $1 and company_id = $2 and version = $10 returning id`,
     [c.req.param('id'), cc.company.id, input.name ?? null, input.email ?? null, input.phone ?? null, input.billingAddress ?? null, input.notes ?? null, custom ? JSON.stringify(custom.clean) : null, contact, input.version,
-      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null, input.paymentTermsDays !== undefined, input.paymentTermsDays ?? null, input.monthlyStatement ?? null, input.billingContact ? JSON.stringify(input.billingContact) : null]);
+      input.taxExempt ?? null, input.taxExemptNote ?? null, overrides ? JSON.stringify(overrides) : null, input.paymentTermsDays !== undefined, input.paymentTermsDays ?? null, input.monthlyStatement ?? null, input.billingContact ? JSON.stringify(input.billingContact) : null, input.language ?? null]);
   if (!rows.length) {
     const exists = await cc.db.query(`select 1 from rigo.customers where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id]);
     if (!exists.rows.length) throw notFound('Customer');
@@ -278,7 +283,7 @@ recordRoutes.patch('/locations/:id', async (c) => {
     const { noteDriverChange } = await import('./jobs.js');
     for (const j of jobs.rows) {
       await q.query(`insert into rigo.job_events (company_id, job_id, type, actor_user_id, data) values ($1,$2,'edited',$3,$4)`, [cc.company.id, j.id, cc.user.id, JSON.stringify({ addressUpdated: true })]);
-      if (j.assigned_user_id) await noteDriverChange(q, cc, j, [input.address ? `New address: ${input.address}` : 'The site details changed', ...(input.accessInstructions !== undefined ? ['New access instructions'] : [])]);
+      if (j.assigned_user_id) await noteDriverChange(q, cc, j, [input.address ? { k: 'notice.newAddress', v: { address: input.address } } : { k: 'notice.siteChanged' }, ...(input.accessInstructions !== undefined ? [{ k: 'notice.newAccessShort' as const }] : [])]);
     }
     await audit(q, cc, 'location.updated', { id: c.req.param('id'), updatedJobs: jobs.rows.length });
     return { updatedJobs: jobs.rows.length };
@@ -388,7 +393,7 @@ export function serializeService(cc: CompanyCtx, s: any) {
   const fin = can(cc, 'finance.view');
   return {
     id: s.id, name: s.name, category: s.category, description: s.description, fields: s.fields, active: s.active, version: s.version,
-    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, invoiceShowsNotes: !!s.invoice_shows_notes,
+    requiresPhoto: s.requires_photo, requiresSignature: s.requires_signature, invoiceShowsNotes: !!s.invoice_shows_notes, pricedPerJob: !!s.priced_per_job,
     // Rates are financial fields: removed from the response, not merely hidden, without finance.view.
     pricing: fin ? readPricing(s.pricing) : readPricing(s.pricing).map(({ rateE4, overageRateE4, minimumMinor, ...p }) => ({ ...p, rateSet: rateE4 !== null })),
     taxRateBp: fin ? s.tax_rate_bp : undefined,
@@ -408,6 +413,21 @@ recordRoutes.post('/services', async (c) => {
   const id = await insertService(cc.db, cc.company.id, input);
   await audit(cc.db, cc, 'service.created', { id, name: input.name });
   return c.json({ id });
+});
+
+/**
+ * "Prices are set on each invoice" (R3-M4): a service without fixed rates counts as priced for setup.
+ * Its invoices are still held until someone enters the price, never charged at zero.
+ */
+recordRoutes.post('/services/:id/priced-per-job', async (c) => {
+  const cc = c.get('cc');
+  if (!/^[0-9a-f-]{36}$/i.test(c.req.param('id'))) throw notFound('Service');
+  need(cc, 'services.manage');
+  const input = await body(c, z.object({ value: z.boolean() }));
+  const { rows } = await cc.db.query(`update rigo.services set priced_per_job = $3 where id = $1 and company_id = $2 returning id, name`, [c.req.param('id'), cc.company.id, input.value]);
+  if (!rows.length) throw notFound('Service');
+  await audit(cc.db, cc, 'service.updated', { id: c.req.param('id'), pricedPerJob: input.value });
+  return c.json({ ok: true });
 });
 
 recordRoutes.put('/services/:id', async (c) => {

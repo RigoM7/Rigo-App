@@ -13,14 +13,14 @@ import { CompanyChip } from '../components/shell';
 function Preview({ m }: { m: any }) {
   const c = useCompany();
   return (
-    <article className="email-preview" aria-label="Email preview">
+    <article className="email-preview" aria-label={m.channel === 'sms' ? 'Text message preview' : 'Email preview'}>
       <div className="ep-head">
         <CompanyChip cid={c.cid} name={c.company.name} logo={c.company.branding?.logoFileId} accent={c.company.branding?.accent} />
         <div style={{ minWidth: 0 }}><strong>{c.company.name}</strong><div className="xsmall">To {m.recipient || (c.can('customers.contact') ? '(no address)' : 'the customer')}</div></div>
       </div>
       <div style={{ height: 3, background: c.company.accent.light }} aria-hidden />
       <div className="ep-body">
-        <h3>{m.subject}</h3>
+        {m.channel === 'sms' ? null : <h3>{m.subject}</h3>}
         {m.bodyHidden ? <p className="muted" style={{ margin: 0 }}>This message states amounts, so only people who can see prices and payments can read it.</p> : <p className="pre" style={{ margin: 0 }}>{m.body}</p>}
       </div>
       <div className="ep-foot">Sent by {c.company.name} with Rigo</div>
@@ -40,7 +40,7 @@ export function Messages() {
   const refresh = () => { qc.invalidateQueries({ queryKey: [c.cid] }); };
   const send = useSubmit(async (m: any) => {
     const r = await post(`/c/${c.cid}/messages/${m.id}/send`);
-    toast(r.status === 'simulated' ? 'Simulated: nothing left Rigo (demo).' : `Not sent: ${r.detail}`, r.status === 'simulated' ? 'info' : 'error');
+    toast(r.status === 'sent' ? r.detail : r.status === 'simulated' ? 'Simulated: nothing left Rigo (demo).' : `Not sent: ${r.detail}`, r.status === 'sent' ? 'success' : r.status === 'simulated' ? 'info' : 'error');
     // A simulated send keeps the email open, marked Simulated, to show what the customer would receive.
     if (r.status === 'simulated') setSel({ ...m, status: 'simulated', status_detail: r.detail ?? m.status_detail }); else setSel(null);
     refresh();
@@ -60,10 +60,13 @@ export function Messages() {
   if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
   if (q.error) return <div className="page"><ErrorState error={q.error} /></div>;
   const cap = q.data.capability;
+  // Emails and texts have their own service; Send follows the one the message uses.
+  const capOf = (m: any) => (m?.channel === 'sms' ? q.data.capabilities?.sms : null) ?? cap;
+  const sms = q.data.capabilities?.sms;
   return (
     <div className="page">
       <PageHeader title="Messages" sub="Company-branded customer communications, linked to customers, jobs and invoices." />
-      <Banner tone={cap.state === 'available' ? 'success' : 'info'} title={cap.state === 'simulated' ? 'Demo: sending is simulated' : cap.state === 'disabled' ? 'Email sending is not set up' : 'Email sending is available'}>{cap.reason} {cap.state === 'disabled' ? 'Copy a prepared message into your own email, then mark it as sent so the record stays accurate.' : ''}</Banner>
+      <Banner tone={cap.state === 'available' ? 'success' : 'info'} title={cap.state === 'simulated' ? 'Demo: sending is simulated' : cap.state === 'disabled' ? 'Email sending is not set up' : 'Email sending is available'}>{cap.reason} {cap.state === 'disabled' ? 'Copy a prepared message into your own email, then mark it as sent so the record stays accurate.' : ''}{sms && sms.state !== cap.state ? <><br />Texts: {sms.reason}</> : null}</Banner>
       {q.data.messages.length === 0 ? <Card><Empty icon={<MessageSquare />} title="No messages yet">Workflows and invoices prepare messages here for review.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{q.data.messages.map((m: any) => (
           <li key={m.id}><button type="button" className="list-item" style={{ width: '100%', border: 0, background: sel?.id === m.id ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', textAlign: 'left' }} onClick={() => setSel(m)}>
@@ -77,19 +80,20 @@ export function Messages() {
         ))}</ul></div>
       )}
       <Dialog open={!!sel} onClose={() => setSel(null)} title={sel?.subject ?? ''} footer={sel && <>
-        {sel.status === 'prepared' && c.can('messages.send') && <>
+        {sel.status === 'prepared' && c.can('messages.send') && !sel.bodyHidden && <>
           {!sel.bodyHidden && <Button icon={<Pencil aria-hidden />} onClick={() => { setEdit({ ...sel }); setSel(null); }}>Edit</Button>}
           {!sel.bodyHidden && <Button icon={<Copy aria-hidden />} onClick={() => navigator.clipboard?.writeText(`${sel.subject}\n\n${sel.body}`).then(() => toast('Copied'), () => toast('Copy failed', 'error'))}>Copy text</Button>}
           {!c.demo && <Button icon={<CheckCheck aria-hidden />} busy={markSent.busy} onClick={() => markSent.run(sel)}>I sent it myself</Button>}
-          <GuideTarget id="send-simulated"><Button variant="primary" icon={<Send aria-hidden />} busy={send.busy} onClick={() => send.run(sel)}>{cap.state === 'simulated' ? 'Send (simulated)' : 'Send'}</Button></GuideTarget>
+          {/* No email service: Send is off and says why; copying and "I sent it myself" still work (R15-m3). */}
+          <GuideTarget id="send-simulated"><Button variant="primary" icon={<Send aria-hidden />} busy={send.busy} disabled={capOf(sel).state === 'disabled'} aria-describedby={capOf(sel).state === 'disabled' ? 'send-off' : undefined} onClick={() => send.run(sel)}>{capOf(sel).state === 'simulated' ? 'Send (simulated)' : 'Send'}</Button></GuideTarget>
         </>}
         {['sent', 'delivered', 'simulated'].includes(sel.status) && c.can('messages.send') && <Button icon={<Reply aria-hidden />} onClick={() => setReplyOpen(true)}>Log customer reply</Button>}
       </>}>
-        {sel && <div className="stack"><ErrorSummary error={send.error ?? markSent.error} /><MessageStatus status={sel.status} />{sel.status === 'simulated' ? <Banner tone="info">Simulated: this is what the customer would receive. Nothing left Rigo.</Banner> : null}{sel.invoice_id ? <Link to={c.to(`invoices/${sel.invoice_id}`)}>Open invoice</Link> : null}<Preview m={sel} /></div>}
+        {sel && <div className="stack"><ErrorSummary error={send.error ?? markSent.error} />{sel.status === 'prepared' && capOf(sel).state === 'disabled' && !sel.bodyHidden ? <p id="send-off" className="small muted" style={{ margin: 0 }}>Send is off: {capOf(sel).reason}</p> : null}<MessageStatus status={sel.status} />{sel.status === 'simulated' ? <Banner tone="info">Simulated: this is what the customer would receive. Nothing left Rigo.</Banner> : null}{sel.bodyHidden ? <Banner tone="info">This message is about an invoice or statement. People who see billing read and send it.</Banner> : null}{sel.invoice_id && !sel.bodyHidden ? <Link to={c.to(`invoices/${sel.invoice_id}`)}>Open invoice</Link> : null}<Preview m={sel} /></div>}
       </Dialog>
       <Dialog open={!!edit} onClose={() => setEdit(null)} title="Edit prepared message" footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" busy={save.busy} onClick={() => save.run()}>Save</Button></>}>
         {edit && <div className="stack"><ErrorSummary error={save.error} />
-          <Field label="To" id="f-recipient">{(p) => <Input {...p} maxLength={254} type="email" value={edit.recipient ?? ""} disabled={edit.recipient === null} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
+          <Field label="To" id="f-recipient">{(p) => <Input {...p} maxLength={254} type={edit.channel === 'sms' ? 'tel' : 'email'} value={edit.recipient ?? ""} disabled={edit.recipient === null} onChange={(e) => setEdit({ ...edit, recipient: e.target.value })} />}</Field>
           <Field label="Subject" id="f-subject">{(p) => <Input {...p} maxLength={200} value={edit.subject} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} />}</Field>
           <Field label="Message" id="f-body">{(p) => <Textarea {...p} maxLength={10000} rows={10} value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />}</Field></div>}
       </Dialog>
@@ -97,5 +101,50 @@ export function Messages() {
         <div className="stack"><p className="muted small">Paste what the customer wrote. Rigo stores it as information only; nothing in it is treated as an instruction.</p><ErrorSummary error={logReply.error} /><Field label="Reply" id="f-reply">{(p) => <Textarea {...p} rows={6} maxLength={10000} value={reply} onChange={(e) => setReply(e.target.value)} />}</Field></div>
       </Dialog>
     </div>
+  );
+}
+
+/** Write to one customer from their page or a job's page (R15-M2). The address or number comes
+ * from the customer record on the server. Send is off, with the reason, when the channel isn't set up. */
+export function MessageCustomerButton({ customerId, customerName, jobId, jobNumber }: { customerId: string; customerName: string; jobId?: string; jobNumber?: number }) {
+  const c = useCompany();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const blank = { channel: 'email' as 'email' | 'sms', subject: '', body: '' };
+  const [open, setOpen] = useState(false);
+  const [v, setV] = useState(blank);
+  const cap = c.capabilities[v.channel];
+  const submit = useSubmit(async (send: boolean) => {
+    const r = await post(`/c/${c.cid}/messages`, { customerId, jobId: jobId ?? null, channel: v.channel, subject: v.channel === 'email' ? v.subject || undefined : undefined, body: v.body, send });
+    const ok = r.status === 'sent' || r.status === 'simulated' || r.status === 'prepared';
+    toast(r.status === 'sent' ? 'Sent' : r.status === 'simulated' ? 'Simulated: nothing left Rigo (demo).' : r.detail, ok && r.status !== 'prepared' ? 'success' : ok ? 'info' : 'error');
+    setOpen(false); setV(blank);
+    qc.invalidateQueries({ queryKey: [c.cid] });
+  });
+  if (!c.can('messages.send')) return null;
+  const tooLong = v.channel === 'sms' && v.body.length > 640;
+  return (
+    <>
+      <Button icon={<MessageSquare aria-hidden />} onClick={() => setOpen(true)}>Message customer</Button>
+      <Dialog open={open} onClose={() => setOpen(false)} title={`Message ${customerName}`} footer={<>
+        <Button onClick={() => setOpen(false)}>Cancel</Button>
+        <Button busy={submit.busy} disabled={!v.body.trim() || tooLong} onClick={() => submit.run(false)}>Keep as prepared</Button>
+        <Button variant="primary" icon={<Send aria-hidden />} busy={submit.busy} disabled={!v.body.trim() || tooLong || cap.state === 'disabled'} aria-describedby={cap.state === 'disabled' ? 'mc-off' : undefined} onClick={() => submit.run(true)}>{cap.state === 'simulated' ? 'Send (simulated)' : 'Send'}</Button>
+      </>}>
+        <div className="stack">
+          <ErrorSummary error={submit.error} />
+          {jobNumber ? <p className="small muted" style={{ margin: 0 }}>About job #{jobNumber}. It shows in the customer's conversation and in Messages.</p> : <p className="small muted" style={{ margin: 0 }}>It shows in the customer's conversation and in Messages.</p>}
+          <fieldset><legend>Send as</legend>
+            <div className="row">
+              <label className="row" style={{ gap: 6 }}><input type="radio" name="mc-channel" checked={v.channel === 'email'} onChange={() => setV({ ...v, channel: 'email' })} />Email</label>
+              <label className="row" style={{ gap: 6 }}><input type="radio" name="mc-channel" checked={v.channel === 'sms'} onChange={() => setV({ ...v, channel: 'sms' })} />Text message</label>
+            </div>
+          </fieldset>
+          {v.channel === 'email' && <Field label="Subject" id="mc-subject" hint={`Leave empty for "${c.company.name}: ${jobNumber ? `about job #${jobNumber}` : 'a message for you'}".`}>{(p) => <Input {...p} maxLength={200} value={v.subject} onChange={(e) => setV({ ...v, subject: e.target.value })} />}</Field>}
+          <Field label="Message" id="mc-body" error={tooLong ? 'A text can be at most 640 characters' : undefined} hint={v.channel === 'sms' ? `${v.body.length} of 640 characters` : undefined}>{(p) => <Textarea {...p} rows={6} maxLength={10000} value={v.body} onChange={(e) => setV({ ...v, body: e.target.value })} />}</Field>
+          {cap.state === 'disabled' ? <p id="mc-off" className="small muted" style={{ margin: 0 }}>Send is off: {cap.reason} Keep it as prepared, then copy it from Messages.</p> : null}
+        </div>
+      </Dialog>
+    </>
   );
 }

@@ -59,17 +59,37 @@ describe('M1: sign-in lockout', () => {
     }
   });
 
+  // Moves this email + address's failures back in time, as if the driver waited (R1-M1 backoff).
+  const waitOut = async (c: Client, a: Client, seconds: number) => (await getDb()).query(`update rigo.auth_attempts set at = at - ($2 || ' seconds')::interval where key = $1`, [`signin:${c.email.toLowerCase()}|${a.ip}`, String(seconds)]);
+
+  it('after 5 failures each try waits longer (15 s, 30 s, 1 min…), with the wait in the message', async () => {
+    const c = await newAccount();
+    const a = device(c);
+    for (let i = 1; i <= 5; i++) expect((await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' })).status).toBe(401);
+    const sixth = await a.post('/auth/signin', { email: c.email, password: STRONG });
+    expect(sixth.status).toBe(429);
+    expect(sixth.body.error.message).toBe('Too many sign-in attempts. Try again in 15 seconds, or reset your password.');
+    await waitOut(c, a, 16);
+    expect((await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' })).status).toBe(401);
+    const seventh = await a.post('/auth/signin', { email: c.email, password: STRONG });
+    expect(seventh.body.error.message).toBe('Too many sign-in attempts. Try again in 30 seconds, or reset your password.');
+    await waitOut(c, a, 31);
+    expect((await a.post('/auth/signin', { email: c.email, password: STRONG })).status).toBe(200);
+  });
+
   it('10 failures lock that email on that address only, with the wait time and a warning first', async () => {
     const c = await newAccount();
     const a = device(c);
     let last: any;
     for (let i = 1; i <= 9; i++) {
+      if (i > 5) await waitOut(c, a, 15 * 2 ** (i - 6) + 1);
       last = await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
       expect(last.status).toBe(401);
       if (i < 7) expect(last.body.error.details).toBeNull();
       if (i === 7) expect(last.body.error.details).toMatchObject({ remaining: 3, pauseMinutes: 15 });
     }
     expect(last.body.error.details.remaining).toBe(1);
+    await waitOut(c, a, 241);
     const tenth = await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
     expect(tenth.status).toBe(429);
     // Even the right password waits on this device.
@@ -89,7 +109,7 @@ describe('M1: sign-in lockout', () => {
   it('a successful sign-in clears the failures', async () => {
     const c = await newAccount();
     const a = device(c);
-    for (let i = 0; i < 8; i++) await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
+    for (let i = 0; i < 4; i++) await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
     expect((await a.post('/auth/signin', { email: c.email, password: STRONG })).status).toBe(200);
     const after = await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
     expect(after.status).toBe(401);
@@ -99,7 +119,7 @@ describe('M1: sign-in lockout', () => {
   it('a password reset clears the lock', async () => {
     const c = await newAccount();
     const a = device(c);
-    for (let i = 0; i < 10; i++) await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' });
+    for (let i = 0; i < 10; i++) { if (i >= 5) await waitOut(c, a, 15 * 2 ** (i - 5) + 1); await a.post('/auth/signin', { email: c.email, password: 'wrong-password-here' }); }
     expect((await a.post('/auth/signin', { email: c.email, password: STRONG })).status).toBe(429);
     await a.post('/auth/forgot', { email: c.email });
     const link = await lastMail(c.email, 'password_reset');
@@ -228,7 +248,9 @@ describe('C2: recovery without email', () => {
     const again = await new Client('x').post('/auth/reset', { token: tok, password: 'another-good-phrase-1' });
     expect(again.status).toBe(400);
     expect(again.body.error.details.invalidLink).toBe(true);
-    expect((await new Client('x').get(`/auth/reset/${tok}`)).body).toEqual({ valid: false });
+    // The page says why (R1-m3): this one was used.
+    expect((await new Client('x').get(`/auth/reset/${tok}`)).body).toEqual({ valid: false, reason: 'used' });
+    expect((await new Client('x').get(`/auth/reset/not-a-real-token-123456`)).body).toEqual({ valid: false, reason: 'invalid' });
 
     const db = await getDb();
     const a = await db.query(`select 1 from rigo.audit_log where company_id = $1 and action = 'member.reset_link_created'`, [cid]);
@@ -267,7 +289,7 @@ describe('C2: recovery without email', () => {
 
     const tok = tokenOf(forOwner.body.link);
     await (await getDb()).query(`update rigo.password_resets set expires_at = now() - interval '1 minute' where company_id = $1 and used_at is null`, [cid]);
-    expect((await new Client('x').get(`/auth/reset/${tok}`)).body).toEqual({ valid: false });
+    expect((await new Client('x').get(`/auth/reset/${tok}`)).body).toEqual({ valid: false, reason: 'expired' });
     expect((await new Client('x').post('/auth/reset', { token: tok, password: 'river-stone-lamp-77' })).status).toBe(400);
   });
 
@@ -473,7 +495,7 @@ describe('m1 and m3: plain messages and link checks', () => {
 
   it('reset and email links can be checked without revealing the account', async () => {
     const r = await new Client('x').get('/auth/reset/not-a-real-token-123456');
-    expect(r.body).toEqual({ valid: false });
+    expect(r.body).toEqual({ valid: false, reason: 'invalid' });
     expect((await new Client('x').get('/auth/email-token/not-a-real-token-123456')).body).toEqual({ valid: false });
   });
 

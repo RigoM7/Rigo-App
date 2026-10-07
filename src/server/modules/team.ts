@@ -1,11 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, type Q } from '../db/index.js';
-import { type AppEnv, type CompanyCtx, need, needAny, audit, requireUser, can } from '../http/context.js';
+import { type AppEnv, type CompanyCtx, need, needAny, audit, requireUser, can, needConfirmedEmail } from '../http/context.js';
 import { body, normEmail, sha256, token } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { config } from '../config.js';
-import { sendSystemEmail } from '../adapters/index.js';
+import { sendSystemEmail, systemEmailChannel, sendingAllowed } from '../adapters/index.js';
 import { ALL_PERMISSIONS } from '../../shared/permissions.js';
 import { notifyRoles, notifyUsers } from './inbox.js';
 import { warnOrphanedApprovals } from '../automation/engine.js';
@@ -219,7 +219,11 @@ async function createInvitation(q: Q, cc: CompanyCtx, email: string, role: strin
   const roleName = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, role])).rows[0].name;
   const mail = inviteMail(cc.company.name, roleName, link);
   // Demo invitations never reach a mailbox; they are previewed only.
-  const delivery = cc.isDemo ? { delivered: false, simulated: true, detail: 'Demo workspace: invitation email is previewed only.' } : await sendSystemEmail(q, { to: email, ...mail, link, kind: 'invitation' });
+  // A company's name goes into the email, so only companies allowed to send email invitations through
+  // the server's email service; others get the link to share themselves (security review).
+  const delivery = cc.isDemo ? { delivered: false, simulated: true, detail: 'Demo workspace: invitation email is previewed only.' }
+    : systemEmailChannel() === 'email' && !sendingAllowed(cc.company) ? { delivered: false, simulated: false, detail: 'Invitation emails are not turned on for this company. Share the link yourself.' }
+    : await sendSystemEmail(q, { to: email, ...mail, link, kind: 'invitation' });
   // Say honestly how it went out (R4-m2): emailed, in the local test mailbox, or not emailed at all.
   const how = cc.isDemo ? 'demo' : delivery.delivered ? 'emailed' : delivery.simulated ? 'mailbox' : 'not_sent';
   await q.query(`update rigo.invitations set link_token = $2, delivery = $3 where id = $1`, [rows[0].id, tok, how]);
@@ -231,6 +235,7 @@ async function createInvitation(q: Q, cc: CompanyCtx, email: string, role: strin
  * ("Marcus already has a pending invite as Dispatcher. Replace with Driver?", R4-M1).
  */
 async function inviteOne(q: Q, cc: CompanyCtx, rawEmail: string, role: string, replace: boolean) {
+  await needConfirmedEmail(cc, 'inviting people');
   const email = normEmail(rawEmail);
   if ((await roleIsOwner(q, cc.company.id, role)) && !cc.isOwner) throw forbidden('Only owners can invite another owner.');
   const roleRow = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, role])).rows[0];
@@ -247,6 +252,8 @@ async function inviteOne(q: Q, cc: CompanyCtx, rawEmail: string, role: string, r
   }
   const recent = await q.query<{ n: number }>(`select count(*)::int n from rigo.invitations where company_id = $1 and created_at > now() - interval '1 hour'`, [cc.company.id]);
   if (recent.rows[0].n >= 30) throw badRequest('Too many invitations in the last hour. Try again later.');
+  const today = await q.query<{ n: number }>(`select count(*)::int n from rigo.invitations where company_id = $1 and created_at > now() - interval '1 day'`, [cc.company.id]);
+  if (today.rows[0].n >= 100) throw badRequest('Too many invitations today. Try again tomorrow.');
   await q.query(`update rigo.invitations set status = 'replaced', link_token = null where company_id = $1 and lower(email) = $2 and status = 'pending'`, [cc.company.id, email]);
   const inv = await createInvitation(q, cc, email, role);
   await audit(q, cc, pending ? 'invitation.replaced' : 'invitation.created', { email, role, ...(pending ? { previousRole: pending.role_key } : {}) });
@@ -283,6 +290,7 @@ teamRoutes.post('/invitations', async (c) => {
 teamRoutes.post('/invitations/:id/resend', async (c) => {
   const cc = c.get('cc');
   need(cc, 'members.invite');
+  await needConfirmedEmail(cc, 'inviting people');
   const result = await cc.db.tx(async (q) => {
     const { rows } = await q.query<any>(`select * from rigo.invitations where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id]);
     const inv = rows[0];

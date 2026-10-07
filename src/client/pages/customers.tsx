@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, Users, MapPin, Upload, Search, Pencil, Trash2 } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, patch, del, ApiError } from '../lib/api';
@@ -13,19 +13,20 @@ import { PaymentPill } from './invoices';
 import { CustomerAccount } from './customer-account';
 import { DynamicField } from './jobform';
 import { CustomerPicker, DuplicateNotice } from '../components/customer-picker';
+import { MessageCustomerButton } from './messages';
 
 function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; onClose: () => void; existing?: any; onSaved: (id: string) => void }) {
   const c = useCompany();
   const defs = c.company.customFields?.customers ?? [];
   const bc = existing?.billingContact ?? {};
-  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '', taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote ?? '', terms: existing.paymentTermsDays === null || existing.paymentTermsDays === undefined ? '' : String(existing.paymentTermsDays), monthlyStatement: !!existing.monthlyStatement, bcName: bc.name ?? '', bcEmail: bc.email ?? '', bcPhone: bc.phone ?? '' } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '', taxExempt: false, taxExemptNote: '', terms: '', monthlyStatement: false, bcName: '', bcEmail: '', bcPhone: '' });
+  const [v, setV] = useState<any>(() => existing ? { name: existing.name, email: existing.email ?? '', phone: existing.phone ?? '', billingAddress: existing.billingAddress ?? '', notes: existing.notes ?? '', custom: existing.custom ?? {}, address: '', access: '', taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote ?? '', terms: existing.paymentTermsDays === null || existing.paymentTermsDays === undefined ? '' : String(existing.paymentTermsDays), monthlyStatement: !!existing.monthlyStatement, language: existing.language ?? 'en', bcName: bc.name ?? '', bcEmail: bc.email ?? '', bcPhone: bc.phone ?? '' } : { name: '', email: '', phone: '', billingAddress: '', notes: '', custom: {}, address: '', access: '', taxExempt: false, taxExemptNote: '', terms: '', monthlyStatement: false, language: 'en', bcName: '', bcEmail: '', bcPhone: '' });
   const [initial] = useState(() => JSON.stringify(v));
   const [dups, setDups] = useState<any[] | null>(null);
   const confirm = useConfirm();
   const billing = c.can('invoices.edit');
   const contact = c.can('customers.contact');
   const s = useSubmit(async (allowDuplicate?: boolean) => {
-    const body: any = { name: v.name, notes: v.notes, custom: v.custom };
+    const body: any = { name: v.name, notes: v.notes, custom: v.custom, language: v.language };
     if (contact) Object.assign(body, { email: v.email, phone: v.phone, billingAddress: v.billingAddress, billingContact: { name: v.bcName, email: v.bcEmail, phone: v.bcPhone } });
     if (billing) Object.assign(body, { taxExempt: v.taxExempt, taxExemptNote: v.taxExempt ? v.taxExemptNote : '', paymentTermsDays: v.terms === '' ? null : Number(v.terms), monthlyStatement: v.monthlyStatement });
     if (existing) {
@@ -64,6 +65,7 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
             <Field label="Email" optionalText id="f-email" error={s.fieldError('email')} hint="Used for invoices and updates.">{(p) => <Input {...p} maxLength={254} type="email" value={v.email} onChange={(e) => set({ email: e.target.value })} />}</Field>
             <Field label="Phone" optionalText id="f-phone">{(p) => <Input {...p} maxLength={40} type="tel" value={v.phone} onChange={(e) => set({ phone: e.target.value })} />}</Field>
           </div>
+          <Field label="Language for messages" id="f-language" hint="Updates, reports, invoices and reminders Rigo prepares for this customer use it.">{(p) => <Select {...p} value={v.language} onChange={(e) => setV({ ...v, language: e.target.value })}><option value="en">English</option><option value="es">Español (Spanish)</option></Select>}</Field>
           <Field label="Billing address" optionalText id="f-billingAddress">{(p) => <Input {...p} maxLength={300} value={v.billingAddress} onChange={(e) => setV({ ...v, billingAddress: e.target.value })} />}</Field>
           <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="label" style={{ marginBottom: 4 }}>Billing contact <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></legend>
@@ -93,6 +95,8 @@ function CustomerDialog({ open, onClose, existing, onSaved }: { open: boolean; o
   );
 }
 
+const PAGE = 50;
+
 export function Customers() {
   const c = useCompany();
   const qc = useQueryClient();
@@ -101,7 +105,13 @@ export function Customers() {
   const search = sp.get('q') ?? '';
   const archived = sp.get('archived') === '1';
   const [creating, setCreating] = useState(() => sp.get('new') === '1' && c.can('customers.edit'));
-  const q = useQuery({ queryKey: [c.cid, 'customers', search, archived ? 'archived' : ''], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`) });
+  // 50 at a time, searched on the server, so a long list stays quick (R17-m2).
+  const q = useInfiniteQuery({
+    queryKey: [c.cid, 'customers', search, archived ? 'archived' : ''], initialPageParam: 0, placeholderData: keepPreviousData,
+    queryFn: ({ pageParam }) => get(`/c/${c.cid}/customers?limit=${PAGE}&offset=${pageParam}&q=${encodeURIComponent(search)}${archived ? '&archived=1' : ''}`),
+    getNextPageParam: (last: any) => (last.hasMore ? last.offset + last.customers.length : undefined),
+  });
+  const list = q.data ? { customers: q.data.pages.flatMap((pg: any) => pg.customers), total: q.data.pages[0].total ?? q.data.pages[0].customers.length } : null;
   const setParam = (k: string, val: string) => { const n = new URLSearchParams(sp); if (val) n.set(k, val); else n.delete(k); setSp(n, { replace: true }); };
   return (
     <div className="page">
@@ -109,13 +119,13 @@ export function Customers() {
         actions={<>{c.can('imports.run') && <LinkButton to={c.to('imports')} icon={<Upload aria-hidden />}>Import</LinkButton>}{c.can('customers.edit') && <Button variant="primary" icon={<Plus aria-hidden />} onClick={() => setCreating(true)}>New customer</Button>}</>} />
       <form role="search" onSubmit={(e) => e.preventDefault()}><Field label="Search customers" id="f-search">{(p) => <div className="input-group"><Input {...p} type="search" placeholder="Name, email, phone or address" defaultValue={search} onChange={(e) => setParam('q', e.target.value)} /><span className="icon-btn" aria-hidden><Search /></span></div>}</Field></form>
       <Tabs label="Which customers" value={archived ? 'archived' : 'active'} onChange={(k) => setParam('archived', k === 'archived' ? '1' : '')} tabs={[{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }]} />
-      {q.isLoading ? <LoadingBlock /> : q.error ? <ErrorState error={q.error} /> : q.data.customers.length === 0 ? (
+      {q.isLoading ? <LoadingBlock /> : q.error || !list ? <ErrorState error={q.error as any} /> : list.customers.length === 0 ? (
         archived ? <Card><Empty icon={<Users aria-hidden />} title={search ? 'No archived customers match' : 'No archived customers'}>Archived customers are hidden from lists and pickers but keep their jobs and invoices.</Empty></Card> :
         <Card><Empty icon={<Users aria-hidden />} title={search ? 'No customers match' : 'No customers yet'} action={c.can('customers.edit') ? <Button variant="primary" icon={<Plus aria-hidden />} onClick={() => setCreating(true)}>Add a customer</Button> : undefined}>{search ? 'Try another search.' : 'Add customers one at a time or import a CSV file.'}</Empty></Card>
       ) : (
         <div className="card card-flush"><div className="table-wrap"><table className="table responsive">
           <thead><tr><th>Customer</th>{c.can('customers.contact') && <th>Contact</th>}<th className="right">Locations</th><th className="right">Open jobs</th></tr></thead>
-          <tbody>{q.data.customers.map((cu: any) => (
+          <tbody>{list.customers.map((cu: any) => (
             <tr key={cu.id}>
               <td data-primary><Link className="row-link" to={c.to(`customers/${cu.id}`)}>{cu.name}</Link>{cu.firstAddress && <div className="small muted">{cu.firstAddress}</div>}</td>
               {c.can('customers.contact') && <td data-label="Contact">{cu.email || cu.phone ? <>{cu.email}<div className="small muted">{cu.phone}</div></> : <span className="muted">—</span>}</td>}
@@ -123,7 +133,9 @@ export function Customers() {
               <td data-label="Open jobs" className="right num">{cu.openJobs}</td>
             </tr>
           ))}</tbody>
-        </table></div></div>
+        </table></div>
+        {q.hasNextPage && <div className="row-between" style={{ padding: '12px 16px' }}><span className="small muted">Showing {list.customers.length} of {list.total}{search ? '' : '. Search to find one quickly.'}</span><Button busy={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Show {Math.min(PAGE, list.total - list.customers.length)} more</Button></div>}
+        </div>
       )}
       {creating && <CustomerDialog open onClose={() => { setCreating(false); if (sp.get('new')) { const n = new URLSearchParams(sp); n.delete('new'); setSp(n, { replace: true }); } }} onSaved={() => { setCreating(false); qc.invalidateQueries({ queryKey: [c.cid, 'customers'] }); toast('Customer added'); }} />}
     </div>
@@ -176,6 +188,7 @@ export function CustomerDetail() {
       {confirm.node}
       <PageHeader back={{ to: c.to('customers'), label: 'Customers' }} title={customer.name} actions={archived ? undefined : <>
         {c.can('customers.edit') && <Button icon={<Pencil aria-hidden />} onClick={() => setEditing(true)}>Edit</Button>}
+        <MessageCustomerButton customerId={customer.id} customerName={customer.name} />
         {c.can('jobs.create') && <LinkButton variant="primary" to={c.to(`jobs/new?customer=${customer.id}`)} icon={<Plus aria-hidden />}>New job</LinkButton>}
       </>} />
       <ErrorSummary error={act.error} />
@@ -228,7 +241,7 @@ export function CustomerDetail() {
           <Card id="past" title="Past jobs">{past.length === 0 ? <p className="muted">No finished jobs yet.</p> : <ul className="list">{past.map(jobRow)}</ul>}</Card>
           {c.can('finance.view') && c.can('invoices.view') && <CustomerAccount customerId={customer.id} />}
           {invoices && <Card id="invs" title="Invoices" actions={c.can('invoices.edit') && c.can('finance.view') && !archived ? <LinkButton size="sm" to={c.to(`invoices/new?customer=${customer.id}`)} icon={<Plus aria-hidden />}>New invoice</LinkButton> : undefined}>{invoices.length === 0 ? <p className="muted">No invoices yet.</p> : <ul className="list">{invoices.map((i: any) => <li key={i.id} className="row-between" style={{ padding: '8px 0' }}><Link to={c.to(`invoices/${i.id}`)}>{i.number ?? 'Draft'}</Link><span className="row">{i.total_minor !== null ? <span className="num">{formatMoney(i.total_minor, i.currency)}</span> : null}{i.status === 'issued' || i.status === 'void' ? <PaymentPill payment={i.payment} /> : <InvoiceStatus status={i.status} />}</span></li>)}</ul>}</Card>}
-          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.subject}<div className="small muted">{fmtDateTime(m.created_at, c.company.timezone)}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
+          {messages && <Card id="conv" title="Conversation">{messages.length === 0 ? <p className="muted">No messages yet.</p> : <ul className="list">{messages.map((m: any) => <li key={m.id} className="row-between" style={{ padding: '8px 0' }}><span>{m.direction === 'inbound' ? 'Reply: ' : ''}{m.subject}<div className="small muted">{m.channel === 'sms' ? 'Text' : 'Email'} · {fmtDateTime(m.created_at, c.company.timezone)}{m.status_detail ? ` · ${m.status_detail}` : ''}</div></span><MessageStatus status={m.status} /></li>)}</ul>}</Card>}
           {c.can('customers.edit') && !mergedInto && (
             <Card id="manage" title="Duplicates and archiving">
               <div className="stack">

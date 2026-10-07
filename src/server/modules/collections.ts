@@ -7,7 +7,8 @@ import { badRequest, conflict, notFound } from '../http/errors.js';
 import { formatMoney } from '../../shared/billing.js';
 import { agingBucket, balanceDue, daysBetween, isStatementDay, reminderStage, REMINDER_LABEL, AGING_BUCKETS, PAYMENT_METHODS, type AgingKey, type ReminderStage } from '../../shared/invoices.js';
 import { localDate, addDays } from '../../shared/schedule.js';
-import { creditBalance, invoiceViewLink } from './invoicing.js';
+import { creditBalance, invoiceViewLink, longDate as longDateIn, customerLang } from './invoicing.js';
+import { translate, type Lang, type MessageKey, type Vars } from '../../shared/i18n/index.js';
 import { notifyPermission } from './inbox.js';
 
 // Collections (R10-M3): who owes what and for how long, statements, reminders the office approves
@@ -16,13 +17,13 @@ import { notifyPermission } from './inbox.js';
 
 export const collectionRoutes = new Hono<AppEnv>();
 
-const longDate = (d: string) => new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T12:00:00Z`));
+const longDate = (d: string, lang: Lang = 'en') => longDateIn(d, lang) ?? '';
 const balanceOf = (i: any) => balanceDue({ totalMinor: Number(i.total_minor), paidMinor: Number(i.paid_minor), creditedMinor: Number(i.credited_minor ?? 0) }) ?? 0;
 
 /** Issued invoices with something still owed, oldest due first. */
 async function openInvoices(q: Q, companyId: string, customerId?: string) {
   const { rows } = await q.query<any>(
-    `select i.id, i.number, i.customer_id, i.issued_at, i.due_date, i.total_minor, i.paid_minor, i.credited_minor, i.currency, i.period_start, i.period_end, c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email
+    `select i.id, i.number, i.customer_id, i.issued_at, i.due_date, i.total_minor, i.paid_minor, i.credited_minor, i.currency, i.period_start, i.period_end, c.name as customer_name, c.language as customer_language, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id
       where i.company_id = $1 and i.status = 'issued' and i.payment_status <> 'paid' and ($2::uuid is null or i.customer_id = $2)
       order by i.due_date nulls last, i.issued_at`, [companyId, customerId ?? null]);
@@ -39,18 +40,20 @@ async function prepareReminder(q: Q, companyId: string, inv: any, stage: Reminde
   const late = inv.due_date ? daysBetween(inv.due_date, today) : 0;
   const pay = String(co.settings?.paymentInstructions ?? '').trim();
   const link = await invoiceViewLink(q, companyId, inv.id);
+  const lang = customerLang(inv.customer_language);
+  const t = (k: MessageKey, v?: Vars) => translate(lang, k, v);
   const lead = stage === 'due_soon'
-    ? `This is a friendly reminder that invoice ${inv.number} is due on ${longDate(inv.due_date)}.`
-    : `Our records show invoice ${inv.number} was due on ${longDate(inv.due_date)} and is now ${late} days overdue. If you've already paid, thank you, and please let us know so we can match it.`;
+    ? t('cm.reminderSoon', { number: inv.number, date: longDate(inv.due_date, lang) })
+    : t('cm.reminderLate', { number: inv.number, date: longDate(inv.due_date, lang), n: late });
   const text = [
-    `Hello ${inv.customer_name ?? ''},`.trim(), '', lead, '', `Balance due: ${formatMoney(balance, inv.currency)}`,
-    ...(pay ? ['', `How to pay: ${pay}`] : []), '', `View or print the invoice: ${link}`, '',
-    `Questions? Reply to this message${co.phone ? ` or call ${co.phone}` : ''}.`, '', co.name,
+    inv.customer_name ? t('customer.hello', { name: inv.customer_name }) : t('customer.helloPlain'), '', lead, '', t('cm.balanceDue', { amount: formatMoney(balance, inv.currency) }),
+    ...(pay ? ['', t('cm.howToPay', { text: pay })] : []), '', t('cm.viewInvoiceShort', { url: link }), '',
+    co.phone ? t('cm.questionsCall', { phone: co.phone }) : t('cm.questions'), '', co.name,
   ].join('\n');
   const { rows } = await q.query<{ id: string }>(
     `insert into rigo.messages (company_id, customer_id, invoice_id, channel, recipient, subject, body, status, status_detail, source_key)
      values ($1,$2,$3,'email',$4,$5,$6,'prepared',$7,$8) on conflict do nothing returning id`,
-    [companyId, inv.customer_id, inv.id, inv.customer_email ?? '', `${stage === 'due_soon' ? 'Reminder' : 'Overdue'}: invoice ${inv.number} from ${co.name}`, text,
+    [companyId, inv.customer_id, inv.id, inv.customer_email ?? '', t(stage === 'due_soon' ? 'cm.reminderSubject' : 'cm.overdueSubject', { number: inv.number, company: co.name }), text,
       `Payment reminder (${REMINDER_LABEL[stage].toLowerCase()}). Review and send, or skip.`, `reminder:${inv.id}:${stage}`]);
   return !!rows[0];
 }
@@ -80,21 +83,23 @@ export async function buildStatement(q: Q, companyId: string, customerId: string
 /** Save a statement and prepare its email (not sent). One per customer per date; re-preparing refreshes it. */
 export async function prepareStatement(q: Q, companyId: string, customerId: string, asOf: string, userId: string | null) {
   const data = await buildStatement(q, companyId, customerId, asOf);
-  const cust = (await q.query<any>(`select name, coalesce(nullif(billing_contact->>'email', ''), email) as email from rigo.customers where id = $1 and company_id = $2`, [customerId, companyId])).rows[0];
+  const cust = (await q.query<any>(`select name, language, coalesce(nullif(billing_contact->>'email', ''), email) as email from rigo.customers where id = $1 and company_id = $2`, [customerId, companyId])).rows[0];
   if (!cust) throw notFound('Customer');
   const co = (await q.query<any>(`select name, phone, currency, settings from rigo.companies where id = $1`, [companyId])).rows[0];
   const st = (await q.query<{ id: string; message_id: string | null }>(
     `insert into rigo.statements (company_id, customer_id, statement_date, data, balance_minor, created_by) values ($1,$2,$3,$4,$5,$6)
      on conflict (company_id, customer_id, statement_date) do update set data = excluded.data, balance_minor = excluded.balance_minor returning id, message_id`,
     [companyId, customerId, asOf, JSON.stringify(data), data.totalDueMinor, userId])).rows[0];
-  const lines = data.openInvoices.map((i) => `${i.number}  issued ${i.issuedOn ?? '—'}  due ${i.dueDate ?? '—'}  balance ${formatMoney(i.balanceMinor, co.currency)}`);
+  const lang = customerLang(cust.language);
+  const t = (k: MessageKey, v?: Vars) => translate(lang, k, v);
+  const lines = data.openInvoices.map((i) => t('cm.statementLine', { number: i.number, issued: i.issuedOn ?? '—', due: i.dueDate ?? '—', balance: formatMoney(i.balanceMinor, co.currency) }));
   const pay = String(co.settings?.paymentInstructions ?? '').trim();
   const text = [
-    `Hello ${cust.name},`, '', `Here is your statement from ${co.name} as of ${longDate(asOf)}.`, '',
-    ...(lines.length ? ['Open invoices:', ...lines] : ['You have no open invoices. Thank you!']), '',
-    ...(data.payments.length ? ['Payments received in the last month:', ...data.payments.map((p) => `${p.paidOn}  ${p.kind === 'refund' ? 'Refund' : p.kind === 'deposit' ? 'Deposit' : 'Payment'}  ${formatMoney(p.amountMinor, co.currency)}${p.invoiceNumber ? `  (${p.invoiceNumber})` : ''}`), ''] : []),
-    `Total due: ${formatMoney(data.totalDueMinor, co.currency)}`, ...(data.creditMinor > 0 ? [`Credit on your account: ${formatMoney(data.creditMinor, co.currency)}`] : []),
-    ...(pay ? ['', `How to pay: ${pay}`] : []), '', `Questions? Reply to this message${co.phone ? ` or call ${co.phone}` : ''}.`, '', co.name,
+    t('customer.hello', { name: cust.name }), '', t('cm.statementLead', { company: co.name, date: longDate(asOf, lang) }), '',
+    ...(lines.length ? [t('cm.openInvoices'), ...lines] : [t('cm.noOpen')]), '',
+    ...(data.payments.length ? [t('cm.paymentsMonth'), ...data.payments.map((p) => `${p.paidOn}  ${t(p.kind === 'refund' ? 'cm.payKind.refund' : p.kind === 'deposit' ? 'cm.payKind.deposit' : 'cm.payKind.payment')}  ${formatMoney(p.amountMinor, co.currency)}${p.invoiceNumber ? `  (${p.invoiceNumber})` : ''}`), ''] : []),
+    t('cm.totalDue', { amount: formatMoney(data.totalDueMinor, co.currency) }), ...(data.creditMinor > 0 ? [t('cm.credit', { amount: formatMoney(data.creditMinor, co.currency) })] : []),
+    ...(pay ? ['', t('cm.howToPay', { text: pay })] : []), '', co.phone ? t('cm.questionsCall', { phone: co.phone }) : t('cm.questions'), '', co.name,
   ].join('\n');
   const existing = st.message_id ? (await q.query<any>(`select status from rigo.messages where id = $1`, [st.message_id])).rows[0] : null;
   if (existing?.status === 'prepared') {
@@ -103,7 +108,7 @@ export async function prepareStatement(q: Q, companyId: string, customerId: stri
     const m = await q.query<{ id: string }>(
       `insert into rigo.messages (company_id, customer_id, channel, recipient, subject, body, status, status_detail, source_key, statement_id, created_by)
        values ($1,$2,'email',$3,$4,$5,'prepared','Statement prepared. Review and send.',$6,$7,$8) returning id`,
-      [companyId, customerId, cust.email ?? '', `Statement from ${co.name}, ${longDate(asOf)}`, text, `statement:${st.id}`, st.id, userId]);
+      [companyId, customerId, cust.email ?? '', t('cm.statementSubject', { company: co.name, date: longDate(asOf, lang) }), text, `statement:${st.id}`, st.id, userId]);
     await q.query(`update rigo.statements set message_id = $2 where id = $1`, [st.id, m.rows[0].id]);
   }
   return { statementId: st.id, ...data };
@@ -136,8 +141,10 @@ export async function prepareCollections(db: Db, companyId: string) {
 export async function runCollections() {
   const db = await getDb();
   const { rows } = await db.query<{ company_id: string }>(
-    `select distinct company_id from rigo.invoices where status = 'issued' and payment_status <> 'paid' and due_date is not null and due_date <= current_date + 4
-     union select distinct company_id from rigo.customers where monthly_statement`);
+    `select company_id from (select distinct company_id from rigo.invoices where status = 'issued' and payment_status <> 'paid' and due_date is not null and due_date <= current_date + 4
+     union select distinct company_id from rigo.customers where monthly_statement) x
+     -- An archived company is at rest: no reminders or statements (security review).
+     where not exists (select 1 from rigo.companies co where co.id = x.company_id and co.archived_at is not null)`);
   let reminders = 0;
   for (const r of rows) {
     try { reminders += (await prepareCollections(db, r.company_id)).reminders; } catch (e) { console.error('[collections]', r.company_id, e); }

@@ -9,6 +9,7 @@ import { localDate } from '../../shared/schedule.js';
 import { readPricing, type FieldDef } from '../../shared/services.js';
 import { conflict, notFound } from '../http/errors.js';
 import { emit } from '../automation/engine.js';
+import { translate, plural, localeOf, isLang, type Lang, type MessageKey, type Vars } from '../../shared/i18n/index.js';
 
 // Invoice preparation and issuing. One invoice per billable event (billable_key), deterministic
 // totals, explicit holds for missing configuration, and separate draft/approval/delivery/payment states.
@@ -276,55 +277,61 @@ export async function issueInvoice(q: Q, companyId: string, invoiceId: string, a
 }
 
 /** Plain-text line for the customer email: "Gasoline: 187.4 gal × $3.89 = $728.99" or "Delivery fee: $45.00". */
-function emailLine(row: any, currency: string) {
+function emailLine(row: any, currency: string, lang: Lang = 'en') {
   const l = lineFromRow(row);
   if (l.kind === 'discount') return `${l.description}: -${formatMoney(Math.abs(l.amountMinor ?? 0), currency)}`;
   if (l.quantity === '1' && !l.unit) return `${l.description}: ${formatMoney(l.amountMinor, currency)}`;
-  return `${l.description}: ${l.quantity}${l.unit ? ` ${l.unit}` : ''} × ${formatRate(l.rateE4, currency)} = ${formatMoney(l.amountMinor, currency)}${l.note?.startsWith('Minimum') ? ' (minimum charge)' : ''}`;
+  return `${l.description}: ${l.quantity}${l.unit ? ` ${l.unit}` : ''} × ${formatRate(l.rateE4, currency)} = ${formatMoney(l.amountMinor, currency)}${l.note?.startsWith('Minimum') ? translate(lang, 'cm.minimum') : ''}`;
 }
 
-/** "November 5, 2026" from a company-local date. */
-function longDate(d: string | null) {
+/** "October 7, 2026" / "7 de octubre de 2026" for a calendar date. */
+export function longDate(d: string | null, lang: Lang = 'en') {
   if (!d) return null;
-  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T12:00:00Z`));
+  return new Intl.DateTimeFormat(localeOf(lang), { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T12:00:00Z`));
 }
 
 const EMAIL_LINE_LIMIT = 10;
 
-/**
- * The customer email for an invoice: its lines, total, what's been paid, the balance and due date,
- * how to pay, and a link to view or print it. Text only, prepared for review (R2-m9, R15-m4).
- */
+/** The customer's language for what Rigo writes to them (D8). */
+export function customerLang(v: unknown): Lang { return isLang(v) ? v : 'en'; }
+
+/** Customer-facing invoice email (R15-m4, R2-m9): the lines, due date, balance, how to pay and a view link. */
 export async function invoiceEmail(q: Q, invoiceId: string, viewUrl?: string) {
   const { rows } = await q.query<any>(
-    `select i.*, c.name as customer_name, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
+    `select i.*, c.name as customer_name, c.language as customer_language, coalesce(nullif(c.billing_contact->>'email', ''), c.email) as customer_email, co.name as company_name, co.phone as company_phone, co.email as company_email, co.timezone, co.settings as company_settings, j.number as job_number
        from rigo.invoices i left join rigo.customers c on c.id = i.customer_id join rigo.companies co on co.id = i.company_id left join rigo.jobs j on j.id = i.job_id
       where i.id = $1`, [invoiceId]);
   const i = rows[0];
+  const lang = customerLang(i.customer_language);
+  const t = (k: MessageKey, v?: Vars) => translate(lang, k, v);
   const lines = (await q.query<any>(`select * from rigo.invoice_lines where invoice_id = $1 order by position`, [invoiceId])).rows;
-  const due = longDate(i.due_date);
+  const due = longDate(i.due_date, lang);
   const s = i.company_settings ?? {};
   const pay = String(s.paymentInstructions ?? '').trim();
   const remit = String(s.remitTo ?? '').trim();
   const paid = Number(i.paid_minor) + Number(i.credited_minor ?? 0);
   const balance = balanceDue({ totalMinor: i.total_minor === null ? null : Number(i.total_minor), paidMinor: Number(i.paid_minor), creditedMinor: Number(i.credited_minor ?? 0) });
-  const subject = `${i.company_name} invoice ${i.number ?? '(draft)'}`;
+  const number = i.number ?? t('cm.draft');
+  const subject = t('cm.invoiceSubject', { company: i.company_name, number });
+  const name = i.bill_to?.customerName ?? i.customer_name ?? '';
+  const terms = i.due_days === 0 ? t('cm.terms.receipt') : t('cm.terms.net', { n: i.due_days ?? 30 });
+  const more = lines.length - EMAIL_LINE_LIMIT;
   const body = [
-    `Hello ${i.bill_to?.customerName ?? i.customer_name ?? ''},`.trim(),
+    name ? t('customer.hello', { name }) : t('customer.helloPlain'),
     '',
-    `Thank you for your business. Here is invoice ${i.number ?? '(draft)'}${i.job_number ? ` for job #${i.job_number}` : ''}${i.period_start ? ` for ${longDate(i.period_start)} to ${longDate(i.period_end)}` : ''}.`,
+    t('cm.thanksInvoice', { number, job: i.job_number ? t('cm.forJob', { n: i.job_number }) : '', period: i.period_start ? t('cm.forPeriod', { from: longDate(i.period_start, lang) ?? '', to: longDate(i.period_end, lang) ?? '' }) : '' }),
     '',
-    ...lines.slice(0, EMAIL_LINE_LIMIT).map((l) => emailLine(l, i.currency)),
-    ...(lines.length > EMAIL_LINE_LIMIT ? [`(and ${lines.length - EMAIL_LINE_LIMIT} more line${lines.length - EMAIL_LINE_LIMIT === 1 ? '' : 's'})`] : []),
-    ...(i.tax_minor ? [`Tax: ${formatMoney(i.tax_minor, i.currency)}`] : []),
-    `Total: ${formatMoney(i.total_minor, i.currency)}`,
-    ...(paid > 0 ? [`Paid and credited: ${formatMoney(paid, i.currency)}`, `Balance due: ${formatMoney(balance, i.currency)}`] : []),
-    i.due_days === 0 ? 'Due on receipt.' : due ? `Due: ${due} (${termsLabel(i.due_days)})` : `Due within ${i.due_days ?? 30} days of the invoice date.`,
-    ...(pay ? ['', `How to pay: ${pay}`] : []),
-    ...(remit ? [`Send payments to: ${remit}`] : []),
-    ...(viewUrl ? ['', `View or print this invoice: ${viewUrl}`, '(This link works for 60 days.)'] : []),
+    ...lines.slice(0, EMAIL_LINE_LIMIT).map((l) => emailLine(l, i.currency, lang)),
+    ...(more > 0 ? [plural(lang, 'cm.moreLines', more)] : []),
+    ...(i.tax_minor ? [t('cm.tax', { amount: formatMoney(i.tax_minor, i.currency) })] : []),
+    t('cm.total', { amount: formatMoney(i.total_minor, i.currency) }),
+    ...(paid > 0 ? [t('cm.paidCredited', { amount: formatMoney(paid, i.currency) }), t('cm.balanceDue', { amount: formatMoney(balance, i.currency) })] : []),
+    i.due_days === 0 ? t('cm.dueOnReceipt') : due ? t('cm.dueOn', { date: due, terms }) : t('cm.dueWithin', { n: i.due_days ?? 30 }),
+    ...(pay ? ['', t('cm.howToPay', { text: pay })] : []),
+    ...(remit ? [t('cm.sendPayments', { text: remit })] : []),
+    ...(viewUrl ? ['', t('cm.viewInvoice', { url: viewUrl }), t('cm.link60')] : []),
     '',
-    `Questions? Reply to this message${i.company_phone ? ` or call ${i.company_phone}` : ''}.`,
+    i.company_phone ? t('cm.questionsCall', { phone: i.company_phone }) : t('cm.questions'),
     '',
     i.company_name,
   ].join('\n');

@@ -4,17 +4,22 @@ export function fmtDateTime(iso: string | null | undefined, tz?: string) {
   if (!iso) return '—';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: tz }).format(new Date(iso));
 }
-export function fmtDate(iso: string | null | undefined, tz?: string) {
+// `locale` (optional): the person's language on translated screens (D8); dates stay in the company's time zone.
+export function fmtDate(iso: string | null | undefined, tz?: string, locale?: string) {
   if (!iso) return '—';
   const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: /^\d{4}-\d{2}-\d{2}$/.test(iso) ? 'UTC' : tz }).format(d);
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: /^\d{4}-\d{2}-\d{2}$/.test(iso) ? 'UTC' : tz }).format(d);
 }
-export function fmtTime(iso: string | null | undefined, tz?: string) {
+export function fmtTime(iso: string | null | undefined, tz?: string, locale?: string) {
   if (!iso) return 'No time set';
-  return new Intl.DateTimeFormat(undefined, { timeStyle: 'short', timeZone: tz }).format(new Date(iso));
+  return new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone: tz }).format(new Date(iso));
 }
-export function relTime(iso: string) {
+export function relTime(iso: string, locale?: string) {
   const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (locale && !locale.startsWith('en')) {
+    const r = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+    return s < 60 ? r.format(0, 'second') : s < 3600 ? r.format(-Math.floor(s / 60), 'minute') : s < 86400 ? r.format(-Math.floor(s / 3600), 'hour') : r.format(-Math.floor(s / 86400), 'day');
+  }
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`;

@@ -28,6 +28,9 @@ trustworthy treatment of amounts and states.
   illustrations, big-number "hero metric" tiles, eyebrow labels above headings), clutter,
   important actions hidden in "…" menus or on hover, gradient text, decorative glass or blur,
   neon glows, colored left borders thicker than 1px on cards or alerts, emoji as icons.
+  **One exception, on purpose:** timeline blocks carry a 3px status edge (`.tl-block::before`),
+  because a dispatcher scans dozens of them by status at once. The status is also in the block's
+  text and accessible name, so colour is never the only signal. Cards and alerts keep the rule.
 
 ## Tokens: three layers
 

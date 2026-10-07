@@ -38,7 +38,7 @@ export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     setBusy(true); setError('');
     try {
-      const flags = { confirmStarted: false, allowOverlap: false };
+      const flags = { confirmStarted: false, allowOverlap: false, openDraft: false };
       const send = () => post(`/c/${c.cid}/jobs/${job.id}/assign`, { userId: to || null, resourceIds: (job.resources ?? []).map((x: any) => x.id), version: version.current, ...flags });
       let r;
       for (;;) {
@@ -50,6 +50,10 @@ export function QuickAssign({ job, onDone }: { job: any; onDone: () => void }) {
             // A driver who already started the job is only replaced after a deliberate yes (R9-M2).
             yes = await confirm.ask({ title: e.message, body: <p>{e.details.driverName} is no longer assigned once you continue. Anything they record on their phone for this job goes to the office for review instead of being lost.</p>, confirm: 'Reassign anyway' });
             flags.confirmStarted = yes;
+          } else if (e.details?.needsConfirm === 'draft' && !flags.openDraft) {
+            // Drivers don't see drafts: assigning one opens it, after a yes (R3-M7).
+            yes = await confirm.ask({ title: e.message, body: <p>Opening the job puts it on the driver's list. It must have a customer, location and service.</p>, confirm: 'Open and assign' });
+            flags.openDraft = yes;
           } else if (e.details?.canOverride && !flags.allowOverlap) {
             // An overlap can be accepted on purpose; history records it (R11-m4).
             yes = await confirm.ask({ title: 'This overlaps other work', body: <div className="stack-sm"><ul style={{ margin: 0, paddingLeft: 18 }}>{(e.details.clashes as string[]).map((x) => <li key={x}>{x}</li>)}</ul><p className="small muted" style={{ margin: 0 }}>Assign anyway only if the overlap is deliberate. The job history records it.</p></div>, confirm: 'Assign anyway' });

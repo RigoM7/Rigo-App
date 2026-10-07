@@ -24,8 +24,8 @@
   --radius-sm: 6px; --radius: 8px; --radius-lg: 12px; --radius-pill: 999px;
   --dur-fast: 120ms; --dur: 200ms; --dur-slow: 360ms;
   --ease: cubic-bezier(0.16, 1, 0.3, 1); --ease-exit: cubic-bezier(0.4, 0, 1, 1);
-  --topbar-h: 56px; --sidebar-w: 248px; --sidebar-w-collapsed: 64px; --bottomnav-h: 64px; --drawer-w: 440px;
-  --tap: 44px;
+  --topbar-h: max(56px, 3.5rem); --sidebar-w: 248px; --sidebar-w-collapsed: 64px; --bottomnav-h: 64px; --drawer-w: 440px;
+  --tap: max(44px, 2.75rem);
 }
 
 /* ============================================================ 2. semantic: light (default) */
@@ -119,7 +119,7 @@
   --input-h: var(--tap); --input-radius: var(--radius);
   --card-radius: var(--radius-lg); --card-pad: var(--space-5);
   --table-row-pad: 12px;
-  --tl-lane-h: 72px; --tl-label-w: 196px; --tl-hour-min: 72px;
+  --tl-lane-h: max(72px, 4.75rem); --tl-label-w: 196px; --tl-hour-min: 72px;
 }
 
 /* ============================================================ base */
@@ -188,7 +188,7 @@ kbd { display: inline-flex; align-items: center; min-width: 20px; height: 20px; 
 .btn[aria-busy='true'] { cursor: progress; }
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: var(--tap); height: var(--tap); border-radius: var(--radius); border: 1px solid transparent; background: transparent; color: var(--text); cursor: pointer; position: relative; transition: background var(--dur-fast) var(--ease); flex: none; }
 .icon-btn:hover { background: var(--surface-2); }
-.icon-btn svg { width: 18px; height: 18px; }
+.icon-btn svg { width: max(18px, 1.125rem); height: max(18px, 1.125rem); }
 .badge-count { position: absolute; top: 5px; right: 3px; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; background: var(--primary); color: var(--on-primary); font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--chrome); }
 .spin-icon { animation: spin 0.8s linear infinite; }
 
@@ -434,7 +434,11 @@ dialog.drawer::backdrop { background: var(--scrim); }
 .topbar { position: sticky; top: 0; z-index: 30; height: var(--topbar-h); display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--chrome); color: var(--chrome-text); border-bottom: 1px solid var(--chrome-divider); }
 .topbar .brand, .sidebar .brand { color: var(--chrome-text); }
 .topbar :focus-visible, .sidebar :focus-visible, .bottom-nav :focus-visible { outline-color: var(--chrome-focus); }
-.topbar .icon-btn { color: var(--chrome-muted); width: 40px; height: 40px; }
+.topbar .icon-btn { color: var(--chrome-muted); width: max(40px, 2.5rem); height: max(40px, 2.5rem); }
+/* Phones: header buttons are full-size touch targets (R9-m2). */
+/* Phones: header buttons are full-size touch targets (R9-m2) and grow with the text, up to a size
+   that still leaves room for the company name at 200% text (R18-m4). */
+@media (max-width: 640px) { .topbar .icon-btn { width: clamp(44px, 2.75rem, 56px); height: clamp(44px, 2.75rem, 56px); flex: none; } .topbar .icon-btn svg { width: clamp(18px, 1.125rem, 26px); height: clamp(18px, 1.125rem, 26px); } .topbar .company-switch { min-width: 0; } }
 .topbar .icon-btn:hover, .topbar .icon-btn[aria-expanded='true'] { background: var(--chrome-hover); color: var(--chrome-text); }
 @media (pointer: coarse) { .topbar .icon-btn { width: var(--tap); height: var(--tap); } }
 .topbar .pill { flex: none; }
@@ -574,7 +578,7 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .tl-avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--surface-3); color: var(--text); font-size: 0.6875rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .tl-track { position: relative; background-image: linear-gradient(to right, var(--border) 0 1px, transparent 1px); background-size: calc(100% / var(--tl-hours)) 100%; }
 .tl-track .past { position: absolute; top: 0; bottom: 0; left: 0; background: color-mix(in srgb, var(--surface-2) 70%, transparent); pointer-events: none; }
-.tl-block { position: absolute; top: 8px; height: 60px; min-width: 116px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); padding: 4px 8px 4px 10px; text-align: left; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 2px; font-size: var(--fs-13); line-height: 1.2; box-shadow: var(--shadow-1);
+.tl-block { position: absolute; top: 0.5rem; height: calc(var(--tl-lane-h) - 1rem); min-width: 116px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); padding: 4px 8px 4px 10px; text-align: left; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 2px; font-size: var(--fs-13); line-height: 1.2; box-shadow: var(--shadow-1);
   transition: left var(--dur-slow) var(--ease), width var(--dur-slow) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
 .tl-block::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--tl-tone, var(--border-strong)); }
 .tl-block:hover { border-color: var(--text-2); box-shadow: var(--shadow-2); z-index: 2; }
@@ -680,6 +684,11 @@ dialog.cmdk::backdrop { background: var(--scrim); }
 .change-list ins { text-decoration: none; font-weight: 600; background: var(--warning-soft, var(--surface-2)); padding: 0 4px; border-radius: 4px; }
 .sync-state { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-14); padding: 3px 10px 3px 8px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); }
 .sync-state svg { width: 15px; height: 15px; }
+/* Large text: driver buttons wrap their words instead of running off the screen (R18-m4). */
+.driver-page .btn { white-space: normal; max-width: 100%; height: auto; min-height: var(--tap); padding-top: 6px; padding-bottom: 6px; }
+/* Outdoors, on a phone: no driver text under 15px (R9-m2). */
+.driver-page, .driver-page p, .driver-page li, .driver-page .banner, .driver-page .banner div, .driver-page .banner strong, .driver-page .btn, .driver-page .btn-sm, .driver-page label, .driver-page .label, .driver-page .label .muted, .driver-page legend, .driver-page .back-link, .driver-page input, .driver-page select, .driver-page textarea { font-size: max(15px, 0.9375rem); }
+.driver-page .small, .driver-page .xsmall, .driver-page .hint, .driver-page .muted.small, .driver-page .sync-state, .driver-page .pill, .driver-page .field-error, .driver-page .kv dt, .driver-page .kv dd { font-size: max(15px, 0.9375rem); }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
 .photo-grid figure { margin: 0; position: relative; }
 .photo-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--border); }
@@ -1012,10 +1021,10 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 
 /* Emergencies on the driver's list: a strong border and a labelled tag, never colour alone (R6-M1). */
 .driver-job.is-emergency { border: 2px solid var(--danger); box-shadow: inset 4px 0 0 var(--danger); }
-.emergency-tag { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger); font-weight: 700; font-size: var(--fs-13); letter-spacing: 0.02em; text-transform: uppercase; }
+.emergency-tag { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger); font-weight: 700; font-size: max(15px, 0.9375rem); letter-spacing: 0.02em; text-transform: uppercase; }
 .emergency-tag svg, .emergency-heading svg { width: 16px; height: 16px; }
 .emergency-heading { display: flex; align-items: center; gap: 8px; color: var(--danger); }
-.changed-tag { display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: var(--radius-pill); border: 1px solid var(--warning); color: var(--warning); font-weight: 650; font-size: var(--fs-12); }
+.changed-tag { display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: var(--radius-pill); border: 1px solid var(--warning); color: var(--warning); font-weight: 650; font-size: max(15px, 0.9375rem); }
 .changes-banner { align-items: flex-start; }
 .change-item { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
 .change-item:first-of-type { border-top: 0; padding-top: 0; }
@@ -1048,8 +1057,14 @@ details.advanced summary { cursor: pointer; color: var(--text-2); width: fit-con
 .first-day h2 { font-size: var(--fs-16); margin: 0; }
 .first-day-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .first-day-cards li { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); }
-.first-day-cards span { color: var(--text-2); font-size: var(--fs-14); }
+.first-day-cards span { color: var(--text-2); font-size: max(15px, 0.9375rem); }
 
 .activity-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .activity-list li { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
 @media (max-width: 600px) { .activity-list li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Language choice on signed-out pages (D8). */
+.lang-switch { display: flex; justify-content: center; gap: 4px; margin-top: 16px; }
+.link-button { background: none; border: 0; padding: 6px 10px; min-height: 32px; border-radius: var(--radius-sm, 6px); color: var(--text-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.link-button[aria-pressed="true"] { color: var(--text); font-weight: 600; text-decoration: none; }
+.link-button:focus-visible { outline: 2px solid var(--focus, var(--brand)); outline-offset: 2px; }

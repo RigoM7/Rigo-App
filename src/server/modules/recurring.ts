@@ -511,7 +511,7 @@ export async function generateForCompany(db: Db, companyId: string) {
 
 export async function generateAll() {
   const db = await getDb();
-  const { rows } = await db.query<{ company_id: string }>(`select distinct company_id from rigo.recurring_plans where status in ('active','paused')`);
+  const { rows } = await db.query<{ company_id: string }>(`select distinct p.company_id from rigo.recurring_plans p join rigo.companies co on co.id = p.company_id where p.status in ('active','paused') and co.archived_at is null`);
   let total = 0;
   for (const r of rows) total += (await generateForCompany(db, r.company_id)).visits;
   await db.query(`insert into rigo.system_state (key, value) values ('recurring_last_run', $1) on conflict (key) do update set value = excluded.value, updated_at = now()`, [JSON.stringify({ at: new Date().toISOString(), visits: total })]);

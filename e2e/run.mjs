@@ -782,6 +782,175 @@ if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase2') {
     return `${a1}; ${a2}`;
   });
 }
+// ---------------------------------------------------------------- Phase 3: polish (WP10–WP17)
+// Run only this section with E2E_ONLY=phase3.
+if (!process.env.E2E_ONLY || process.env.E2E_ONLY === 'phase3') {
+  await step('WP15: an unknown address shows "page not found" instead of jumping elsewhere (R17-m4)', async () => {
+    const c = await browser.newContext(); const p = await c.newPage(); watch(p, 'wp15-404');
+    await p.goto(`${BASE}/no-such-page`);
+    await p.getByText('This page does not exist').waitFor();
+    if (!p.url().endsWith('/no-such-page')) throw new Error(`moved to ${p.url()}`);
+    await c.close();
+  });
+
+  await step('WP15/WP13: a driver opening an office job link lands on the driver screen, says "On my way", and a denied page names the permission (R17-m4, R15-M2)', async () => {
+    const f = await fieldCompany('p3-driver');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp15-driver');
+    await driverSignIn(p, f);
+    await p.goto(`${f.C}/jobs/${job.id}`);
+    await p.waitForURL(new RegExp(`/today/${job.id}$`));
+    await p.getByLabel('Arriving in').selectOption('20');
+    await p.getByRole('button', { name: 'On my way' }).click();
+    await p.getByText(/On the way since .*about 20 min/).waitFor();
+    await p.getByRole('button', { name: 'Update estimate' }).waitFor();
+    await p.goto(`${f.C}/invoices`);
+    await p.getByText("Your role doesn't include this page").waitFor();
+    await p.getByText('It needs permission to see invoices').waitFor().catch(async () => { throw new Error(await p.locator('.empty, .card').first().innerText()); });
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP13: "Message customer" prepares a text and Send says why it is off (R15-M2, R15-m3)', async () => {
+    const f = await fieldCompany('p3-msg');
+    const cust = await f.o.post('/customers', { name: 'Texting Tina', phone: '(555) 777-0101', location: { address: '3 Pine Rd' } });
+    const { c, p } = await ownerContext(f); watch(p, 'wp13-msg');
+    await p.goto(`${f.C}/customers/${cust.body.id}`);
+    await p.getByRole('button', { name: 'Message customer' }).click();
+    const d = p.getByRole('dialog', { name: 'Message Texting Tina' });
+    await d.getByLabel('Text message').check();
+    await d.getByLabel('Message', { exact: true }).fill('Running about 15 minutes late.');
+    if (!(await d.getByRole('button', { name: 'Send' }).isDisabled())) throw new Error('Send is on without a text service');
+    await d.getByText(/Send is off: Text messaging is not set up/).waitFor();
+    await d.getByRole('button', { name: 'Keep as prepared' }).click();
+    await p.getByRole('region', { name: 'Conversation' }).getByText(/^Text ·/).waitFor();
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP14: a Windows (Excel) file keeps its accents, and the review offers what to do with each row (R16-M1, R16-M3)', async () => {
+    const f = await fieldCompany('p3-import');
+    const { c, p } = await ownerContext(f); watch(p, 'wp14-import');
+    await p.goto(`${f.C}/imports`);
+    // "Núñez, José" and "Peña" written as Windows-1252 bytes.
+    const latin1 = (str) => Buffer.from([...str].map((ch) => ch.charCodeAt(0)));
+    const csv = latin1('Customer Name,Street,City,ZIP\r\n"Núñez, José",9 Sycamore Ct,Fairview,75002\r\nPeña Farms,1 Ranch Rd,Millbrook,75001\r\n');
+    await p.locator('input[type=file]').setInputFiles({ name: 'excel.csv', mimeType: 'text/csv', buffer: csv });
+    await p.getByText('Accented names as read: Núñez, José · Peña Farms').waitFor();
+    await p.getByRole('button', { name: 'Review rows' }).click();
+    await p.getByLabel('Turn 1 "Last, First" name(s) around to "First Last"').check();
+    await p.getByText('José Núñez').waitFor();
+    await p.getByText('9 Sycamore Ct, Fairview, 75002').first().waitFor();
+    await axe(p, 'imports review');
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP15: a long customer list shows 50 at a time (R17-m2)', async () => {
+    const f = await fieldCompany('p3-long');
+    for (let i = 0; i < 55; i++) await f.o.post('/customers', { name: `Long list ${String(i).padStart(2, '0')}`, allowDuplicate: true });
+    const { c, p } = await ownerContext(f); watch(p, 'wp15-long');
+    await p.goto(`${f.C}/customers`);
+    await p.getByText(/Showing 50 of 56/).waitFor();
+    await p.getByRole('button', { name: 'Show 6 more' }).click();
+    await p.getByText('Long list 54').waitFor();
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP16: a driver who chooses Español gets the job screen in Spanish; sign-in has a language switch (R4-M5, D8)', async () => {
+    const f = await fieldCompany('p3-es');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp16-es');
+    await p.goto(`${BASE}/signin`);
+    await p.getByRole('button', { name: 'Español' }).click();
+    await p.getByRole('heading', { name: 'Iniciar sesión' }).waitFor();
+    await p.getByRole('button', { name: 'English' }).click();
+    await p.getByRole('heading', { name: 'Sign in' }).waitFor();
+    await p.goto(`${BASE}/signin?next=${encodeURIComponent('/account')}`);
+    await signInHere(p, f.driver);
+    await p.waitForURL(/\/account/);
+    await p.getByRole('combobox', { name: 'Language' }).selectOption('es');
+    await p.getByText('Idioma guardado').waitFor();
+    await p.goto(`${f.C}/today/${job.id}`);
+    await p.getByRole('button', { name: 'Empezar trabajo' }).waitFor();
+    await p.getByRole('button', { name: 'Voy en camino' }).waitFor();
+    await p.getByRole('link', { name: 'Mis trabajos' }).first().waitFor();
+    if ((await p.evaluate(() => document.querySelector('main h1')?.closest('[lang]')?.getAttribute('lang'))) !== 'es') throw new Error('the job screen is not marked as Spanish');
+    await p.getByRole('button', { name: 'Empezar trabajo' }).click();
+    await p.getByRole('heading', { name: 'Anotar el resultado' }).waitFor();
+    await p.getByText('Completado con éxito').waitFor();
+    await p.screenshot({ path: `${OUT}/wp16-driver-es.png`, fullPage: true });
+    await axe(p, 'driver job (es)');
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP16: no page shows machine words (permission or action keys, field keys, raw time zones, validator wording) (R18-m2)', async () => {
+    const f = await fieldCompany('p3-words');
+    const job = await f.mkJob(soon(3));
+    const wf = (await f.o.get('/workflows')).workflows[0];
+    const svc = (await f.o.get('/services')).services[0];
+    const { c, p } = await ownerContext(f); watch(p, 'wp16-words');
+    const MACHINE = [
+      /\b(company|members|roles|customers|jobs|resources|services|invoices|finance|payments|approvals|workflows|automation|messages|imports|templates|reports|assistant)\.[a-z_]+\b/,
+      /\b(invoice|job|message)\.(prepare|issue|send|completed|partial|unsuccessful|assigned|created|started|en_route|problem_reported|approved|issued|prepared|prepare_invoice|prepare_job_update|create_followup)\b/,
+      /\b[a-z]+_[a-z]+(_[a-z]+)*\b/, /\((?:in )?cents\)/i, /Invalid input|expected string|received undefined/, /\b(America|Europe|Asia|Pacific|Africa|Australia)\/[A-Z][A-Za-z_]+/,
+    ];
+    const bad = [];
+    for (const path of ['', '/jobs', '/jobs?view=board', '/inbox', '/invoices?status=all', '/customers', '/team', '/workflows', `/workflows/${wf.id}`, '/automation', '/recurring', '/messages', '/services', `/services/${svc.id}`, '/settings', '/templates', '/imports', '/assistant', '/collections', '/resources', `/jobs/${job.id}`, '/jobs/new']) {
+      await p.goto(`${f.C}${path}`);
+      await p.locator('main h1, main [role=status]').first().waitFor({ timeout: 15000 });
+      await p.waitForTimeout(400);
+      const text = await p.locator('body').innerText();
+      for (const re of MACHINE) { const m = re.exec(text); if (m) bad.push(`${path || '/'}: "${m[0]}"`); }
+      // The same pages, scanned for serious or critical accessibility problems (WP17), the workflow editor included.
+      try { await axe(p, path || '/'); } catch (e) { bad.push(String(e.message).slice(0, 300)); }
+    }
+    if (bad.length) throw new Error(bad.slice(0, 8).join('; '));
+    await c.close(); await f.owner.dispose();
+  });
+
+  await step('WP17: at 200% text the driver screens keep their layout; Reschedule follows an unsuccessful visit (R18-m4, R9-m2, R6-m6)', async () => {
+    const f = await fieldCompany('p3-big');
+    const job = await f.mkJob(soon(2));
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await c.newPage(); watch(p, 'wp17-big');
+    await driverSignIn(p, f);
+    await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+    for (const path of ['today', `today/${job.id}`]) {
+      await p.goto(`${f.C}/${path}`);
+      await p.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+      await p.locator('main h1').first().waitFor();
+      const r = await p.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth, small: [...document.querySelectorAll('.driver-page *')].filter((el) => el.childNodes.length && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 30 && (el.offsetParent !== null)).map((el) => `${el.tagName}.${el.className}:${getComputedStyle(el).fontSize}:${el.textContent.trim().slice(0, 30)}`).slice(0, 4) }));
+      if (r.over > 1) throw new Error(`${path}: ${r.over}px sideways scroll at 200% text`);
+      if (r.small.length) throw new Error(`${path}: text under 15px (30px at 200%): ${r.small.join(', ')}`);
+    }
+    // The address keeps most of the card's width.
+    const ratio = await p.evaluate(() => { const addr = document.querySelector('.job-address'); const card = addr?.closest('.card'); return addr && card ? addr.getBoundingClientRect().width / card.getBoundingClientRect().width : 0; });
+    if (ratio < 0.6) throw new Error(`address uses only ${Math.round(ratio * 100)}% of the card`);
+    const icon = await p.evaluate(() => { const b = document.querySelector('.topbar .icon-btn'); return b ? b.getBoundingClientRect().width : 0; });
+    if (icon < 44) throw new Error(`header buttons are ${icon}px wide`);
+    await c.close();
+    // The office reschedules the visit the driver couldn't finish.
+    const j2 = await f.mkJob(soon(1));
+    const dctx = await browser.newContext(); const dp = await dctx.newPage();
+    await driverSignIn(dp, f);
+    const api = dp.request;
+    const mine = await (await api.get(`${BASE}/api/c/${f.cid}/my/jobs`, { headers: H })).json();
+    const v = mine.jobs.find((x) => x.id === j2.id).version;
+    await api.post(`${BASE}/api/c/${f.cid}/jobs/${j2.id}/complete`, { headers: H, data: { submissionId: `e2e-${Math.random()}`, baseVersion: v, outcome: 'unsuccessful', reasonCode: 'dog', reason: '' } });
+    await dctx.close();
+    const { c: oc, p: op } = await ownerContext(f); watch(op, 'wp17-resched');
+    await op.goto(`${f.C}/jobs/${j2.id}`);
+    await op.getByRole('button', { name: 'Reschedule' }).click();
+    await op.waitForURL(/\/jobs\/[0-9a-f-]+\/edit$/);
+    await op.getByText(/Follow-up job #\d+ created/).waitFor();
+    await oc.close(); await f.owner.dispose();
+  });
+}
+if (process.env.E2E_ONLY === 'phase3') {
+  if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
+  await browser.close();
+  writeFileSync(`${OUT}/results-phase3.json`, JSON.stringify(results, null, 2));
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} browser checks passed`);
+  process.exit(failed ? 1 : 0);
+}
 if (process.env.E2E_ONLY === 'phase2') {
   if (consoleErrors.length) fail('no console or page errors', consoleErrors.slice(0, 10)); else pass('no console or page errors');
   await browser.close();
@@ -828,7 +997,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByLabel('Driver for job #3').selectOption({ label: 'Dana Driver (fictional)' });
     await p.getByText('Dana Driver (fictional) assigned to job #3').waitFor();
     await guide.getByText(/Done\. Job #3 is assigned to Dana Driver/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 4 is the driver's: switch, start, record, submit.
     await guide.getByText('Step 4 of 7').waitFor();
     await guide.getByRole('button', { name: 'Switch to Driver to complete the job' }).click();
@@ -843,7 +1012,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('dialog').getByRole('button', { name: 'Submit' }).click();
     await p.getByText('Sent. The office has your record.').waitFor();
     await guide.getByText(/Done\. The office has the driver's record/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 5: back to the Owner, approve from a card that shows the bill.
     await guide.getByText('Step 5 of 7').waitFor();
     await guide.getByRole('button', { name: 'Switch to Owner to approve' }).click();
@@ -869,7 +1038,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await p.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click();
     await p.getByText(/Approved\. Rigo will continue/).waitFor();
     await guide.getByText(/Done\. The invoice for job #3 is approved and issued/).waitFor();
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     // Step 6: the prepared email opens with Send (simulated) highlighted.
     await guide.getByText('Step 6 of 7').waitFor();
     await guide.getByText('Press Send (simulated) to see what the customer would receive.').waitFor();
@@ -885,7 +1054,7 @@ if (process.env.E2E_ONLY !== 'auth') {
     await guide.getByText(/Done\. Sent as Simulated/).waitFor();
     const msgs = (await v.api.get('/messages')).messages;
     if (!msgs.some((m) => m.status === 'simulated' && m.job_number === 3)) throw new Error('job #3 email is not marked simulated');
-    await guide.getByRole('button', { name: 'Next step' }).click();
+    // The walkthrough moves on by itself once the step is done.
     await guide.getByText('Step 7 of 7').waitFor();
     await guide.getByRole('button', { name: 'Done', exact: true }).click();
     await guide.waitFor({ state: 'hidden' });
@@ -1264,18 +1433,18 @@ await step('m5 and m8: tab titles, and the sign-in page has a big "Create a free
   await c.close();
 });
 
-await step('M1: the last tries before a pause are counted, then the pause names the wait', async () => {
+await step('M1: after five wrong tries the next one waits, and the message names the wait', async () => {
   const who = await apiAccount('Wanda Wrong');
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p = await c.newPage();
   await p.goto(`${BASE}/signin`);
   await p.getByLabel('Email').fill(who.email);
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 6; i++) {
     await p.getByLabel('Password', { exact: true }).fill(`wrong-guess-${i}-xyz`);
     await p.getByRole('button', { name: 'Sign in', exact: true }).click();
-    if (i === 8) await p.getByText('2 more tries before a 15-minute pause.').waitFor();
+    if (i <= 5) await p.getByText('That email and password do not match an account.').waitFor();
   }
-  await p.getByText(/Try again in 1[45] minutes/).waitFor();
+  await p.getByText(/Try again in 1[0-5] seconds/).waitFor();
   await p.getByRole('link', { name: 'reset your password' }).waitFor();
   await p.screenshot({ path: `${OUT}/signin-paused-390.png` });
   await c.close();
@@ -1298,7 +1467,8 @@ await step('m3: a used or made-up reset link says so instead of showing the form
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p = await c.newPage();
   await p.goto(`${BASE}/reset/not-a-real-token-123456`);
-  await p.getByText('This link has expired or was already used').waitFor();
+  // A made-up link says it doesn't work; a used one says it was used (WP10).
+  await p.getByText("This link doesn't work.").waitFor();
   if (await p.getByLabel('New password').count()) throw new Error('form shown for an invalid link');
   await p.getByRole('link', { name: 'Send a new link' }).click();
   await p.waitForURL(/\/forgot$/);
@@ -1446,7 +1616,7 @@ async function scenarioS1(base, label) {
   await p.screenshot({ path: `${OUT}/s1-${label}-after-reset-390.png` });
   // The used link now says so.
   await p.goto(resetLink.replace(/^https?:\/\/[^/]+/, base));
-  await p.getByText('This link has expired or was already used').waitFor();
+  await p.getByText('This link was already used.').waitFor();
   await c.close();
 }
 await step('S1 on the local copy (simulated mailbox), 390px', () => scenarioS1(BASE, 'local'));

@@ -7,11 +7,13 @@ import { patch, post } from '../lib/api';
 import { useSubmit } from '../lib/form';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
 import { useDocumentTitle } from '../lib/title';
-import { Button, Card, Field, Input, PasswordInput, ErrorSummary, Banner, Pill, useToast, useConfirm, LoadingBlock, Wordmark } from '../components/ui';
+import { Button, Card, Field, Input, Select, PasswordInput, ErrorSummary, Banner, Pill, useToast, useConfirm, LoadingBlock, Wordmark } from '../components/ui';
 import { EmailSuggestion, NAME_MAX } from './auth';
 import { PASSWORD_HINT, PASSWORD_MAX } from '../../shared/password';
 import { EMAIL_MAX } from '../../shared/email';
 import type { Draft } from '../lib/offline';
+import { setDeviceLang } from '../lib/i18n';
+import type { Lang } from '../../shared/i18n';
 
 /** Resend the confirmation email. Shown only when email can actually be sent here. */
 export function ConfirmEmailNotice({ email }: { email: string }) {
@@ -54,7 +56,7 @@ function EmailCard() {
         {pending ? (
           <Banner tone="success" title={`Check ${pending}`}>
             Open the link we sent there to finish the change. Until then, keep signing in with {user.email}.
-            {channel === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">simulated mailbox</Link>.</> : null}
+            {channel === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</> : null}
           </Banner>
         ) : null}
         <form className="stack" onSubmit={(e) => { e.preventDefault(); s.run(); }} noValidate>
@@ -129,6 +131,8 @@ export function Account() {
   const saveName = useSubmit(async () => { await patch('/auth/me', { name }); await refreshMe(qc); toast('Name saved'); });
   const savePw = useSubmit(async () => { await post('/auth/me/password', pw); setPw({ current: '', password: '' }); toast('Password changed. Other devices were signed out.'); });
   const setTheme = async (t: ThemePref) => { setPref(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); };
+  // The driver screens, sign-in pages and the notifications Rigo writes to you (D8). Empty: this device's language.
+  const saveLanguage = useSubmit(async (v: string) => { await patch('/auth/me', { language: v || null }); setDeviceLang(v ? (v as Lang) : null); await refreshMe(qc); toast(v === 'es' ? 'Idioma guardado' : 'Language saved'); });
   const forgetDevice = async (keepDrafts = false) => {
     const uid = me.data?.user?.id;
     const { clearUserData } = await import('../lib/offline');
@@ -167,6 +171,12 @@ export function Account() {
             {([['light', 'Light', <Sun key="l" aria-hidden />], ['dark', 'Dark', <Moon key="d" aria-hidden />], ['system', 'System', <Monitor key="s" aria-hidden />]] as const).map(([k, l, i]) => <button key={k} role="radio" aria-checked={pref === k} onClick={() => setTheme(k)}>{i}{l}</button>)}
           </div>
           <p className="hint" style={{ marginTop: 8 }}>Saved to your account and this device. System follows your device setting.</p>
+        </Card>
+        <Card title="Language" id="language">
+          <div className="stack-sm">
+            <ErrorSummary error={saveLanguage.error} />
+            <Field label="Language" id="f-language" hint="Used on the driver screens, the sign-in pages and the notifications Rigo sends you. Office screens are in English for now. The Spanish wording is still being checked by a Spanish speaker.">{(p) => <Select {...p} value={me.data?.user?.language ?? ''} disabled={saveLanguage.busy} onChange={(e) => saveLanguage.run(e.target.value)}><option value="">Same as this device</option><option value="en" lang="en">English</option><option value="es" lang="es">Español</option></Select>}</Field>
+          </div>
         </Card>
         <Card title="Profile" id="profile">
           <form className="stack" onSubmit={(e) => { e.preventDefault(); saveName.run(); }} noValidate>

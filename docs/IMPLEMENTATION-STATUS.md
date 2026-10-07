@@ -9,17 +9,18 @@ Deployment: the Vercel preview of this branch connects to Supabase through the t
 (`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
 public API roles cannot access.
 
-Latest results (local, Phase 2 of the critique fixes: dispatch, team, customers and fuel records):
-`npm test` 205/205 passed on embedded PostgreSQL (PGlite) and 205/205 on PostgreSQL 16 (a fresh
-database); `e2e/run.mjs` 86/86 browser checks passed against a local build with the simulated
-mailbox, including the 8 Phase 2 checks (a busy timeline at 1440 and 1024 px, someone else saving a
-job first, driver change notices with "Open in Maps" and swapping an out-of-service truck, the
-invited driver's sign-up and first day, the customer picker and duplicate warning with the
-customer page, and two products into two tanks at one fuel stop with a meter mismatch the office
-releases); axe found no violations on the 26 screens scanned; `npm run typecheck` clean. Reviews
-before shipping: the `/review` checklist and a security review of invitations, permissions, removed
-members, customers and messages; every finding is fixed with a test, except storing pending
-invitation links for "Copy link" (see Known limitations). Phase 1 results are in its PR.
+Latest results (local, Phase 3 of the critique fixes: accounts and providers, setup, privacy,
+assistant and messages, imports and templates, navigation, Spanish, polish): `npm test` 261/261
+passed on embedded PostgreSQL (PGlite) and 261/261 on PostgreSQL 16 (a fresh database);
+`e2e/run.mjs` 94/94 browser checks passed against a local build with the test inbox, including the
+8 Phase 3 checks (page not found, a driver's office link and "On my way", "Message customer" with
+Send off, a Windows/Excel import, a long customer list, the driver screen in Spanish, a scan of 22
+pages for machine words and serious accessibility problems, 200% text on the driver screens and
+Reschedule). One earlier full run failed once on the Ctrl K check and passed on its own and in the
+next full run. `npm run typecheck` clean. Reviews before shipping: the `/review` checklist and a
+security review of authentication, approvals, permissions, removed members, templates and
+messages; every finding is fixed with a test except the two listed under Known limitations.
+Phase 1 and 2 results are in their PRs.
 
 ## A. Foundation
 
@@ -124,7 +125,7 @@ invitation links for "Copy link" (see Known limitations). Phase 1 results are in
 | Bulk driver assignment from the jobs table | Verified | Uses the same per-job assignment endpoint; jobs that can't move are summed up in one line ("3 jobs not changed: they overlap other work") with "View list" (R11-m4) |
 | Trucks out of service (R11-M1, R3-m2) | Verified | Marking a truck out of service or retired while open jobs use it lists those jobs and asks first; dispatch gets a needs-action item and "Jobs on an out-of-service truck" on Home, linking to the filtered jobs list, where "Swap truck" replaces it on the selected jobs (each job checked for clashes; the drivers are told). A truck already on a job can stay while the driver changes; only adding one is refused. An "out of service until" date returns it to Available. Names are unique per company; trucks never used can be deleted. Migration `012_dispatch.sql`. `dispatch-phase2.test.ts`, browser check |
 | Drivers told what changed (R11-M2, R6-M1) | Verified | Edits to the time, address, access, site contact, notes, priority or truck of an assigned job tell the driver in plain words ("Job #54 changed: Moved from 6:00 AM to 9:00 AM", "New access instructions: …"); today's and tomorrow's are needs-action. The phone shows a "Changed" banner and tag until the driver taps "Got it"; a new assignment is tagged "New" until opened; cancellations and reassignments say "don't go". Push or text are not used (no provider) |
-| Emergencies (R6-M1, D15) | Verified | An emergency job alerts the owner and dispatch at once (needs-action, "No driver yet. Assign one now."), and its driver as soon as one is assigned; "Emergency jobs not finished" on Home; on the phone emergencies are listed first, in their own section, with a bordered "Emergency" tag (not colour alone) |
+| Emergencies (R6-M1, D15) | Verified | An emergency job alerts the owner and dispatch at once (needs-action, "Unassigned. Assign a driver now."), and its driver as soon as one is assigned; "Emergency jobs not finished" on Home; on the phone emergencies are listed first, in their own section, with a bordered "Emergency" tag (not colour alone) |
 | Busy-day timeline (R11-M3) | Verified | Blocks lead with the customer's name (up to two lines), then time and number; never narrower than about 12 characters, and rows are packed by that width; "4 hours" zoom; "Now" button and a "Later hours" cue; overlapping jobs without a driver fold into "+N more"; out-of-service trucks and emergencies marked on blocks; the feed can be grouped by driver. Browser checks with 6 drivers and 9–15 jobs each at 1440 and 1024 px |
 | Edit conflicts and unsaved changes (R11-m1, R11-m2) | Verified | When someone else saves a job first, the editor keeps what was typed, takes their changes to fields left alone, and lists fields both changed with "Keep mine" / "Use theirs". Leaving with unsaved changes asks first on the job, service, workflow, new plan and settings forms (one guard per page; switching settings tabs asks too). The customer dialog asks before closing with changes |
 | Assign anyway, cancelling in progress, truck picker, maps (R11-m4, R11-m3, R11-m5, R9-M3) | Verified | An overlap can be accepted deliberately ("Assign anyway"), recorded in history; cancelling a job in progress warns that the driver may be on site and work done won't be billed; the truck picker lists the trucks for the job's kind of work first ("Used for" on each truck), with "Show all"; the driver's job has "Open in Maps" (Apple Maps on iPhone, Google Maps elsewhere; a link, no key) and My jobs has "Today's stops in order" |
@@ -186,12 +187,33 @@ invitation links for "Copy link" (see Known limitations). Phase 1 results are in
 | Company branding: logo, accessible accent variants | Verified (contrast) · Implemented (upload) | |
 | Communications model and states | Implemented | Prepared/simulated/sent-outside-Rigo/replied |
 
+## E. Phase 3 of the critique fixes (WP10–WP17)
+
+| Item | Status | Evidence / notes |
+|---|---|---|
+| Email and text providers, off until set (D1, D10) | Verified | Resend or Postmark for email, Twilio for texts (`src/server/adapters/providers.ts`). Each says what is missing until its keys are set. Real sending also needs the company listed in `RIGO_SENDING_COMPANIES` (or `*`), so a stranger who signs up can't send through the owner's accounts. Texts go only to +1 numbers unless `RIGO_SMS_ANY_COUNTRY=1`. Daily ceilings per company (`RIGO_DAILY_EMAIL_LIMIT` 300, `RIGO_DAILY_TEXT_LIMIT` 100). A provider's error never repeats the address or number. Demo companies only simulate. Not exercised against the real Resend/Postmark/Twilio APIs (the network is mocked). `providers-phase3.test.ts` |
+| Confirm your email before inviting or emailing customers (D2) | Verified | Once email can be sent; with no email service nobody could confirm, so nothing is blocked. Invitation emails go out only for companies allowed to send (others get a link to share); 30 an hour and 100 a day per company |
+| Sign-in backoff and reset links (R1) | Verified | Progressive pause from the 5th failure; reset links say "already used", "expired" or "doesn't work" |
+| Money messages and privacy (R17-M1, R12) | Verified | Invoice, reminder and statement messages are read, edited and sent only by people who see billing; a full scan of every page each role can open finds no amounts or contact details where they don't belong. `privacy-phase3.test.ts` |
+| Setup (R3) | Verified | Not ready until every service has rates or is priced on each invoice; business hours (D16) mark after-hours visits; complete jobs are created open, assigning a draft asks to open it; same-name companies are confirmed and told apart; archive (typed name) and delete for companies that never billed. Archived companies send nothing and get no reminders, statements or recurring visits. `setup-phase3.test.ts` |
+| Assistant answers (R15-M1, R15-m1, R15-m2) | Verified | Questions never become workflow proposals; prepared answers for a customer's next visit and balance, who is free at a time, a service's price (people who see billing only), why an approval isn't yours, and honest "Rigo can't do that yet" answers; proposals read named approvers and amounts, get plain names and list what they left out. `assistant-phase3.test.ts` |
+| On my way and customer updates (R15-M2) | Verified | Drivers tap "On my way" with an optional arrival estimate; new triggers "A driver is on the way" and "A driver starts a job"; "Prepare customer update" writes the right text (a text message when texting works and there's a number, otherwise email) and prepares nothing for a job that isn't on the way, started or finished. "On my way" is cleared when the job changes driver, time or reopens (migration `019`). "Message customer" on the customer and job pages; Send is off with the reason per channel |
+| Reschedule (R6-m6) | Verified | An unsuccessful or partial visit has "Reschedule": one follow-up job (same customer, bill-to, place, service; the reason in its notes), never two even with the follow-up workflow on. `polish-phase3.test.ts` |
+| Imports (R16) | Verified | Windows/Excel files keep their accents (switch on the mapping step), control characters removed with the rows named; City/State/ZIP/line 2 combined into the address; unmapped columns listed, optionally kept in notes; the same customer only when the name and the email or phone match; each row's action is a choice (separate, location of row N, location of an existing customer, skip); the same address is never a second location; "Last, First" names can be turned around; equipment words ("vac truck", "tank wagon", "hand-wash") understood; opening balances become invoice drafts (people who prepare invoices only); unfinished imports resume or are discarded. Customer files need permission to see contact details. `imports-phase3.test.ts`, browser check |
+| Templates (R16-M4, R16-m4, D11) | Verified | Applying shows a plan and skips what the company already has (or adds copies named "… (2)"); applying twice adds nothing. Templates keep switched-on workflows (tested drafts if ticked), never people. "Publish a blank copy" shows other Rigo users structure only, labeled "Made by another Rigo user", and can be unpublished |
+| Lists, search and first load (R17) | Verified | Customers 50 at a time and jobs 100 at a time, searched on the server; Ctrl K searches invoices on the server; a loading screen while the app starts; each screen loads its own script (first script about 400 KB, down from about 590 KB); Latin fonts preloaded. `navigation-phase3.test.ts` |
+| Menus and edges (R17-m4) | Verified | Menu grouped Operations · Customers · Money · Fleet · Automation & assistant · Setup; Automation and Workflows explain each other; unknown addresses show "page not found"; denied pages name the permission in words; drivers opening an office job link land on the driver screen. Browser checks |
+| Spanish (R4-M5, D8) | Verified · needs review by a Spanish speaker | Driver screens, sign-in and sign-up, invitations, driver notifications and customer messages (job updates, invoice email, reminders, statements, job report) in English or Spanish. Language in Account (or the device's), per customer for messages. Office screens stay English, on the same `t()` system. `language-phase3.test.ts`, browser check of the driver job screen in Spanish |
+| Plain words and glossary (R18-m2) | Verified | `docs/GLOSSARY.md` (one name per thing, for example "Unassigned", "Recurring service & rentals"); a browser check reads 22 pages for permission and action keys, field keys, raw time zones and validator wording |
+| Accessibility and large text (R18-m3, R18-m4, R9-m2) | Verified | Workflow builder list markup fixed; axe (serious and critical) on the same 22 pages, the workflow editor included; at 200% text the driver screens don't scroll sideways, the address keeps the card's width, buttons wrap, header buttons stay at least 44 px; driver text at least 15 px; timeline blocks and rows grow with the text. The 3 px status edge on timeline blocks is written into `docs/DESIGN-SYSTEM.md` as the one exception |
+| Needs you by urgency (R18-m5) | Verified | Emergencies, unassigned and late work first, then approvals and money, then tidying up; the first item has the one primary button |
+
 ## Simulated or disabled by design
 
 | Capability | Behavior |
 |---|---|
-| Customer email/SMS delivery | No provider implemented. Real companies: messages stay **Prepared** and the send step is **Blocked** with an explanation; people can copy and mark "sent outside Rigo". Demo: **Simulated**. |
-| Account email (password reset, invitations, email confirmation and change) | All of it goes through `sendSystemEmail`. Locally: the simulated mailbox at `/dev/mailbox`. On the live site (no provider yet): invitations give the inviter a copyable link, password recovery uses owner-created reset links, email changes apply at once, and confirmation isn't offered. |
+| Customer email/SMS delivery | Off until a provider's keys are set and the company is allowed to send (`RIGO_SENDING_COMPANIES`). Until then real companies' messages stay **Prepared**, Send is off with the reason, and people can copy and mark "sent outside Rigo". Demo: **Simulated**, always. |
+| Account email (password reset, invitations, email confirmation and change) | All of it goes through `sendSystemEmail` and the same email provider. Locally: the test inbox at `/dev/mailbox`. On the live site until the email keys are set: invitations give the inviter a copyable link, password recovery uses owner-created reset links, email changes apply at once, and confirmation isn't offered. |
 | AI | Off by default; prepared responses clearly labeled. Anthropic adapter exists behind `RIGO_AI_PROVIDER=anthropic` + key, real companies only, daily limit. Not exercised against the live API in tests. |
 | Payments | Not processed. Payments received can be recorded. |
 | Maps, routing, geocoding | Not connected (D9). "Open in Maps" links and "Copy address" on the driver screen; nothing is geocoded or routed. |
@@ -201,7 +223,8 @@ invitation links for "Copy link" (see Known limitations). Phase 1 results are in
 
 | Item | Dependency |
 |---|---|
-| Real email delivery | Choose an email service, then add its adapter to `PROVIDERS` in `src/server/adapters/index.ts` (keyed by `RIGO_EMAIL_PROVIDER`). Reset, invitation, confirmation and email-change emails all start working at once. |
+| Real email delivery | Set `RIGO_EMAIL_PROVIDER` (`resend` or `postmark`), `RIGO_EMAIL_API_KEY` and `RIGO_EMAIL_FROM` (a verified sender) in Vercel. Reset, invitation, confirmation and email-change emails start at once; customer emails also need `RIGO_SENDING_COMPANIES`. |
+| Real text messages | Set `RIGO_SMS_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_FROM_NUMBER`, and list the company in `RIGO_SENDING_COMPANIES`. |
 | Support address for owners with no other owner | Set `RIGO_SUPPORT_EMAIL` (not set: the forgot page leaves that line out). |
 | Terms of service and privacy policy | Publish them and set `RIGO_TERMS_URL` and `RIGO_PRIVACY_URL` (not set: no agreement line at sign-up). |
 | Real AI answers | An Anthropic API key in `ANTHROPIC_API_KEY` with `RIGO_AI_PROVIDER=anthropic`. |
@@ -219,8 +242,18 @@ invitation links for "Copy link" (see Known limitations). Phase 1 results are in
 - The timeline reassigns by select in the job side panel; drag-to-reassign is not built.
 - The timeline feed lists the day's jobs; it does not yet interleave other events (messages,
   automation steps).
-- Customer emails are plain text (no email provider yet); the branded layout is the in-app
-  preview in Messages.
+- Customer emails are plain text; the branded layout is the in-app preview in Messages.
+- Spanish needs review by a Spanish speaker. Notifications Rigo writes on the server (changes to a
+  driver's job, emergencies, hand-overs) use the language chosen in Account; someone who only set
+  it on the device gets them in English. Office screens are English. Labels a company typed
+  (service and field names) stay as typed.
+- The workflow builder's preview of "Send prepared message" talks about email even when the step
+  will send a text.
+- A send is made inside the database transaction that records it; if the database failed right
+  after a provider accepted a message, it would show as still prepared (a resend would be a
+  duplicate).
+- Templates published before Phase 3 lose their workflows in the public copy (they weren't marked
+  as switched on); the owner can refresh the template from the company to bring them back.
 - Owner-created reset links rely on trust in the company's managers: whoever holds the link can
   set the person's password until it is used or expires. Rigo refuses them for anyone who also
   belongs to or is invited to another company, notifies the other owners, and signs the person
@@ -245,5 +278,5 @@ invitation links for "Copy link" (see Known limitations). Phase 1 results are in
   Rigo (a customer-facing report link would need the same token design as invoice links).
 - Customer search matches text (accents and phone formatting ignored); misspellings are caught when
   adding a customer, not while searching.
-- Next: email provider adapter (the invoice view link is built; sending it needs the provider), configurable dashboard widgets and job stages, XLSX import,
+- Next: configurable dashboard widgets and job stages, XLSX import, Spanish for office screens,
   map links/geocoding adapter (disabled by default), per-field permissions beyond contact/finance.

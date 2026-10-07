@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { getDb, type Q } from '../db/index.js';
 import { type AppEnv, type CompanyCtx, requireUser, need, audit, can } from '../http/context.js';
 import { body } from '../lib/util.js';
-import { badRequest, forbidden } from '../http/errors.js';
+import { badRequest, conflict, forbidden } from '../http/errors.js';
 import { capabilities, storeFile, sniffImage, readStoredFile } from '../adapters/index.js';
 import { seedRoles, seedStarterServices, seedDefaultWorkflows, applyStructure, exportStructure } from './structure.js';
 import { CURRENCIES } from '../../shared/billing.js';
 import { customFieldsSchema, type ServiceCategory } from '../../shared/services.js';
 import { accentVariants, ACCENT_PRESETS } from '../../shared/branding.js';
+import { businessHoursSchema } from '../../shared/hours.js';
 import { guideProgress } from './demo-guide.js';
 import { attentionCounts } from './inbox.js';
 
@@ -23,6 +24,8 @@ export const createCompanySchema = z.object({
   currency: z.enum(CURRENCIES).default('USD'),
   categories: categories.default([]),
   start: z.enum(['starter', 'blank']).default('starter'),
+  /** The person saw that they already have a company with this name and wants another (R3-m1). */
+  allowDuplicateName: z.boolean().default(false),
 });
 
 export function validTz(tz: string) {
@@ -38,7 +41,7 @@ export async function createCompany(q: Q, userId: string, input: z.infer<typeof 
   const id = rows[0].id;
   await seedRoles(q, id);
   await q.query(`insert into rigo.memberships (company_id, user_id, role_key) values ($1,$2,'owner')`, [id, userId]);
-  if (opts.structureFrom) await applyStructure(q, id, userId, opts.structureFrom);
+  if (opts.structureFrom) await applyStructure(q, id, userId, opts.structureFrom, { updateRoles: true });
   else if (input.start === 'starter') {
     await seedStarterServices(q, id, input.categories as ServiceCategory[]);
     await seedDefaultWorkflows(q, id, userId, { activate: true });
@@ -53,6 +56,12 @@ companiesPublic.post('/companies', async (c) => {
   const db = await getDb();
   const owned = await db.query<{ n: number }>(`select count(*)::int n from rigo.companies where created_by = $1 and kind = 'real' and created_at > now() - interval '1 day'`, [user.id]);
   if (owned.rows[0].n >= 10) throw badRequest('You have created many companies today. Try again tomorrow.');
+  // Two companies with the same name are hard to tell apart (R3-m1, R17-M2): ask first.
+  if (!input.allowDuplicateName) {
+    const same = (await db.query<{ created_at: string }>(`select c.created_at from rigo.companies c join rigo.memberships m on m.company_id = c.id and m.user_id = $1 and m.status = 'active'
+        where c.kind = 'real' and lower(c.name) = lower($2) order by c.created_at limit 1`, [user.id, input.name])).rows[0];
+    if (same) throw conflict(`You already have a company called ${input.name}. Create another one anyway?`, { needsConfirm: 'duplicateName', createdAt: same.created_at, fields: { name: 'You already have a company with this name' } });
+  }
   const id = await db.tx((q) => createCompany(q, user.id, input));
   return c.json({ id });
 });
@@ -60,7 +69,7 @@ companiesPublic.post('/companies', async (c) => {
 export async function setupChecklist(q: Q, companyId: string) {
   const { rows } = await q.query<any>(`select settings, branding,
       (select count(*)::int from rigo.services s where s.company_id = c.id and s.active) as services,
-      (select count(*)::int from rigo.services s where s.company_id = c.id and s.active and exists (
+      (select count(*)::int from rigo.services s where s.company_id = c.id and s.active and not s.priced_per_job and exists (
           select 1 from jsonb_array_elements(s.pricing) p where coalesce(p->'rateE4', p->'rateMinor', 'null'::jsonb) = 'null'::jsonb)) as unpriced,
       (select count(*)::int from rigo.resources r where r.company_id = c.id) as resources,
       (select count(*)::int from rigo.memberships m where m.company_id = c.id and m.status = 'active') as members,
@@ -75,7 +84,9 @@ export async function setupChecklist(q: Q, companyId: string) {
     { key: 'basics', label: 'Company basics', done: !!s.basics, required: true, link: 'settings' },
     { key: 'services', label: 'Choose the services you offer', done: r.services > 0, required: true, link: 'setup?step=services' },
     { key: 'automation', label: 'Choose how much Rigo automates', done: !!s.automation, required: true, link: 'setup?step=automation' },
-    { key: 'pricing', label: 'Set service rates', done: r.services > 0 && r.unpriced === 0, required: false, link: 'services', note: r.unpriced ? `${r.unpriced} service(s) have prices not set yet. Invoices for them will be held.` : '' },
+    // Not "ready to run jobs" until every active service has its rates, or is priced on each invoice (R3-M4).
+    { key: 'pricing', label: 'Set your prices', done: r.services > 0 && r.unpriced === 0, required: true, link: 'setup?step=prices', note: r.unpriced ? `${r.unpriced} service${r.unpriced === 1 ? ' has' : 's have'} prices not set yet. Invoices for ${r.unpriced === 1 ? 'it' : 'them'} will be held.` : '' },
+    { key: 'hours', label: 'Set your business hours', done: !!r.settings?.businessHours, required: false, link: 'setup?step=hours', note: r.settings?.businessHours ? '' : 'Until they are set, no visit is marked after-hours automatically.' },
     { key: 'resources', label: 'Add trucks or equipment', done: r.resources > 0 || !!s.resourcesSkipped, required: false, link: 'setup?step=resources' },
     { key: 'team', label: 'Invite your team', done: r.members > 1 || r.invites > 0 || !!s.teamSkipped, required: false, link: 'setup?step=team' },
     { key: 'customers', label: 'Add or import customers', done: r.customers > 0, required: false, link: 'customers' },
@@ -101,6 +112,7 @@ companyRoutes.get('/', async (c) => {
   return c.json({
     company: { ...company, customFields: customFieldsSchema.parse(settings?.customFields ?? {}), accent: accentVariants(cc.company.branding?.accent),
       invoiceDueDays: settings?.invoiceDueDays ?? 30, paymentInstructions: settings?.paymentInstructions ?? '',
+      businessHours: settings?.businessHours ?? null,
       invoicePrefix: settings?.invoicePrefix ?? 'INV-', remitTo: settings?.remitTo ?? '', taxId: settings?.taxId ?? '', invoiceApprovalRequired: settings?.invoiceApprovalRequired !== false },
     role: { key: cc.roleKey, name: cc.roleName, isOwner: cc.isOwner, simulated: cc.simulatedRole },
     permissions: [...cc.perms],
@@ -133,6 +145,8 @@ companyRoutes.patch('/settings', async (c) => {
     taxId: z.string().trim().max(40).optional(),
     /** "Every invoice needs approval before issuing" (R14-M1): owner only. */
     invoiceApprovalRequired: z.boolean().optional(),
+    /** Business hours (D16); null clears them. */
+    businessHours: businessHoursSchema.nullable().optional(),
   }));
   if (input.invoiceApprovalRequired !== undefined && !cc.isOwner) throw forbidden('Only an owner can change whether invoices need approval.');
   await cc.db.tx(async (q) => {
@@ -147,6 +161,7 @@ companyRoutes.patch('/settings', async (c) => {
     if (input.serviceCategories !== undefined) add('service_categories', input.serviceCategories);
     if (sets.length) await q.query(`update rigo.companies set ${sets.join(', ')} where id = $1`, vals);
     if (input.customFields) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{customFields}', $2::jsonb), config_version = config_version + 1 where id = $1`, [cc.company.id, JSON.stringify(input.customFields)]);
+    if (input.businessHours !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{businessHours}', $2::jsonb) where id = $1`, [cc.company.id, JSON.stringify(input.businessHours)]);
     if (input.invoiceDueDays !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{invoiceDueDays}', $2::jsonb) where id = $1`, [cc.company.id, JSON.stringify(input.invoiceDueDays)]);
     if (input.paymentInstructions !== undefined) await q.query(`update rigo.companies set settings = jsonb_set(settings, '{paymentInstructions}', to_jsonb($2::text)) where id = $1`, [cc.company.id, input.paymentInstructions]);
     if (input.invoiceApprovalRequired !== undefined) {
@@ -276,3 +291,48 @@ companyRoutes.get('/structure', async (c) => {
 export function assertNotDemo(cc: CompanyCtx, what: string) {
   if (cc.isDemo) throw forbidden(`${what} is not available in the demo workspace.`);
 }
+
+// ---------------------------------------------------------------- archive and delete (R3-m1)
+/** Owners type the company's name to confirm; a slip of the mouse never archives or deletes it. */
+function confirmName(cc: CompanyCtx, typed: string) {
+  if (!cc.isOwner) throw forbidden('Only owners can archive or delete the company.');
+  if (cc.isDemo) throw badRequest('Use Reset in the demo instead.');
+  if (typed.trim().toLowerCase() !== cc.company.name.trim().toLowerCase()) throw badRequest(`Type the company name, ${cc.company.name}, to confirm.`, { fields: { confirmName: 'Type the company name exactly' } });
+}
+
+companyRoutes.post('/archive', async (c) => {
+  const cc = c.get('cc');
+  const input = await body(c, z.object({ confirmName: z.string().max(120) }));
+  confirmName(cc, input.confirmName);
+  await cc.db.tx(async (q) => {
+    await q.query(`update rigo.companies set archived_at = now() where id = $1`, [cc.company.id]);
+    await audit(q, cc, 'company.archived', { name: cc.company.name });
+  });
+  return c.json({ ok: true });
+});
+
+companyRoutes.post('/unarchive', async (c) => {
+  const cc = c.get('cc');
+  if (!cc.isOwner) throw forbidden('Only owners can restore the company.');
+  await cc.db.tx(async (q) => {
+    await q.query(`update rigo.companies set archived_at = null where id = $1`, [cc.company.id]);
+    await audit(q, cc, 'company.unarchived', { name: cc.company.name });
+  });
+  return c.json({ ok: true });
+});
+
+/** Delete a company that was only tried out: nothing invoiced or paid. Anything else is archived instead. */
+companyRoutes.post('/delete', async (c) => {
+  const cc = c.get('cc');
+  const input = await body(c, z.object({ confirmName: z.string().max(120) }));
+  confirmName(cc, input.confirmName);
+  await cc.db.tx(async (q) => {
+    const used = (await q.query<{ invoices: number; payments: number }>(`select (select count(*)::int from rigo.invoices where company_id = $1 and status in ('issued','void')) as invoices,
+        (select count(*)::int from rigo.payments where company_id = $1) as payments`, [cc.company.id])).rows[0];
+    if (used.invoices || used.payments) throw conflict(`${cc.company.name} has issued invoices or recorded payments, so it is kept for your records. Archive it instead.`);
+    await q.query(`delete from rigo.companies where id = $1 and kind = 'real'`, [cc.company.id]);
+    // Recorded on the owner's account, since the company's own log goes with it.
+    await q.query(`insert into rigo.audit_log (company_id, actor_user_id, action, detail) values (null, $1, 'company.deleted', $2)`, [cc.user.id, JSON.stringify({ id: cc.company.id, name: cc.company.name })]);
+  });
+  return c.json({ ok: true });
+});

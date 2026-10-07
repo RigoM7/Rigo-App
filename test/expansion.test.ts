@@ -65,7 +65,10 @@ describe('demo workspace', () => {
     expect((await a.get(`/c/${real}/invoices`)).body.invoices).toHaveLength(0);
     expect((await a.get(`/c/${real}/resources`)).body.resources).toHaveLength(0);
     const svcs = (await a.get(`/c/${real}/services`)).body.services;
-    expect(svcs.length).toBe(3);
+    // The services chosen, from the same starters as "Create a company" (R3-m9).
+    expect(svcs.map((s: any) => s.name)).toEqual(['Fuel delivery']);
+    const { starterService } = await import('../src/shared/services');
+    expect(svcs[0].fields).toEqual(starterService('fuel').fields);
     // Fictional demo rates are not copied.
     expect(svcs.every((s: any) => s.pricing.every((p: any) => p.rateE4 === null && p.overageRateE4 === null && p.minimumMinor === null))).toBe(true);
     const wfs = (await a.get(`/c/${real}/workflows`)).body.workflows;
@@ -178,11 +181,13 @@ describe('imports', () => {
     expect(up.body.mapping).toMatchObject({ name: 'Customer Name', email: 'Email', phone: 'Phone', address: 'Service Address' });
     expect((await owner.post(`/c/${cid}/imports/${up.body.id}/commit`, { confirm: true })).status).toBe(409);
     const rv = await owner.post(`/c/${cid}/imports/${up.body.id}/review`, { mapping: up.body.mapping });
-    expect(rv.body.summary).toMatchObject({ total: 5, create: 2, addLocation: 1, errors: 1 });
-    expect(rv.body.rows[2].warnings.join(' ')).toMatch(/Ambiguous/);
+    // Existing Co matches by name and email: its new address is added to it (R16-M3). The two Twins
+    // already in Rigo share only a name with the row, so it stays a separate customer, with a warning.
+    expect(rv.body.summary).toMatchObject({ total: 5, create: 2, addLocation: 2, errors: 1 });
+    expect(rv.body.rows[2].warnings.join(' ')).toMatch(/Same name as 2 existing customers/);
     const activeBefore = (await owner.get(`/c/${cid}/workflows`)).body.workflows.map((w: any) => [w.id, w.active_version_id]);
     const commit = await owner.post(`/c/${cid}/imports/${up.body.id}/commit`, { confirm: true });
-    expect(commit.body.result).toMatchObject({ customers: 2, locations: 3 });
+    expect(commit.body.result).toMatchObject({ customers: 2, locations: 4 });
     expect((await owner.post(`/c/${cid}/imports/${up.body.id}/commit`, { confirm: true })).body.already).toBe(true);
     // Importing never activates or changes automation.
     const wfs = (await owner.get(`/c/${cid}/workflows`)).body.workflows;
@@ -197,7 +202,7 @@ describe('templates', () => {
     const a = await signup('Author');
     const b = await signup('Receiver');
     const ca = await newCompany(a, ['fuel'], 'Author Co');
-    const cb = await newCompany(b, [], 'Receiver Co');
+    const cb = (await b.post('/companies', { name: 'Receiver Co', timezone: 'America/Chicago', currency: 'USD', categories: [], start: 'blank' })).body.id;
     await a.post(`/c/${ca}/customers`, { name: 'Private customer' });
     const t = await a.post(`/c/${ca}/templates`, { name: 'Author fuel', visibility: 'shared', shareWith: [b.email] });
     expect(t.status).toBe(200);

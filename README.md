@@ -89,7 +89,10 @@ All optional; see `.env.example`.
 | `CRON_SECRET` | Protects `/api/cron/tick` when set. |
 | `RIGO_SUPPORT_EMAIL` | Shown on the password recovery page for owners who have no other owner to ask. Not set: that line is left out. |
 | `RIGO_TERMS_URL`, `RIGO_PRIVACY_URL` | Terms of service and privacy policy, linked at sign-up. Not set: no agreement line is shown. |
-| `RIGO_EMAIL_PROVIDER` | Account email service for password reset, invitation and email confirmation emails. No provider is implemented yet, so recovery uses owner-created reset links. |
+| `RIGO_EMAIL_PROVIDER`, `RIGO_EMAIL_API_KEY`, `RIGO_EMAIL_FROM` | Email through `resend` or `postmark`, from a verified sender such as `Tri-County <billing@yourdomain.com>`. Turns on password reset, invitation and confirmation emails, and customer emails for allowed companies. Off until all three are set. |
+| `RIGO_SMS_PROVIDER`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Text messages through `twilio` ("On my way", updates, messages to customers). Off until all four are set. |
+| `RIGO_SENDING_COMPANIES` | Company ids (comma-separated; the id is in the address bar after `/c/`) allowed to send to customers through the providers above, or `*` for all. Not set: no company sends; messages stay prepared. Keeps strangers who sign up from using your accounts. |
+| `RIGO_DAILY_EMAIL_LIMIT`, `RIGO_DAILY_TEXT_LIMIT`, `RIGO_SMS_ANY_COUNTRY` | Daily ceilings per company (300 emails, 100 texts) and, with `1`, texts to numbers outside the US and Canada. |
 | `RIGO_TRUST_PROXY` | `1` trusts `X-Forwarded-For` for client addresses (sign-in limits). Automatic on Vercel, which overwrites the header. |
 
 ## Tests

@@ -6,7 +6,7 @@ import {
   Building2, Plus, LogOut, UserCircle2, Sun, Moon, Monitor, MoreHorizontal, CalendarCheck, WifiOff, FlaskConical, RotateCcw, Check, Zap, Search, PanelLeftClose, PanelLeftOpen,
   UserRound, Contact, FileText, CreditCard, PauseCircle, ArrowRight, Clock, UsersRound,
 } from 'lucide-react';
-import { refreshMe, signOutAndForget, useCompany, useMe } from '../lib/session';
+import { refreshMe, signOutAndForget, useCompany, useMe, companyMeta } from '../lib/session';
 import { useAutoSync } from '../lib/autosync';
 import { get, patch, post } from '../lib/api';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
@@ -16,29 +16,32 @@ import { DemoGuide, ResumeGuideButton } from '../pages/demo';
 import type { Permission } from '../../shared/permissions';
 import { accentVariants } from '../../shared/branding';
 import { useDocumentTitle } from '../lib/title';
+import { useT } from '../lib/i18n';
 
 export interface NavItem { key: string; label: string; to: string; icon: ReactNode; perm?: Permission | Permission[]; count?: number; section: string }
 
 // Sidebar groups, in order. Each role sees only the items its permissions allow.
-const SECTIONS = ['Operations', 'People & places', 'Fleet', 'Money', 'Communication', 'Rigo', 'Setup'] as const;
+// Grouped by what the work is about (R17-m4): day-to-day work, customers, money, fleet, automation, setup.
+const SECTIONS = ['Operations', 'Customers', 'Money', 'Fleet', 'Automation & assistant', 'Setup'] as const;
 
 export function useNavItems(): NavItem[] {
   const c = useCompany();
+  const t = useT();
   const items: NavItem[] = [
     { key: 'home', label: 'Home', to: '', icon: <Home aria-hidden />, perm: ['jobs.view_all', 'reports.view'], section: 'Operations' },
-    { key: 'today', label: 'My jobs', to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work', section: 'Operations' },
-    { key: 'inbox', label: 'Inbox', to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined, section: 'Operations' },
+    { key: 'today', label: t('nav.today'), to: 'today', icon: <CalendarCheck aria-hidden />, perm: 'jobs.work', section: 'Operations' },
+    { key: 'inbox', label: t('nav.inbox'), to: 'inbox', icon: <Inbox aria-hidden />, count: c.attention.needs_action || undefined, section: 'Operations' },
     { key: 'jobs', label: 'Jobs', to: 'jobs', icon: <ClipboardList aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
-    { key: 'recurring', label: 'Recurring & rentals', to: 'recurring', icon: <Repeat aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
-    { key: 'customers', label: 'Customers', to: 'customers', icon: <Contact aria-hidden />, perm: 'customers.view', section: 'People & places' },
-    { key: 'team', label: 'Team', to: 'team', icon: <UsersRound aria-hidden />, perm: 'members.view', section: 'People & places' },
-    { key: 'resources', label: 'Trucks & equipment', to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
+    { key: 'recurring', label: 'Recurring service & rentals', to: 'recurring', icon: <Repeat aria-hidden />, perm: 'jobs.view_all', section: 'Operations' },
+    { key: 'customers', label: 'Customers', to: 'customers', icon: <Contact aria-hidden />, perm: 'customers.view', section: 'Customers' },
+    { key: 'team', label: 'Team', to: 'team', icon: <UsersRound aria-hidden />, perm: 'members.view', section: 'Setup' },
+    { key: 'resources', label: t('nav.resources'), to: 'resources', icon: <Truck aria-hidden />, perm: 'resources.view', section: 'Fleet' },
     { key: 'invoices', label: 'Invoices', to: 'invoices', icon: <Receipt aria-hidden />, perm: 'invoices.view', section: 'Money' },
     { key: 'collections', label: 'Collections', to: 'collections', icon: <Wallet aria-hidden />, perm: 'finance.view', section: 'Money' },
-    { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Communication' },
-    { key: 'assistant', label: 'Assistant', to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Rigo' },
-    { key: 'automation', label: 'Automation', to: 'automation', icon: <Zap aria-hidden />, perm: ['workflows.view', 'automation.control'], section: 'Rigo' },
-    { key: 'workflows', label: 'Workflows', to: 'workflows', icon: <Workflow aria-hidden />, perm: 'workflows.view', section: 'Rigo' },
+    { key: 'messages', label: 'Messages', to: 'messages', icon: <MessageSquare aria-hidden />, perm: 'messages.view', section: 'Customers' },
+    { key: 'assistant', label: t('nav.assistant'), to: 'assistant', icon: <Bot aria-hidden />, perm: 'assistant.use', section: 'Automation & assistant' },
+    { key: 'automation', label: 'Automation', to: 'automation', icon: <Zap aria-hidden />, perm: ['workflows.view', 'automation.control'], section: 'Automation & assistant' },
+    { key: 'workflows', label: 'Workflows', to: 'workflows', icon: <Workflow aria-hidden />, perm: 'workflows.view', section: 'Automation & assistant' },
     { key: 'services', label: 'Services & pricing', to: 'services', icon: <Wrench aria-hidden />, perm: ['services.manage', 'jobs.create'], section: 'Setup' },
     { key: 'imports', label: 'Imports', to: 'imports', icon: <Upload aria-hidden />, perm: 'imports.run', section: 'Setup' },
     { key: 'templates', label: 'Templates', to: 'templates', icon: <LayoutTemplate aria-hidden />, perm: 'templates.manage', section: 'Setup' },
@@ -96,11 +99,11 @@ function CompanySwitcher() {
       {open && (
         <div className="menu" style={{ top: 'calc(100% + 8px)', left: 0 }}>
           <div className="menu-label">Signed in as {me.data?.user?.email}</div>
-          {me.data?.companies.map((co) => (
+          {me.data?.companies.filter((co) => !co.archived_at || co.id === c.cid).map((co) => (
             <a key={co.id} href={`/c/${co.id}`} aria-current={co.id === c.cid ? 'true' : undefined}>
               {co.id === c.cid ? <Check aria-hidden /> : co.kind === 'demo' ? <FlaskConical aria-hidden /> : <Building2 aria-hidden />}
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{co.name}</span>
-              <span className="xsmall muted">{co.kind === 'demo' ? 'Demo' : co.role_name}</span>
+              <span className="xsmall muted" style={{ textAlign: 'right' }}>{companyMeta(co)}</span>
             </a>
           ))}
           <hr />
@@ -119,6 +122,7 @@ function AccountMenu() {
   const nav = useNavigate();
   const me = useMe();
   const [pref, setPref] = useState<ThemePref>(readThemePref());
+  const tr = useT();
   useClickOutside(ref, () => setOpen(false), open);
   const setTheme = async (t: ThemePref) => { setPref(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); qc.invalidateQueries({ queryKey: ['me'] }); };
   const signOut = async () => {
@@ -147,8 +151,8 @@ function AccountMenu() {
             ))}
           </div>
           <hr />
-          <Link to="/account" onClick={() => setOpen(false)}><UserCircle2 aria-hidden />Account</Link>
-          <button className="menu-item" onClick={signOut}><LogOut aria-hidden />Sign out</button>
+          <Link to="/account" onClick={() => setOpen(false)}><UserCircle2 aria-hidden />{tr('nav.account')}</Link>
+          <button className="menu-item" onClick={signOut}><LogOut aria-hidden />{tr('nav.signOut')}</button>
         </div>
       )}
     </div>
@@ -313,9 +317,12 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
   }, [open]);
 
   // Searches only run for what this role may see; the server checks again.
-  const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('jobs.view_all') });
-  const customers = useQuery({ queryKey: [c.cid, 'cmdk-customers', q], queryFn: () => get(`/c/${c.cid}/customers?q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('customers.view') });
-  const invoices = useQuery({ queryKey: [c.cid, 'cmdk-invoices'], queryFn: () => get(`/c/${c.cid}/invoices?status=all`), enabled: open && q.length > 0 && c.can('invoices.view'), staleTime: 30_000 });
+  const jobs = useQuery({ queryKey: [c.cid, 'cmdk-jobs', q], queryFn: () => get(`/c/${c.cid}/jobs?status=all&sort=updated&limit=6&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && (c.can('jobs.view_all') || c.can('jobs.view_assigned')) });
+  // Drivers search their own jobs (the server keeps it to them) and open them on the driver screen (R12-m3).
+  const ownJobsOnly = !c.can('jobs.view_all');
+  const customers = useQuery({ queryKey: [c.cid, 'cmdk-customers', q], queryFn: () => get(`/c/${c.cid}/customers?limit=5&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('customers.view') });
+  // Invoices are searched on the server, not fetched whole (R17-m2).
+  const invoices = useQuery({ queryKey: [c.cid, 'cmdk-invoices', q], queryFn: () => get(`/c/${c.cid}/invoices?status=all&limit=5&q=${encodeURIComponent(q)}`), enabled: open && q.length > 0 && c.can('invoices.view') });
 
   const actions: Cmd[] = useMemo(() => {
     const a: Cmd[] = [];
@@ -340,9 +347,9 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
     list.push(...actions.filter((a) => match(a.label)));
     list.push(...pages.filter((p) => match(p.label)));
     if (needle && remote) {
-      for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: `jobs/${j.id}` });
+      for (const j of (jobs.data?.jobs ?? []).slice(0, 6)) list.push({ id: `j-${j.id}`, group: 'Jobs', label: `#${j.number} ${j.service_name ?? 'Job'}`, meta: j.customer_name ?? undefined, icon: <ClipboardList aria-hidden />, to: ownJobsOnly ? `today/${j.id}` : `jobs/${j.id}` });
       for (const cu of (customers.data?.customers ?? []).slice(0, 5)) list.push({ id: `c-${cu.id}`, group: 'Customers', label: cu.name, meta: cu.firstAddress ?? (cu.location_count ? `${cu.location_count} location(s)` : undefined), icon: <Contact aria-hidden />, to: `customers/${cu.id}` });
-      const inv = (invoices.data?.invoices ?? []).filter((i: any) => [i.number, i.customerName, i.jobNumber && `#${i.jobNumber}`, i.jobNumber].filter(Boolean).some((v: any) => String(v).toLowerCase().includes(remote))).slice(0, 5);
+      const inv = (invoices.data?.invoices ?? []).slice(0, 5);
       for (const i of inv) list.push({ id: `i-${i.id}`, group: 'Invoices', label: i.number ?? `Draft for job #${i.jobNumber ?? i.job_number ?? '?'}`, meta: i.customerName ?? i.customer_name ?? undefined, icon: <FileText aria-hidden />, to: `invoices/${i.id}` });
     }
     return list;
@@ -367,7 +374,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
       {open && <>
         <div className="cmdk-input">
           <Search aria-hidden />
-          <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} placeholder="Search jobs, customers, invoices, or jump to…" aria-label="Search or run a command"
+          <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} placeholder={searchHint(c)} aria-label="Search or run a command"
             role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-activedescendant={all[sel] ? `cmdk-${sel}` : undefined} autoComplete="off" />
           {searching ? <span className="spinner" aria-hidden /> : null}
         </div>
@@ -398,6 +405,7 @@ export function CommandMenu({ open, onClose }: { open: boolean; onClose: () => v
 
 export function AppShell({ children }: { children: ReactNode }) {
   const c = useCompany();
+  const t = useT();
   useAutoSync(c.me.actingUserId, c.cid, c.can('jobs.work'));
   const items = useNavItems();
   const online = useOnline();
@@ -467,7 +475,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {i.icon}<span>{i.label}</span>{i.count ? <span className="nav-dot" aria-label={`${i.count} need action`}>{i.count}</span> : null}
           </NavLink>
         ))}
-        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')} aria-current={isActive('more') ? 'page' : undefined}><MoreHorizontal aria-hidden /><span>More</span></NavLink>}
+        {more.length > 0 && <NavLink to={c.to('more')} className={() => (isActive('more') ? 'active' : '')} aria-current={isActive('more') ? 'page' : undefined}><MoreHorizontal aria-hidden /><span>{t('nav.more')}</span></NavLink>}
       </nav>
       <CommandMenu open={cmdk} onClose={() => setCmdk(false)} />
     </div>
@@ -476,13 +484,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 export function MorePage() {
   const c = useCompany();
-  useDocumentTitle('More');
+  const t = useT();
+  useDocumentTitle(t('nav.more'));
   const items = useNavItems();
   const bottom = bottomItems(items);
   const more = items.filter((i) => !bottom.includes(i));
   return (
     <div className="page page-narrow">
-      <h1>More</h1>
+      <h1>{t('nav.more')}</h1>
       {SECTIONS.map((s) => {
         const group = more.filter((i) => i.section === s);
         if (!group.length) return null;
@@ -505,4 +514,12 @@ export function MorePage() {
       </div>
     </div>
   );
+}
+
+/** The search box names only what this role can search (R12-m3). */
+function searchHint(c: { can: (p: any) => boolean }) {
+  const what = [c.can('jobs.view_all') ? 'jobs' : c.can('jobs.view_assigned') ? 'your jobs' : null, c.can('customers.view') ? 'customers' : null, c.can('invoices.view') ? 'invoices' : null].filter(Boolean) as string[];
+  if (!what.length) return 'Jump to a page…';
+  const list = what.length > 1 ? `${what.slice(0, -1).join(', ')}${what.length > 2 ? ',' : ''} and ${what[what.length - 1]}` : what[0];
+  return `Search ${list}, or jump to a page…`;
 }

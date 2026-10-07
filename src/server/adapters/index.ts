@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.js';
 import type { Q } from '../db/index.js';
+import { emailReady, emailSetupGaps, smsReady, smsSetupGaps, sendEmail, sendText, providerName } from './providers.js';
 
 // External-service boundary. Every outbound capability is decided here, on the server, from the
 // company kind and deployment configuration. Demo companies can never reach a real provider.
@@ -10,14 +11,27 @@ export type CapabilityState = 'available' | 'simulated' | 'disabled';
 export interface Capability { state: CapabilityState; reason: string }
 export interface Capabilities { email: Capability; sms: Capability; ai: Capability; payments: Capability; maps: Capability; fileStorage: Capability }
 
-export function capabilities(company: { kind: string }): Capabilities {
+/** Real sending is turned on per company by whoever runs Rigo (RIGO_SENDING_COMPANIES), not just by having keys. */
+export function sendingAllowed(company: { id?: string }) {
+  return config.sendingCompanies.includes('*') || (!!company.id && config.sendingCompanies.includes(company.id));
+}
+const NOT_ALLOWED = (what: string) => `${what} is set up on this server, but sending isn't turned on for this company yet (RIGO_SENDING_COMPANIES). Messages are prepared for you to send yourself.`;
+
+export function capabilities(company: { kind: string; id?: string }): Capabilities {
   const demo = company.kind === 'demo';
   const sim = (what: string): Capability => ({ state: 'simulated', reason: `Demo workspace: ${what} is simulated and nothing leaves Rigo.` });
+  const allowed = sendingAllowed(company);
   return {
-    email: demo ? sim('email') : config.emailProvider
-      ? { state: 'disabled', reason: `Email provider "${config.emailProvider}" is not supported in this build yet.` }
-      : { state: 'disabled', reason: 'No email service is configured. Messages are prepared for you to copy and send yourself.' },
-    sms: demo ? sim('text messaging') : { state: 'disabled', reason: 'Text messaging is not configured.' },
+    email: demo ? sim('email') : emailReady() && !allowed ? { state: 'disabled', reason: NOT_ALLOWED('Email') } : emailReady()
+      ? { state: 'available', reason: `Email is sent through ${providerName(config.email.provider)} from ${config.email.from}.` }
+      : config.email.provider
+        ? { state: 'disabled', reason: `Email is not fully set up yet (missing ${emailSetupGaps().join(', ')}). Messages are prepared for you to copy and send yourself.` }
+        : { state: 'disabled', reason: 'No email service is configured. Messages are prepared for you to copy and send yourself.' },
+    sms: demo ? sim('text messaging') : smsReady() && !allowed ? { state: 'disabled', reason: NOT_ALLOWED('Text messaging') } : smsReady()
+      ? { state: 'available', reason: `Texts are sent through ${providerName(config.sms.provider)} from ${config.sms.from}.` }
+      : config.sms.provider
+        ? { state: 'disabled', reason: `Text messaging is not fully set up yet (missing ${smsSetupGaps().join(', ')}). Texts are prepared for you to send yourself.` }
+        : { state: 'disabled', reason: 'Text messaging is not set up. Texts are prepared for you to send from your phone.' },
     ai: demo ? { state: 'simulated', reason: 'Demo workspace: the assistant uses prepared responses only.' }
       : config.ai.provider === 'anthropic' && config.ai.apiKey
         ? { state: 'available', reason: `AI provider configured (${config.ai.model}).` }
@@ -28,12 +42,40 @@ export function capabilities(company: { kind: string }): Capabilities {
   };
 }
 
-/** Customer-facing message delivery. Returns the honest resulting status; never claims a send that did not happen. */
-export async function deliverMessage(company: { kind: string }, _msg: { channel: string; recipient: string; subject: string; body: string }) {
-  const cap = capabilities(company)[_msg.channel === 'sms' ? 'sms' : 'email'];
+/** Provider errors can quote the address or number: people without contact access see the message status. */
+export function redactRecipient(text: string, recipient: string) {
+  let out = text;
+  if (recipient) out = out.split(recipient).join('the recipient');
+  const digits = recipient.replace(/\D/g, '');
+  if (digits.length >= 7) out = out.replace(/\+?[\d][\d\s().-]{6,}\d/g, (m) => (m.replace(/\D/g, '').endsWith(digits.slice(-7)) ? 'the recipient' : m));
+  return out.replace(/[^\s@'"<>]+@[^\s@'"<>]+\.[^\s@'"<>]+/g, 'the recipient');
+}
+
+/**
+ * Customer-facing message delivery. Returns the honest resulting status; never claims a send that
+ * did not happen. With `guard`, a company's daily sends are capped (security review).
+ */
+export async function deliverMessage(company: { kind: string; id?: string }, msg: { channel: string; recipient: string; subject: string; body: string }, guard?: { q: Q }) {
+  const sms = msg.channel === 'sms';
+  const cap = capabilities(company)[sms ? 'sms' : 'email'];
   if (cap.state === 'simulated') return { status: 'simulated' as const, detail: cap.reason, provider: 'simulation' };
   if (cap.state === 'disabled') return { status: 'blocked' as const, detail: cap.reason, provider: 'none' };
-  return { status: 'blocked' as const, detail: 'No delivery provider is implemented.', provider: 'none' };
+  if (sms && !config.smsAnyCountry && !/^\+1\d{10}$/.test(msg.recipient)) return { status: 'blocked' as const, detail: 'Texts only go to US and Canada numbers (+1 and 10 digits).', provider: 'none' };
+  const provider = sms ? config.sms.provider : config.email.provider;
+  if (guard && company.id) {
+    const archived = (await guard.q.query<{ archived_at: string | null }>(`select archived_at from rigo.companies where id = $1`, [company.id])).rows[0]?.archived_at;
+    if (archived) return { status: 'blocked' as const, detail: 'Not sent: this company is archived. Restore it to send messages.', provider: 'none' };
+    const n = (await guard.q.query<{ n: number }>(`select count(*)::int as n from rigo.messages where company_id = $1 and channel = $2 and provider = $3 and status in ('sent','delivered','failed','replied') and updated_at > now() - interval '1 day'`, [company.id, sms ? 'sms' : 'email', provider])).rows[0].n;
+    const limit = sms ? config.dailyTextLimit : config.dailyEmailLimit;
+    if (n >= limit) return { status: 'blocked' as const, detail: `Not sent: this company has reached today's limit of ${limit} ${sms ? 'texts' : 'emails'}. It stays prepared; send it tomorrow or yourself.`, provider: 'none' };
+  }
+  try {
+    if (sms) await sendText({ to: msg.recipient, body: msg.body });
+    else await sendEmail({ to: msg.recipient, subject: msg.subject, body: msg.body });
+    return { status: 'sent' as const, detail: `Sent through ${providerName(provider)}.`, provider };
+  } catch (e) {
+    return { status: 'failed' as const, detail: `${providerName(provider)} did not accept it: ${redactRecipient((e as Error).message, msg.recipient)}`, provider };
+  }
 }
 
 // ---------------------------------------------------------------- system email
@@ -42,14 +84,11 @@ export async function deliverMessage(company: { kind: string }, _msg: { channel:
 
 export type SystemEmailKind = 'password_reset' | 'invitation' | 'email_verify' | 'email_change' | 'email_changed_notice';
 export interface SystemEmail { to: string; subject: string; body: string; link?: string; kind: SystemEmailKind }
-interface SystemEmailProvider { send(mail: SystemEmail): Promise<void> }
 
-// No provider is implemented yet. Add one here (keyed by RIGO_EMAIL_PROVIDER) when the owner picks a service.
-const PROVIDERS: Record<string, SystemEmailProvider> = {};
 
 /** How account email can reach people on this deployment. */
 export function systemEmailChannel(): 'email' | 'mailbox' | 'none' {
-  if (config.emailProvider && PROVIDERS[config.emailProvider]) return 'email';
+  if (emailReady()) return 'email';
   if (config.devMailbox) return 'mailbox';
   return 'none';
 }
@@ -57,7 +96,7 @@ export function systemEmailChannel(): 'email' | 'mailbox' | 'none' {
 export async function sendSystemEmail(q: Q, mail: SystemEmail) {
   const channel = systemEmailChannel();
   if (channel === 'email') {
-    await PROVIDERS[config.emailProvider].send(mail);
+    await sendEmail({ to: mail.to, subject: mail.subject, body: mail.link && !mail.body.includes(mail.link) ? `${mail.body}\n\n${mail.link}` : mail.body });
     return { delivered: true, simulated: false, detail: 'Sent.' };
   }
   if (channel === 'mailbox') {

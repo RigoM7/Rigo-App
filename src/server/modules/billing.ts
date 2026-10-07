@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Q } from '../db/index.js';
-import { type AppEnv, type CompanyCtx, need, can, audit } from '../http/context.js';
-import { body } from '../lib/util.js';
+import { type AppEnv, type CompanyCtx, need, can, audit, needConfirmedEmail } from '../http/context.js';
+import { body, paging } from '../lib/util.js';
+import { fold, jobNumberQuery } from '../../shared/customers.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { computeTotals, lineAmount, resolveDiscounts, formatMoney, type DraftLine } from '../../shared/billing.js';
 import { balanceDue, paymentState, termsLabel, holdKind, PAYMENT_METHODS } from '../../shared/invoices.js';
@@ -11,6 +12,8 @@ import { emit, invalidateApprovalsFor, requestApproval, settleInvoiceSteps, adva
 import { issueInvoice, invoiceEmail, persistLines, lineFromRow, applyPayment, applyCredit, refreshPayment, creditBalance, termsFor, prepareInvoiceForJob, invoiceViewLink } from './invoicing.js';
 import { deliverMessage, capabilities } from '../adapters/index.js';
 import { resolveNotices } from './inbox.js';
+import { recordDelivery } from './messaging.js';
+import { textNumber } from '../../shared/messages.js';
 
 // Invoices, payments and customer communications.
 
@@ -47,7 +50,17 @@ billingRoutes.get('/invoices', async (c) => {
   else if (status && status !== 'all') { vals.push(status); where += ` and i.status = $2`; }
   const customer = c.req.query('customer');
   if (customer && /^[0-9a-f-]{36}$/i.test(customer)) { vals.push(customer); where += ` and i.customer_id = $${vals.length}`; }
-  const { rows } = await cc.db.query(`select i.*, c.name as customer_name, j.number as job_number from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id where ${where} order by i.created_at desc limit 300`, vals);
+  // Searched on the server (R17-m2): invoice number, customer name (accents don't matter) or job number.
+  const text = (c.req.query('q') ?? '').trim();
+  if (text) {
+    vals.push(`%${fold(text)}%`);
+    const n = vals.length;
+    const num = jobNumberQuery(text);
+    vals.push(num ?? -1);
+    where += ` and (rigo.fold(coalesce(i.number, '')) like $${n} or rigo.fold(c.name) like $${n} or j.number = $${n + 1})`;
+  }
+  const { limit } = paging(c.req.query('limit'), undefined, 300);
+  const { rows } = await cc.db.query(`select i.*, c.name as customer_name, j.number as job_number from rigo.invoices i left join rigo.customers c on c.id = i.customer_id left join rigo.jobs j on j.id = i.job_id where ${where} order by i.created_at desc limit ${limit}`, vals);
   return c.json({ invoices: rows.map((i) => serializeInvoice(cc, i)) });
 });
 
@@ -219,38 +232,45 @@ billingRoutes.put('/invoices/:id/lines', async (c) => {
   return c.json(out);
 });
 
-/** An invoice without a job (R8-M3): custom lines for a customer and, optionally, one of their sites. */
+const manualInvoiceInput = z.object({
+  customerId: z.string().uuid(), locationId: z.string().uuid().nullable().optional(), lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).default(''),
+  taxRateBp: z.number().int().min(0).max(5000).nullable().default(null), allowFree: z.boolean().default(false), clientRequestId: z.string().min(8).max(80),
+});
+
+/**
+ * An invoice without a job (R8-M3): custom lines for a customer and, optionally, one of their sites.
+ * Imported opening balances use it too, `quiet` so they don't start invoice workflows.
+ */
+export async function manualInvoice(q: Q, cc: CompanyCtx, input: z.input<typeof manualInvoiceInput>, opts: { quiet?: boolean } = {}) {
+  const i = manualInvoiceInput.parse(input);
+  const cust = (await q.query<any>(`select id, tax_exempt from rigo.customers where id = $1 and company_id = $2`, [i.customerId, cc.company.id])).rows[0];
+  if (!cust) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
+  if (i.locationId) {
+    const l = await q.query(`select 1 from rigo.locations where id = $1 and company_id = $2 and customer_id = $3`, [i.locationId, cc.company.id, cust.id]);
+    if (!l.rows.length) throw badRequest('Choose one of this customer\'s locations.', { fields: { locationId: 'Belongs to another customer' } });
+  }
+  const key = `manual:${i.clientRequestId}`;
+  const dup = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and billable_key = $2`, [cc.company.id, key])).rows[0];
+  if (dup) return { id: dup.id as string, duplicate: true };
+  const lines = await editedLines(q, null, i.lines, i.allowFree, cc.company.currency);
+  const totals = computeTotals(lines, i.taxRateBp, [], { taxExempt: !!cust.tax_exempt });
+  const held = totals.totalMinor === null;
+  const { rows } = await q.query<{ id: string }>(
+    `insert into rigo.invoices (company_id, billable_key, customer_id, location_id, kind, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, notes, due_days, tax_rate_bp, free_confirmed)
+     values ($1,$2,$3,$4,'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
+    [cc.company.id, key, cust.id, i.locationId ?? null, held ? 'held' : 'draft', cc.company.currency, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor,
+      JSON.stringify(totals.holdReasons), i.notes, await termsFor(q, cc.company.id, cust.id), i.taxRateBp, i.allowFree]);
+  await persistLines(q, cc.company.id, rows[0].id, lines);
+  await audit(q, cc, 'invoice.created_manually', { id: rows[0].id });
+  if (!opts.quiet) await emit(q, cc.company.id, 'invoice.prepared', { type: 'invoice', id: rows[0].id }, { held, manual: true }, { actorUserId: cc.user.id });
+  return { id: rows[0].id, duplicate: false };
+}
+
 billingRoutes.post('/invoices', async (c) => {
   const cc = c.get('cc');
   need(cc, 'invoices.edit', 'finance.view');
-  const input = await body(c, z.object({
-    customerId: z.string().uuid(), locationId: z.string().uuid().nullable().optional(), lines: z.array(lineSchema).min(1).max(50), notes: z.string().max(2000).default(''),
-    taxRateBp: z.number().int().min(0).max(5000).nullable().default(null), allowFree: z.boolean().default(false), clientRequestId: z.string().min(8).max(80),
-  }));
-  const out = await cc.db.tx(async (q) => {
-    const cust = (await q.query<any>(`select id, tax_exempt from rigo.customers where id = $1 and company_id = $2`, [input.customerId, cc.company.id])).rows[0];
-    if (!cust) throw badRequest('Choose a customer from this company.', { fields: { customerId: 'Unknown customer' } });
-    if (input.locationId) {
-      const l = await q.query(`select 1 from rigo.locations where id = $1 and company_id = $2 and customer_id = $3`, [input.locationId, cc.company.id, cust.id]);
-      if (!l.rows.length) throw badRequest('Choose one of this customer\'s locations.', { fields: { locationId: 'Belongs to another customer' } });
-    }
-    const key = `manual:${input.clientRequestId}`;
-    const dup = (await q.query<any>(`select id from rigo.invoices where company_id = $1 and billable_key = $2`, [cc.company.id, key])).rows[0];
-    if (dup) return { id: dup.id as string, duplicate: true };
-    const lines = await editedLines(q, null, input.lines, input.allowFree, cc.company.currency);
-    const totals = computeTotals(lines, input.taxRateBp, [], { taxExempt: !!cust.tax_exempt });
-    const held = totals.totalMinor === null;
-    const { rows } = await q.query<{ id: string }>(
-      `insert into rigo.invoices (company_id, billable_key, customer_id, location_id, kind, status, currency, subtotal_minor, discount_minor, tax_minor, total_minor, hold_reasons, notes, due_days, tax_rate_bp, free_confirmed)
-       values ($1,$2,$3,$4,'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id`,
-      [cc.company.id, key, cust.id, input.locationId ?? null, held ? 'held' : 'draft', cc.company.currency, totals.subtotalMinor, totals.discountMinor, totals.taxMinor, totals.totalMinor,
-        JSON.stringify(totals.holdReasons), input.notes, await termsFor(q, cc.company.id, cust.id), input.taxRateBp, input.allowFree]);
-    await persistLines(q, cc.company.id, rows[0].id, lines);
-    await audit(q, cc, 'invoice.created_manually', { id: rows[0].id });
-    await emit(q, cc.company.id, 'invoice.prepared', { type: 'invoice', id: rows[0].id }, { held, manual: true }, { actorUserId: cc.user.id });
-    return { id: rows[0].id, duplicate: false };
-  });
-  return c.json(out);
+  const input = await body(c, manualInvoiceInput);
+  return c.json(await cc.db.tx((q) => manualInvoice(q, cc, input)));
 });
 
 /** Who may decide a waiting approval, in words. */
@@ -589,13 +609,51 @@ billingRoutes.get('/messages', async (c) => {
     const hidden = !fin && (!!m.invoice_id || !!m.statement_id);
     return { ...m, body: hidden ? null : m.body, bodyHidden: hidden, recipient: contact ? m.recipient : null };
   });
-  return c.json({ messages, capability: capabilities(cc.company).email });
+  const caps = capabilities(cc.company);
+  return c.json({ messages, capability: caps.email, capabilities: { email: caps.email, sms: caps.sms } });
 });
+
+// A message written by a person to one customer (R15-M2), optionally about one of their jobs. The
+// address or number comes from the customer record on the server, so people who can't see contact
+// details can still write to a customer. It is prepared first; "send" tries the configured service.
+billingRoutes.post('/messages', async (c) => {
+  const cc = c.get('cc');
+  need(cc, 'messages.send');
+  const input = await body(c, z.object({
+    customerId: z.string().uuid(), jobId: z.string().uuid().nullable().optional(), channel: z.enum(['email', 'sms']),
+    subject: z.string().trim().max(200).optional(), body: z.string().trim().min(1, 'Write the message').max(10000), send: z.boolean().optional(),
+  }));
+  if (input.send) await needConfirmedEmail(cc, 'sending messages to customers');
+  if (input.channel === 'sms' && input.body.length > 640) throw badRequest('A text can be at most 640 characters.', { fields: { body: 'Shorten the text to 640 characters or fewer' } });
+  const out = await cc.db.tx(async (q) => {
+    const cu = (await q.query<any>(`select id, name, email, phone from rigo.customers where id = $1 and company_id = $2 and merged_into is null`, [input.customerId, cc.company.id])).rows[0];
+    if (!cu) throw notFound('Customer');
+    let job: any = null;
+    if (input.jobId) {
+      job = (await q.query<any>(`select id, number, nullif(contact_phone, '') as contact_phone from rigo.jobs where id = $1 and company_id = $2 and customer_id = $3`, [input.jobId, cc.company.id, cu.id])).rows[0];
+      if (!job) throw notFound('Job');
+    }
+    const recipient: string = (input.channel === 'sms' ? textNumber(job?.contact_phone ?? cu.phone) : cu.email) ?? '';
+    const subject = input.subject || (job ? `${cc.company.name}: about job #${job.number}` : `${cc.company.name}: a message for you`);
+    const { rows } = await q.query<any>(`insert into rigo.messages (company_id, customer_id, job_id, channel, recipient, subject, body, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [cc.company.id, cu.id, job?.id ?? null, input.channel, recipient, subject, input.body, cc.user.id]);
+    const m = rows[0];
+    if (!input.send) return { id: m.id, status: 'prepared', detail: recipient ? 'Prepared, not sent.' : noRecipient(input.channel) };
+    if (!recipient) return { id: m.id, status: 'not_sent', detail: noRecipient(input.channel) };
+    const r = await deliverMessage(cc.company, m, { q });
+    await recordDelivery(q, m, r);
+    return { id: m.id, status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.status === 'blocked' ? `Prepared, not sent. ${r.detail}` : r.detail };
+  });
+  return c.json(out);
+});
+const noRecipient = (channel: string) => channel === 'sms' ? 'Prepared, not sent: the customer has no phone number on file.' : 'Prepared, not sent: the customer has no email address on file.';
 
 billingRoutes.patch('/messages/:id', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.send');
   const input = await body(c, z.object({ subject: z.string().max(200).optional(), body: z.string().min(1).max(10000).optional(), recipient: z.string().max(254).optional() }));
+  // Pointing a message somewhere else is a contact-details decision (security review).
+  if (input.recipient !== undefined && !can(cc, 'customers.contact')) throw forbidden('Changing where a message goes needs permission to see customer contact details.');
   // Messages about money are edited only by people who can read them.
   const money = can(cc, 'finance.view') ? '' : ' and invoice_id is null and statement_id is null';
   const { rows } = await cc.db.query(`update rigo.messages set subject = coalesce($3, subject), body = coalesce($4, body), recipient = coalesce($5, recipient), updated_at = now() where id = $1 and company_id = $2 and status = 'prepared'${money} returning id`,
@@ -611,23 +669,30 @@ billingRoutes.post('/messages/:id/send', async (c) => {
     const { rows } = await q.query<any>(`select * from rigo.messages where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id]);
     const m = rows[0];
     if (!m) throw notFound('Message');
+    moneyMessageAllowed(cc, m);
     if (m.status !== 'prepared') throw conflict(`This message is already ${m.status}.`);
-    if (!m.recipient) throw badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
-    const r = await deliverMessage(cc.company, m);
-    if (r.status === 'simulated') {
-      await q.query(`update rigo.messages set status = 'simulated', status_detail = $2, provider = $3, updated_at = now() where id = $1`, [m.id, r.detail, r.provider]);
-      if (m.invoice_id) await q.query(`update rigo.invoices set delivery_status = 'simulated' where id = $1`, [m.invoice_id]);
-    }
-    return { status: r.status === 'simulated' ? 'simulated' : 'not_sent', detail: r.detail };
+    await needConfirmedEmail(cc, 'sending messages to customers');
+    if (!m.recipient) throw m.channel === 'sms' ? badRequest('Add a phone number to text first.', { fields: { recipient: 'Enter a phone number' } }) : badRequest('Add a recipient email address first.', { fields: { recipient: 'Enter an email address' } });
+    const r = await deliverMessage(cc.company, m, { q });
+    await recordDelivery(q, m, r);
+    return { status: r.status === 'blocked' ? 'not_sent' : r.status, detail: r.detail };
   });
   return c.json(out);
 });
+
+/** Invoice emails, reminders and statements state amounts: only people who see money send them (R17-M1). */
+function moneyMessageAllowed(cc: CompanyCtx, m: { invoice_id: string | null; statement_id: string | null }) {
+  if ((m.invoice_id || m.statement_id) && !can(cc, 'finance.view')) throw forbidden('Messages about invoices and statements are sent by people who see billing.');
+}
 
 /** A person sent the prepared message themselves (outside Rigo). Recorded honestly as such. */
 billingRoutes.post('/messages/:id/mark-sent', async (c) => {
   const cc = c.get('cc');
   need(cc, 'messages.send');
   if (cc.isDemo) throw badRequest('Demo messages are simulated only.');
+  const found = (await cc.db.query<any>(`select invoice_id, statement_id from rigo.messages where id = $1 and company_id = $2`, [c.req.param('id'), cc.company.id])).rows[0];
+  if (!found) throw notFound('Message');
+  moneyMessageAllowed(cc, found);
   const { rows } = await cc.db.query<any>(`update rigo.messages set status = 'sent', status_detail = $3, updated_at = now() where id = $1 and company_id = $2 and status = 'prepared' returning invoice_id`,
     [c.req.param('id'), cc.company.id, `Sent outside Rigo; recorded by ${cc.user.name}.`]);
   if (!rows.length) throw conflict('Only prepared messages can be marked as sent.');

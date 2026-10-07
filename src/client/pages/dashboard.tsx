@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Hand, CheckCircle2, Plus, Zap, PauseCircle, ArrowRight, ClipboardList, Users, Wrench } from 'lucide-react';
+import { AlertTriangle, Hand, CheckCircle2, Plus, Zap, PauseCircle, ArrowRight, ClipboardList, Users, Wrench, Siren } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get } from '../lib/api';
 import { LoadingBlock, ErrorState, LinkButton, Pill, Empty, TickNumber, LiveDot } from '../components/ui';
@@ -50,12 +50,13 @@ export function Dashboard() {
         <h2 id="att-h" className="needs-strip-label">Needs you</h2>
         {d.attention.length === 0 ? (
           <span className="all-clear"><CheckCircle2 aria-hidden />Nothing needs your attention right now.</span>
-        ) : d.attention.map((a: any) => (
-          <div key={a.key} className={`need tone-${a.tone}`}>
-            {a.tone === 'warning' ? <AlertTriangle aria-hidden /> : <Hand aria-hidden />}
+        ) : d.attention.map((a: any, i: number) => (
+          // Ranked by urgency on the server (R18-m5): the first item gets the one primary action.
+          <div key={a.key} className={`need tone-${a.tone}${i === 0 ? ' is-first' : ''}`}>
+            {a.key === 'emergency' ? <Siren aria-hidden /> : a.tone === 'warning' ? <AlertTriangle aria-hidden /> : <Hand aria-hidden />}
             <span className="n" aria-hidden>{a.count}</span>
             <span><span className="sr-only">{a.count} </span>{a.label}</span>
-            <Link className={`btn btn-sm${a.key === 'approvals' ? ' btn-primary' : ''}`} to={c.to(a.link)} aria-label={`${NEED_ACTION[a.key] ?? 'Open'}: ${a.label}`}>{NEED_ACTION[a.key] ?? 'Open'}</Link>
+            <Link className={`btn btn-sm${i === 0 ? ' btn-primary' : ''}`} to={c.to(a.link)} aria-label={`${NEED_ACTION[a.key] ?? 'Open'}: ${a.label}`}>{NEED_ACTION[a.key] ?? 'Open'}</Link>
           </div>
         ))}
       </section>

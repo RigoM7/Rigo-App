@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, List, Columns3, GanttChartSquare, Search, AlertTriangle, X, ClipboardList, Truck, ArrowRightLeft } from 'lucide-react';
 import { useCompany } from '../lib/session';
 import { get, post, ApiError } from '../lib/api';
@@ -16,6 +16,8 @@ type View = 'list' | 'board' | 'schedule';
 const FINISHED = ['completed', 'partial', 'unsuccessful', 'cancelled'];
 
 export { QuickAssign };
+
+const JOB_PAGE = 100;
 
 export function Jobs() {
   const c = useCompany();
@@ -35,9 +37,15 @@ export function Jobs() {
   const params = new URLSearchParams({ status, sort, ...(assignee ? { assignee } : {}), ...(qtext ? { q: qtext } : {}), ...(sp.get('problem') ? { problem: '1' } : {}), ...(priority ? { priority } : {}), ...(late ? { late: '1' } : {}), ...(resource ? { resource } : {}), ...(oos ? { oos: '1' } : {}) });
   const resources = useQuery({ queryKey: [c.cid, 'resources'], queryFn: () => get(`/c/${c.cid}/resources`), enabled: c.can('resources.view') });
   const resourceName = resources.data?.resources.find((r: any) => r.id === resource)?.name;
-  const q = useQuery({ queryKey: [c.cid, 'jobs', params.toString()], queryFn: () => get(`/c/${c.cid}/jobs?${params}`), refetchInterval: 30_000, enabled: view !== 'schedule' });
+  // 100 jobs at a time; "Show more" asks the server for the next ones (R17-m2).
+  const q = useInfiniteQuery({
+    queryKey: [c.cid, 'jobs', params.toString()], initialPageParam: 0, refetchInterval: 30_000, enabled: view !== 'schedule', placeholderData: keepPreviousData,
+    queryFn: ({ pageParam }) => get(`/c/${c.cid}/jobs?${params}&limit=${JOB_PAGE}&offset=${pageParam}`),
+    getNextPageParam: (last: any) => (last.hasMore ? last.offset + last.jobs.length : undefined),
+  });
   const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
-  const jobs: any[] = q.data?.jobs ?? [];
+  const jobs: any[] = q.data?.pages.flatMap((pg: any) => pg.jobs) ?? [];
+  const serverTime = q.data?.pages.at(-1)?.serverTime;
   const filtered = !!(qtext || assignee || status !== 'active' || sp.get('problem') || priority || late || resource || oos);
   return (
     <div className={`page${view === 'schedule' ? ' page-wide' : ''}`}>
@@ -64,7 +72,8 @@ export function Jobs() {
         {q.isLoading ? <LoadingBlock rows={6} /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} /> : jobs.length === 0 ? (
           <div className="card"><Empty icon={<ClipboardList />} title={filtered ? 'No jobs match' : 'No active jobs'} action={c.can('jobs.create') ? <LinkButton variant="primary" to={c.to('jobs/new')} icon={<Plus aria-hidden />}>New job</LinkButton> : undefined}>{filtered ? 'Try a different filter or search.' : 'Create a job when a customer contacts you.'}</Empty></div>
         ) : view === 'list' ? <JobTable jobs={jobs} onChange={refresh} resources={resources.data?.resources ?? []} preferFrom={resource} /> : <Board jobs={jobs} />}
-        {q.data && <p className="xsmall muted" aria-live="polite">{jobs.length} job{jobs.length === 1 ? '' : 's'} · updated {fmtTime(q.data.serverTime, c.company.timezone)}</p>}
+        {q.hasNextPage && <div><Button busy={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Show more jobs</Button></div>}
+        {q.data && <p className="xsmall muted" aria-live="polite">{q.hasNextPage ? `First ${jobs.length} jobs` : `${jobs.length} job${jobs.length === 1 ? '' : 's'}`} · updated {fmtTime(serverTime, c.company.timezone)}</p>}
       </>}
     </div>
   );
@@ -145,7 +154,7 @@ function JobTable({ jobs, onChange, resources, preferFrom }: { jobs: any[]; onCh
             <option value="">Choose a driver…</option><option value="none">Unassigned</option>{drivers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <Button size="sm" variant="primary" busy={busy} disabled={!bulkDriver} onClick={applyBulk}>Assign {sel.length} job{sel.length === 1 ? '' : 's'}</Button>
-          {bulkDriver ? <span className="small">Not assigned yet</span> : null}
+          {bulkDriver ? <span className="small">Press Assign to apply</span> : null}
           {onSelected.length > 0 && <>
             <span className="bulk-sep" aria-hidden />
             <label className="sr-only" htmlFor="swap-from">Truck to replace</label>

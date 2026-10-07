@@ -21,3 +21,10 @@ export function pick<T extends object, K extends keyof T>(o: T, keys: K[]): Pick
   for (const k of keys) out[k] = o[k];
   return out;
 }
+
+/** `limit` (1..max, default max) and `offset` (0..100000) from a query string, never trusted as SQL. */
+export function paging(limit: string | undefined, offset: string | undefined, max: number) {
+  const l = Math.floor(Number(limit));
+  const o = Math.floor(Number(offset));
+  return { limit: Number.isFinite(l) && l >= 1 ? Math.min(l, max) : max, offset: Number.isFinite(o) && o > 0 ? Math.min(o, 100_000) : 0 };
+}

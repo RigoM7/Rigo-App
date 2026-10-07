@@ -6,7 +6,7 @@ import { type AppEnv, requireUser, audit } from '../http/context.js';
 import { body } from '../lib/util.js';
 import { badRequest, forbidden } from '../http/errors.js';
 import { seedRoles, insertService, seedDefaultWorkflows, exportStructure } from './structure.js';
-import { starterService, type PriceLine } from '../../shared/services.js';
+import { starterService, type PriceLine, type ServiceCategory } from '../../shared/services.js';
 import { stableHash } from '../../shared/workflows.js';
 import { createCompany, createCompanySchema } from './companies.js';
 import { localDate, addDays, zonedToUtc } from '../../shared/schedule.js';
@@ -209,7 +209,13 @@ demoRoutes.post('/demo/convert', async (c) => {
   demoOnly(cc);
   const input = await body(c, createCompanySchema.extend({ copyStructure: z.boolean().default(true) }));
   const structure = input.copyStructure ? await exportStructure(cc.db, cc.company.id) : undefined;
-  if (structure) structure.workflows = structure.workflows.map((w) => ({ ...w, description: w.description }));
+  if (structure) {
+    structure.workflows = structure.workflows.map((w) => ({ ...w, description: w.description }));
+    // Services come from the same starters as "Create a company" (R3-m9), for the services chosen,
+    // not the demo's adjusted copies. Rates start empty either way.
+    const cats = (input.categories.length ? input.categories : [...new Set(structure.services.map((x) => x.category))]) as ServiceCategory[];
+    structure.services = cats.map((cat) => starterService(cat));
+  }
   const id = await cc.db.tx(async (q) => {
     const newId = await createCompany(q, cc.user.id, { ...input, start: structure ? 'blank' : input.start }, { structureFrom: structure });
     await audit(q, { company: { id: newId }, user: cc.user }, 'company.created_from_demo', { demoId: cc.company.id, structureHash: structure ? stableHash(structure) : null });

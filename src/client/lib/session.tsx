@@ -6,8 +6,8 @@ import type { Permission } from '../../shared/permissions';
 import { applyTheme, type ThemePref } from './theme';
 
 export interface Me {
-  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean } | null;
-  companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null }[];
+  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean; language?: 'en' | 'es' | null } | null;
+  companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null; created_at?: string; address?: string | null; archived_at?: string | null; copied_from_demo?: boolean }[];
   invitations: { id: string; role_name: string; company_name: string; expires_at: string; needsLink?: boolean }[];
   devMailbox: boolean;
   /** How account email reaches people here: a real service, the local simulated mailbox, or none. */
@@ -67,7 +67,7 @@ export async function signOutAndForget(qc: QueryClient) {
 
 export interface Capability { state: 'available' | 'simulated' | 'disabled'; reason: string }
 export interface Boot {
-  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string; invoicePrefix?: string; remitTo?: string; taxId?: string; invoice_seq?: number; invoiceApprovalRequired?: boolean; paused_at?: string | null; paused_by?: string | null };
+  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string; invoicePrefix?: string; remitTo?: string; taxId?: string; invoice_seq?: number; invoiceApprovalRequired?: boolean; businessHours?: { days: number[]; start: string; end: string } | null; paused_at?: string | null; paused_by?: string | null };
   role: { key: string; name: string; isOwner: boolean; simulated: string | null };
   permissions: Permission[];
   capabilities: Record<'email' | 'sms' | 'ai' | 'payments' | 'maps' | 'fileStorage', Capability>;
@@ -153,4 +153,13 @@ export function useApplyUserTheme(pref: ThemePref | undefined) {
 /** Where to go after signing in: a same-site path from ?next=, otherwise home (the only company, or the list). */
 export function safeNext(n: string | null | undefined) {
   return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/open';
+}
+
+/** One line that tells two companies with the same name apart (R17-M2): role, town, when and how it started. */
+export function companyMeta(co: { role_name: string; created_at?: string; address?: string | null; copied_from_demo?: boolean; kind?: string }) {
+  if (co.kind === 'demo') return 'Demo';
+  const parts = (co.address ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const town = parts.length > 1 ? parts[1] : '';
+  const since = co.created_at ? `created ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(co.created_at))}` : '';
+  return [co.role_name, town, since, co.copied_from_demo ? 'copied from the demo' : ''].filter(Boolean).join(' · ');
 }

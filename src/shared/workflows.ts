@@ -15,6 +15,8 @@ export const MODE_HELP: Record<Mode, string> = {
 export const TRIGGERS = {
   'job.created': { label: 'A job is created', subject: 'job' },
   'job.assigned': { label: 'A job is assigned or reassigned', subject: 'job' },
+  'job.en_route': { label: 'A driver is on the way', subject: 'job' },
+  'job.started': { label: 'A driver starts a job', subject: 'job' },
   'job.completed': { label: 'A job is completed successfully', subject: 'job' },
   'job.partial': { label: 'A job is partially completed', subject: 'job' },
   'job.unsuccessful': { label: 'A visit could not be completed', subject: 'job' },
@@ -54,13 +56,13 @@ export const ACTIONS: Record<string, ActionMeta> = {
   },
   'message.prepare_job_update': {
     label: 'Prepare customer update', kind: 'prepare', needs: 'job', provides: 'message', permission: 'messages.send',
-    description: 'Prepares a short message to the customer about the visit outcome.',
+    description: 'Prepares a short message to the customer: the driver is on the way (with the arrival estimate), has started, or how the visit went. A text when the customer has a mobile number, otherwise an email.',
     consequence: 'A message is prepared for review. It is not sent.',
   },
   'message.send': {
     label: 'Send prepared message', kind: 'commit', needs: 'message', permission: 'messages.send', capability: 'email',
-    description: 'Sends the prepared message through the configured email service. Without one it is blocked (real companies) or simulated (demo).',
-    consequence: 'The customer receives the message if an email service is configured.',
+    description: 'Sends the prepared message through the configured email or text service. Without one it is blocked (real companies) or simulated (demo).',
+    consequence: 'The customer receives the message if an email or text service is configured.',
   },
   notify: {
     label: 'Notify team members', kind: 'prepare', needs: 'any', permission: 'workflows.view',
@@ -245,8 +247,10 @@ export function explainDefinition(def: Definition, roleNames: Record<string, str
     const meta = ACTIONS[s.action];
     let line = `${i + 1}. ${meta.label}`;
     if (s.action === 'notify') line += ` (${[...(s.params.assignee ? ['assigned driver'] : []), ...(s.params.roles ?? []).map(rn)].join(', ')})`;
-    if (s.approval.required === 'always') line += `, after approval by ${[...s.approval.approverRoles.map(rn), ...(s.approval.approverUserIds.length ? ['named approvers'] : [])].join(' or ')}`;
-    if (s.approval.required === 'conditional') line += `, needing approval when ${s.approval.conditions.map(describeCondition).join(' and ')}`;
+    // People are named when their names are known (the same map carries role and user names).
+    const who = [...s.approval.approverUserIds.map((u) => roleNames[u] ?? 'a named approver'), ...s.approval.approverRoles.map(rn)].join(' or ');
+    if (s.approval.required === 'always') line += `, after approval by ${who}`;
+    if (s.approval.required === 'conditional') line += `, needing approval${who ? ` by ${who}` : ''} when ${s.approval.conditions.map(describeCondition).join(' and ')}`;
     if (s.mode) line += ` [always ${s.mode}]`;
     lines.push(line + '.');
     if (s.onException.notifyRoles.length) lines.push(`   If it cannot finish: notify ${s.onException.notifyRoles.map(rn).join(', ')}${s.onException.stop ? ' and stop' : ' and continue'}.`);

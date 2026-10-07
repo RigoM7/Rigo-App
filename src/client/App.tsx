@@ -4,17 +4,27 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme, refreshMe, safeNext } from './lib/session';
 import { useDocumentTitle } from './lib/title';
 import { post } from './lib/api';
-import { AppShell, MorePage } from './components/shell';
 import { ToastProvider, LoadingBlock, ErrorState, LinkButton, Wordmark, Empty } from './components/ui';
 import { Lock, SearchX, WifiOff } from 'lucide-react';
-import { SignIn, SignUp, Forgot, Reset, ConfirmEmail } from './pages/auth';
-import { Landing } from './pages/landing';
-import { Workspaces, NewCompany } from './pages/workspaces';
-import { InvitePage } from './pages/invite';
-import { Account } from './pages/account';
-import { DevMailbox } from './pages/devmailbox';
+// Every screen loads with its own script (R17-m3): the first visit downloads only what it shows.
+const AppShell = lazy(() => import('./components/shell').then((m) => ({ default: m.AppShell })));
+const MorePage = lazy(() => import('./components/shell').then((m) => ({ default: m.MorePage })));
+const SignIn = lazy(() => import('./pages/auth').then((m) => ({ default: m.SignIn })));
+const SignUp = lazy(() => import('./pages/auth').then((m) => ({ default: m.SignUp })));
+const Forgot = lazy(() => import('./pages/auth').then((m) => ({ default: m.Forgot })));
+const Reset = lazy(() => import('./pages/auth').then((m) => ({ default: m.Reset })));
+const ConfirmEmail = lazy(() => import('./pages/auth').then((m) => ({ default: m.ConfirmEmail })));
+const Landing = lazy(() => import('./pages/landing').then((m) => ({ default: m.Landing })));
+const Workspaces = lazy(() => import('./pages/workspaces').then((m) => ({ default: m.Workspaces })));
+const NewCompany = lazy(() => import('./pages/workspaces').then((m) => ({ default: m.NewCompany })));
+const InvitePage = lazy(() => import('./pages/invite').then((m) => ({ default: m.InvitePage })));
+const Account = lazy(() => import('./pages/account').then((m) => ({ default: m.Account })));
+const DevMailbox = lazy(() => import('./pages/devmailbox').then((m) => ({ default: m.DevMailbox })));
 import { ApiError } from './lib/api';
-import type { Permission } from '../shared/permissions';
+import { PERMISSIONS, type Permission } from '../shared/permissions';
+import { PersonLanguage } from './lib/i18n';
+
+const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 
 const Dashboard = lazy(() => import('./pages/dashboard').then((m) => ({ default: m.Dashboard })));
 const Jobs = lazy(() => import('./pages/jobs').then((m) => ({ default: m.Jobs })));
@@ -151,11 +161,13 @@ function CompanyRoot() {
   return (
     // key={cid} remounts everything when switching companies so no state carries across.
     <CompanyProvider key={cid} cid={cid} boot={boot.data!}>
-      <AppShell>
-        <Suspense fallback={<LoadingBlock />}>
-          {boot.data!.offlineSince ? <OfflineRoutes /> : <CompanyRoutes />}
-        </Suspense>
-      </AppShell>
+      <DriverLanguage>
+        <AppShell>
+          <Suspense fallback={<LoadingBlock />}>
+            {boot.data!.offlineSince ? <OfflineRoutes /> : <CompanyRoutes />}
+          </Suspense>
+        </AppShell>
+      </DriverLanguage>
     </CompanyProvider>
   );
 }
@@ -213,8 +225,8 @@ function OfflineRoutes() {
   return (
     <Routes>
       <Route index element={<OfflineHome />} />
-      <Route path="today" element={<Today />} />
-      <Route path="today/:jobId" element={<DriverJob />} />
+      <Route path="today" element={<PersonLanguage><Today /></PersonLanguage>} />
+      <Route path="today/:jobId" element={<PersonLanguage><DriverJob /></PersonLanguage>} />
       <Route path="*" element={<NeedsConnection />} />
     </Routes>
   );
@@ -257,6 +269,35 @@ function NotFound() {
   );
 }
 
+/** Someone whose role is driving sees the menus in their language too; office roles stay English (D8). */
+function DriverLanguage({ children }: { children: ReactNode }) {
+  const c = useCompany();
+  return <PersonLanguage enabled={c.can('jobs.work') && !c.can('jobs.view_all')}>{children}</PersonLanguage>;
+}
+
+/** A driver opening an office link to their own job lands on the driver screen (R17-m4). */
+function JobOrDriverJob() {
+  const c = useCompany();
+  const { id = '' } = useParams();
+  if (!c.can('jobs.view_all') && c.can('jobs.work')) return <Navigate to={c.to(`today/${id}`)} replace />;
+  return <JobDetail />;
+}
+
+/** An address that isn't a page says so, instead of quietly going somewhere else (R17-m4). */
+function TopNotFound() {
+  const me = useMe();
+  useDocumentTitle('Page not found');
+  const signedIn = !!me.data?.user;
+  return (
+    <div className="auth-wrap">
+      <main className="auth-card stack" id="main">
+        <Wordmark to={signedIn ? '/workspaces' : '/'} />
+        <div className="card"><Empty icon={<SearchX />} title="This page does not exist" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={signedIn ? '/workspaces' : '/'}>{signedIn ? 'Go to your companies' : 'Go to the home page'}</LinkButton></div>}>The link may be old or mistyped.</Empty></div>
+      </main>
+    </div>
+  );
+}
+
 function RoleHome() {
   const c = useCompany();
   if (!c.can('jobs.view_all') && c.can('jobs.work')) return <Navigate to={c.to('today')} replace />;
@@ -271,7 +312,8 @@ function Need({ any, children }: { any: Permission[]; children: ReactNode }) {
   if (any.some((p) => c.can(p))) return <>{children}</>;
   return (
     <div className="page page-narrow">
-      <div className="card"><Empty icon={<Lock />} title="Your role doesn't include this page" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>Ask an owner if you need it. You are signed in as {c.role.name}.</Empty></div>
+      {/* The permission is named in plain words, never as a code key (R17-m4). */}
+      <div className="card"><Empty icon={<Lock />} title="Your role doesn't include this page" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>It needs permission to {any.map((p) => lowerFirst(PERMISSIONS[p])).join(', or to ')}. You are signed in as {c.role.name}; ask an owner if you need it.</Empty></div>
     </div>
   );
 }
@@ -280,12 +322,12 @@ function CompanyRoutes() {
   return (
     <Routes>
       <Route index element={<RoleHome />} />
-      <Route path="today" element={<Need any={['jobs.work']}><Today /></Need>} />
-      <Route path="today/:jobId" element={<Need any={['jobs.work']}><DriverJob /></Need>} />
+      <Route path="today" element={<Need any={['jobs.work']}><PersonLanguage><Today /></PersonLanguage></Need>} />
+      <Route path="today/:jobId" element={<Need any={['jobs.work']}><PersonLanguage><DriverJob /></PersonLanguage></Need>} />
       <Route path="jobs" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><Jobs /></Need>} />
       <Route path="jobs/new" element={<Need any={['jobs.create']}><JobForm /></Need>} />
       <Route path="jobs/records" element={<Need any={['jobs.assign']}><DriverRecords /></Need>} />
-      <Route path="jobs/:id" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobDetail /></Need>} />
+      <Route path="jobs/:id" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobOrDriverJob /></Need>} />
       <Route path="jobs/:id/edit" element={<Need any={['jobs.edit']}><JobForm /></Need>} />
       <Route path="jobs/:id/report" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobReport /></Need>} />
       <Route path="customers" element={<Need any={['customers.view']}><Customers /></Need>} />
@@ -319,18 +361,24 @@ function CompanyRoutes() {
   );
 }
 
+/** The same quiet loading screen as index.html, while a screen's script arrives. */
+function BootScreen() {
+  return <div className="boot" role="status"><img src="/icon.svg" alt="" /><span>Loading Rigo…</span><div className="boot-bar" aria-hidden="true" /></div>;
+}
+
 function AppRoutes() {
   return (
     <ToastProvider>
+      <Suspense fallback={<BootScreen />}>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/signin" element={<SignedOutOnly><SignIn /></SignedOutOnly>} />
-        <Route path="/signup" element={<SignedOutOnly><SignUp /></SignedOutOnly>} />
-        <Route path="/forgot" element={<Forgot />} />
-        <Route path="/reset/:token" element={<Reset />} />
-        <Route path="/confirm-email/:token" element={<ConfirmEmail />} />
+        <Route path="/signin" element={<SignedOutOnly><PersonLanguage><SignIn /></PersonLanguage></SignedOutOnly>} />
+        <Route path="/signup" element={<SignedOutOnly><PersonLanguage><SignUp /></PersonLanguage></SignedOutOnly>} />
+        <Route path="/forgot" element={<PersonLanguage><Forgot /></PersonLanguage>} />
+        <Route path="/reset/:token" element={<PersonLanguage><Reset /></PersonLanguage>} />
+        <Route path="/confirm-email/:token" element={<PersonLanguage><ConfirmEmail /></PersonLanguage>} />
         <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
-        <Route path="/invite/:token" element={<InvitePage />} />
+        <Route path="/invite/:token" element={<PersonLanguage><InvitePage /></PersonLanguage>} />
         <Route path="/i/:token" element={<PublicInvoice />} />
         <Route path="/dev/mailbox" element={<DevMailbox />} />
         <Route path="/open" element={<RequireUser><OpenApp /></RequireUser>} />
@@ -338,8 +386,9 @@ function AppRoutes() {
         <Route path="/workspaces/new" element={<RequireUser><NewCompany /></RequireUser>} />
         <Route path="/account" element={<RequireUser><Account /></RequireUser>} />
         <Route path="/c/:cid/*" element={<RequireUser><CompanyRoot /></RequireUser>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<TopNotFound />} />
       </Routes>
+      </Suspense>
     </ToastProvider>
   );
 }

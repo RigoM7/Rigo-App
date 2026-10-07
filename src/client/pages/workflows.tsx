@@ -27,7 +27,7 @@ export function Workflows() {
   const regular = wfs.filter((w: any) => w.latest_id);
   return (
     <div className="page">
-      <PageHeader title="Workflows" sub="What Rigo does when something happens. Edit with forms, the visual builder or the assistant; all three change the same versioned draft."
+      <PageHeader title="Workflows" sub={<>The rules: what Rigo does when something happens. Edit with forms, the visual builder or the assistant; all three change the same versioned draft. To see them running, or pause them, open <Link to={c.to('automation')}>Automation</Link>.</>}
         actions={<>{c.can('assistant.use') && c.can('workflows.edit') && <LinkButton to={c.to('assistant')} icon={<Bot aria-hidden />}>Describe one to the assistant</LinkButton>}{c.can('workflows.edit') && <Button variant="primary" icon={<Plus aria-hidden />} onClick={() => setOpen(true)}>New workflow</Button>}</>} />
       {regular.length === 0 && proposals.length === 0 ? <Card><Empty icon={<WorkflowIcon aria-hidden />} title="No workflows yet">Workflows prepare invoices, notify your team and more. Start one here, ask the assistant, or apply a template.</Empty></Card> : (
         <div className="card card-flush"><ul className="list">{regular.map((w: any) => (
@@ -245,7 +245,8 @@ export function WorkflowEditor() {
                     </button>
                   </div>
                 ))}
-                {canEdit && <><div className="flow-connector" aria-hidden /><Button size="sm" className="flow-add" icon={<Plus aria-hidden />} onClick={() => addStep(def.steps.length)}>Add step at end</Button></>}
+                {/* Only list items sit directly in the list (R18-m3). */}
+                {canEdit && <div role="listitem"><div className="flow-connector" aria-hidden /><Button size="sm" className="flow-add" icon={<Plus aria-hidden />} onClick={() => addStep(def.steps.length)}>Add step at end</Button></div>}
               </div>
               <div className="card" aria-live="polite">{sel === 'trigger' ? triggerEditor : selIndex >= 0 ? stepPanel(selIndex) : triggerEditor}</div>
             </div>
