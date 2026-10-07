@@ -73,7 +73,9 @@ describe('drivers are told what changed (R11-M2, R6-M1)', () => {
     const r = await t.marcus.patch(`/c/${t.cid}/jobs/${j.id}`, { version: j.version, scheduledStart: later, accessInstructions: 'Use the north gate, code 2211' });
     expect(r.status).toBe(200);
     const text = await bell(t.luis, t.cid);
-    expect(text).toMatch(/Job #\d+ changed: Moved from \d+:\d\d [AP]M to \d+:\d\d [AP]M/);
+    // Same day: "Moved from 9:00 AM to 10:00 AM"; across midnight the day is named too.
+    const at = '(?:\\w{3}, \\w{3} \\d+, )?\\d+:\\d\\d [AP]M';
+    expect(text).toMatch(new RegExp(`Job #\\d+ changed: Moved from ${at} to ${at}`));
     expect(text).toContain('New access instructions: Use the north gate, code 2211');
     const mine = (await t.luis.get(`/c/${t.cid}/my/jobs`)).body.jobs.find((x: any) => x.id === j.id);
     // Still marked new (not opened yet), plus the two changes.

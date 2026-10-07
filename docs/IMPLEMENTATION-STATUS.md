@@ -9,17 +9,17 @@ Deployment: the Vercel preview of this branch connects to Supabase through the t
 (`aws-0-us-east-1`, role `rigo_app`); the migration created 40 tables in schema `rigo`, which the
 public API roles cannot access.
 
-Latest results (local, Phase 1 of the critique fixes: money, approvals and lost work): `npm test`
-158/158 passed on embedded PostgreSQL (PGlite) and 158/158 on PostgreSQL 16; `e2e/run.mjs` 79/79
-browser checks passed against a local build with the simulated mailbox (the copy without email,
-`NOEMAIL_URL`, was not run this time), including the 18 Phase 1 checks (example bills, void and
-re-bill, collections at 1366 and 390 px, a manual invoice and its view link, approval
-confirmations, rental plan forms, the driver's phone at 360×640, 375×667 and 390×844 and at 200%
-text, an offline save that survives closing the app and sends once on reconnect, a removed
-driver's late record and the phone wipe, reassignment mid-job, Switch driver and the installed-app
-start page); axe found no violations on the 19 screens scanned in these checks; `npm run typecheck`
-clean. Reviews before shipping: isolation and field filtering, money, and security; every finding
-is fixed with a test except self-approval, which is an owner decision (see Known limitations).
+Latest results (local, Phase 2 of the critique fixes: dispatch, team, customers and fuel records):
+`npm test` 205/205 passed on embedded PostgreSQL (PGlite) and 205/205 on PostgreSQL 16 (a fresh
+database); `e2e/run.mjs` 86/86 browser checks passed against a local build with the simulated
+mailbox, including the 8 Phase 2 checks (a busy timeline at 1440 and 1024 px, someone else saving a
+job first, driver change notices with "Open in Maps" and swapping an out-of-service truck, the
+invited driver's sign-up and first day, the customer picker and duplicate warning with the
+customer page, and two products into two tanks at one fuel stop with a meter mismatch the office
+releases); axe found no violations on the 26 screens scanned; `npm run typecheck` clean. Reviews
+before shipping: the `/review` checklist and a security review of invitations, permissions, removed
+members, customers and messages; every finding is fixed with a test, except storing pending
+invitation links for "Copy link" (see Known limitations). Phase 1 results are in its PR.
 
 ## A. Foundation
 
