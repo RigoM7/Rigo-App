@@ -166,3 +166,33 @@ describe('owner-built roles', () => {
     expect((await t.luis.get(`/c/${t.cid}/members`)).status).toBe(403);
   });
 });
+
+describe('nobody but an owner hands out more than they hold (security review)', () => {
+  it('a manager can invite drivers but not into a stronger role, and never changes their own role', async () => {
+    const t = await triCounty();
+    await t.dana.post(`/c/${t.cid}/roles`, { name: 'Admin', app: 'office', permissions: ['members.view', 'members.invite', 'members.manage', 'workspace.settings', 'automation.manage'] });
+    const admin = (await t.dana.get(`/c/${t.cid}/roles`)).body.roles.find((r: any) => r.name === 'Admin').key;
+    await t.dana.patch(`/c/${t.cid}/roles/dispatcher`, { permissions: ['members.view', 'members.invite', 'members.manage', 'work.view_all', 'customers.view'] });
+    expect((await t.marcus.post(`/c/${t.cid}/invitations`, { email: 'marcus.alias@example.test', role: admin })).status).toBe(403);
+    expect((await t.marcus.post(`/c/${t.cid}/invitations`, { email: 'new.driver@example.test', role: 'driver' })).status).toBe(200);
+    const members = (await t.dana.get(`/c/${t.cid}/members`)).body.members;
+    const self = members.find((m: any) => m.user_id === t.ids.marcus || m.userId === t.ids.marcus);
+    const luis = members.find((m: any) => m.user_id === t.ids.luis || m.userId === t.ids.luis);
+    expect((await t.marcus.patch(`/c/${t.cid}/members/${self.id}`, { role: admin })).status).toBe(403);
+    expect((await t.marcus.patch(`/c/${t.cid}/members/${self.id}`, { role: 'driver' })).status).toBe(403);
+    expect((await t.marcus.patch(`/c/${t.cid}/members/${luis.id}`, { role: admin })).status).toBe(403);
+    // The owner still can.
+    expect((await t.dana.patch(`/c/${t.cid}/members/${luis.id}`, { role: admin })).status).toBe(200);
+    // Ids that aren't ids are simply not found.
+    expect((await t.marcus.patch(`/c/${t.cid}/members/not-an-id`, { role: 'driver' })).status).toBe(404);
+    expect((await t.marcus.post(`/c/${t.cid}/invitations/not-an-id/resend`)).status).toBe(404);
+  });
+
+  it('moving a role to the phone app drops what the phone app can not use', async () => {
+    const t = await triCounty();
+    expect((await t.dana.patch(`/c/${t.cid}/roles/office`, { app: 'worker' })).status).toBe(200);
+    const office = (await t.dana.get(`/c/${t.cid}/roles`)).body.roles.find((r: any) => r.key === 'office');
+    expect(office.permissions.every((p: string) => ['work.view_assigned', 'work.do', 'customers.contact', 'money.view', 'payments.record'].includes(p))).toBe(true);
+    expect(office.permissions).not.toContain('invoices.approve');
+  });
+});

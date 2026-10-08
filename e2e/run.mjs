@@ -201,6 +201,9 @@ if (group('office')) {
     await page.goto(`${BASE}/w/${b.cid}/work/${id}`);
     await page.getByRole('button', { name: 'Move to Scheduled' }).click();
     await page.getByText('Moved to Scheduled.').waitFor();
+    // Pick the next stage once the page shows the new one (the stage card redraws when it reloads).
+    await page.getByRole('button', { name: 'Move to In progress' }).waitFor();
+    await page.waitForLoadState('networkidle');
     await page.getByLabel('Or move to').selectOption({ label: 'Done' });
     await page.getByText('Moved to Done.').waitFor();
     await page.goto(`${BASE}/w/${b.cid}/inbox`);

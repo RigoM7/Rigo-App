@@ -56,3 +56,17 @@ describe('demos', () => {
     expect((await other.post(`/c/${b}/demo/view`, { role: 'owner' })).status).toBe(404);
   });
 });
+
+describe('demos stay private (security review)', () => {
+  it('an invitation from a demo can not be accepted, so nobody else joins or switches its view', async () => {
+    const v = await signup('Visitor');
+    const d = (await v.post('/demo', { templateKey: 'field_service' })).body.id;
+    const other = await signup('Other');
+    const inv = await v.post(`/c/${d}/invitations`, { email: other.email, role: 'dispatcher' });
+    expect(inv.status).toBe(200);
+    const tok = inv.body.link.split('/invite/')[1];
+    expect((await other.post(`/invitations/${tok}/accept`)).status).toBe(409);
+    expect((await other.get(`/c/${d}`)).status).toBe(404);
+    expect((await other.post(`/c/${d}/demo/view`, { role: 'owner' })).status).toBe(404);
+  });
+});

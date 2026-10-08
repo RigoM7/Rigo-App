@@ -75,6 +75,7 @@ demoRoutes.post('/demo/sample', async (c) => {
 demoRoutes.post('/demo/view', async (c) => {
   const cc = c.get('cc');
   if (!cc.isDemo) throw forbidden('Switching views is only for demos.');
+  if (cc.company.demo_user_id !== cc.user.id) throw forbidden('Only the person who opened this demo switches its view.');
   const input = await body(c, z.object({ role: z.string().max(40) }));
   const ok = input.role === 'owner' || (await cc.db.query(`select 1 from rigo.roles where company_id = $1 and key = $2 and not is_owner`, [cc.company.id, input.role])).rows.length > 0;
   if (!ok) throw badRequest('Choose a role from this demo.');

@@ -6,7 +6,7 @@ import { body, normEmail, sha256, token, patchSchema } from '../lib/util.js';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { config } from '../config.js';
 import { sendSystemEmail, systemEmailChannel, sendingAllowed } from '../adapters/index.js';
-import { ALL_PERMISSIONS, type Permission } from '../../shared/permissions.js';
+import { ALL_PERMISSIONS, permissionsBeyond, type Permission } from '../../shared/permissions.js';
 import { roleDefSchema, roleKey, effectivePermissions } from '../../shared/workspace.js';
 import { notifyOwners, notifyPermission, notifyUsers } from './notify.js';
 
@@ -14,6 +14,23 @@ export const teamRoutes = new Hono<AppEnv>();
 export const invitationPublic = new Hono<AppEnv>();
 
 const INVITE_DAYS = 7;
+
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+/** An id from the address; anything that isn't one is simply not found. */
+function idParam(raw: string, what: string) {
+  if (!UUID_RE.test(raw)) throw notFound(what);
+  return raw;
+}
+
+/** Nobody but an owner hands out a role that can do more than their own (to someone else, or to a second
+ * address of their own). */
+async function needRoleWithinOwn(q: Q, cc: CompanyCtx, key: string) {
+  if (cc.isOwner) return;
+  const r = (await q.query<{ app: 'office' | 'worker'; permissions: string[] }>(`select app, permissions from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, key])).rows[0];
+  if (!r) return; // the caller says the role doesn't exist
+  const more = permissionsBeyond(effectivePermissions(r.app, (r.permissions ?? []) as Permission[]), cc.perms);
+  if (more.length) throw forbidden('That role can do things yours can’t. Ask an owner to give it.');
+}
 
 async function roleIsOwner(q: Q, companyId: string, key: string) {
   const { rows } = await q.query<{ is_owner: boolean }>(`select is_owner from rigo.roles where company_id = $1 and key = $2`, [companyId, key]);
@@ -72,10 +89,12 @@ teamRoutes.patch('/members/:mid', async (c) => {
   need(cc, 'members.manage');
   const input = await body(c, z.object({ role: z.string().max(40), confirmOwner: z.boolean().default(false) }));
   await cc.db.tx(async (q) => {
-    const { rows } = await q.query<any>(`select m.*, r.is_owner from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key where m.id = $1 and m.company_id = $2 and m.status = 'active' for update of m`, [c.req.param('mid'), cc.company.id]);
+    const { rows } = await q.query<any>(`select m.*, r.is_owner from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key where m.id = $1 and m.company_id = $2 and m.status = 'active' for update of m`, [idParam(c.req.param('mid'), 'Member'), cc.company.id]);
     const m = rows[0];
     if (!m) throw notFound('Member');
+    if (m.user_id === cc.user.id && !cc.isOwner) throw forbidden('Ask an owner to change your own role.');
     const toOwner = await roleIsOwner(q, cc.company.id, input.role);
+    await needRoleWithinOwn(q, cc, input.role);
     if ((m.is_owner || toOwner) && !cc.isOwner) throw forbidden('Only owners can grant or change the Owner role.');
     if (m.is_owner && !toOwner && (await activeOwnerCount(q, cc.company.id)) <= 1) {
       throw conflict('A workspace must keep at least one owner. Add another owner first.');
@@ -93,7 +112,7 @@ teamRoutes.delete('/members/:mid', async (c) => {
   const cc = c.get('cc');
   need(cc, 'members.manage');
   await cc.db.tx(async (q) => {
-    const { rows } = await q.query<any>(`select m.*, r.is_owner from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key where m.id = $1 and m.company_id = $2 and m.status = 'active' for update of m`, [c.req.param('mid'), cc.company.id]);
+    const { rows } = await q.query<any>(`select m.*, r.is_owner from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key where m.id = $1 and m.company_id = $2 and m.status = 'active' for update of m`, [idParam(c.req.param('mid'), 'Member'), cc.company.id]);
     const m = rows[0];
     if (!m) throw notFound('Member');
     if (m.is_owner && !cc.isOwner) throw forbidden('Only owners can remove an owner.');
@@ -144,7 +163,7 @@ teamRoutes.post('/members/:mid/reset-link', async (c) => {
     const { rows } = await q.query<{ id: string; user_id: string; name: string; is_owner: boolean; is_fictional: boolean }>(
       `select m.id, m.user_id, coalesce(m.display_name, u.name) as name, r.is_owner, m.is_fictional
          from rigo.memberships m join rigo.users u on u.id = m.user_id join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
-        where m.id = $1 and m.company_id = $2 and m.status = 'active' and u.deleted_at is null`, [c.req.param('mid'), cc.company.id]);
+        where m.id = $1 and m.company_id = $2 and m.status = 'active' and u.deleted_at is null`, [idParam(c.req.param('mid'), 'Member'), cc.company.id]);
     const m = rows[0];
     if (!m) throw notFound('Member');
     if (m.user_id === cc.user.id) throw badRequest('To change your own password, use Account.');
@@ -225,7 +244,7 @@ teamRoutes.patch('/roles/:key', async (c) => {
   const input = await body(c, patchSchema(roleInput));
   const key = c.req.param('key');
   await cc.db.tx(async (q) => {
-    const { rows } = await q.query<{ is_owner: boolean; app: 'office' | 'worker'; name: string }>(`select is_owner, app, name from rigo.roles where company_id = $1 and key = $2 for update`, [cc.company.id, key]);
+    const { rows } = await q.query<{ is_owner: boolean; app: 'office' | 'worker'; name: string; permissions: string[] }>(`select is_owner, app, name, permissions from rigo.roles where company_id = $1 and key = $2 for update`, [cc.company.id, key]);
     if (!rows[0]) throw notFound('Role');
     if (rows[0].is_owner && (input.permissions || input.app)) throw badRequest('The Owner role always has every permission.');
     if (input.name && input.name.trim().toLowerCase() !== rows[0].name.trim().toLowerCase()) {
@@ -235,7 +254,8 @@ teamRoutes.patch('/roles/:key', async (c) => {
     const app = input.app ?? rows[0].app;
     await q.query(`update rigo.roles set name = coalesce($3, name), description = coalesce($4, description), app = $5,
         permissions = case when $6::text[] is null then permissions else $6::text[] end where company_id = $1 and key = $2`,
-      [cc.company.id, key, input.name ?? null, input.description ?? null, app, input.permissions ? effectivePermissions(app, input.permissions as Permission[]) : null]);
+      // Moving a role to the phone app drops what the phone app can't use, even when the list itself didn't change.
+      [cc.company.id, key, input.name ?? null, input.description ?? null, app, rows[0].is_owner ? null : effectivePermissions(app, (input.permissions ?? rows[0].permissions) as Permission[])]);
     await audit(q, cc, 'role.updated', { key, ...input });
   });
   return c.json({ ok: true });
@@ -293,6 +313,7 @@ async function inviteOne(q: Q, cc: CompanyCtx, rawEmail: string, role: string, r
   await needConfirmedEmail(cc, 'inviting people');
   const email = normEmail(rawEmail);
   if ((await roleIsOwner(q, cc.company.id, role)) && !cc.isOwner) throw forbidden('Only owners can invite another owner.');
+  await needRoleWithinOwn(q, cc, role);
   const roleRow = (await q.query<{ name: string }>(`select name from rigo.roles where company_id = $1 and key = $2`, [cc.company.id, role])).rows[0];
   if (!roleRow) throw badRequest('Choose a role from this workspace.', { fields: { role: 'Unknown role' } });
   const member = await q.query(`select 1 from rigo.memberships m join rigo.users u on u.id = m.user_id where m.company_id = $1 and lower(u.email) = $2 and m.status = 'active'`, [cc.company.id, email]);
@@ -347,11 +368,12 @@ teamRoutes.post('/invitations/:id/resend', async (c) => {
   need(cc, 'members.invite');
   await needConfirmedEmail(cc, 'inviting people');
   const result = await cc.db.tx(async (q) => {
-    const { rows } = await q.query<any>(`select * from rigo.invitations where id = $1 and company_id = $2 for update`, [c.req.param('id'), cc.company.id]);
+    const { rows } = await q.query<any>(`select * from rigo.invitations where id = $1 and company_id = $2 for update`, [idParam(c.req.param('id'), 'Invitation'), cc.company.id]);
     const inv = rows[0];
     if (!inv) throw notFound('Invitation');
     if (inv.status === 'accepted') throw conflict('This invitation was already accepted.');
     if ((await roleIsOwner(q, cc.company.id, inv.role_key)) && !cc.isOwner) throw forbidden('Only owners can invite another owner.');
+    await needRoleWithinOwn(q, cc, inv.role_key);
     await q.query(`update rigo.invitations set status = 'replaced', link_token = null where id = $1 and status = 'pending'`, [inv.id]);
     const fresh = await createInvitation(q, cc, inv.email, inv.role_key);
     await audit(q, cc, 'invitation.replaced', { old: inv.id, new: fresh.id });
@@ -363,6 +385,7 @@ teamRoutes.post('/invitations/:id/resend', async (c) => {
 teamRoutes.post('/invitations/:id/revoke', async (c) => {
   const cc = c.get('cc');
   need(cc, 'members.invite');
+  idParam(c.req.param('id'), 'Invitation');
   const { rows } = await cc.db.query(`update rigo.invitations i set status = 'revoked', link_token = null where id = $1 and company_id = $2 and status = 'pending'
       and ($3 or not exists (select 1 from rigo.roles r where r.company_id = i.company_id and r.key = i.role_key and r.is_owner)) returning id`, [c.req.param('id'), cc.company.id, cc.isOwner]);
   if (!rows.length && !cc.isOwner && (await cc.db.query(`select 1 from rigo.invitations i join rigo.roles r on r.company_id = i.company_id and r.key = i.role_key where i.id = $1 and i.company_id = $2 and r.is_owner`, [c.req.param('id'), cc.company.id])).rows.length) throw forbidden('Only owners can revoke an invitation to become an owner.');
@@ -407,6 +430,9 @@ export async function acceptInvitation(q: Q, user: { id: string; email: string; 
   }
   if (inv.status !== 'pending') throw conflict(inv.status === 'revoked' ? 'This invitation was revoked. Ask for a new one.' : 'This invitation was replaced by a newer one. Use the latest link you received.');
   if (new Date(inv.expires_at) <= new Date()) throw conflict('This invitation has expired. Ask for a new one.');
+  // A demo belongs to the visitor who opened it; nobody else joins it.
+  const kind = (await q.query<{ kind: string }>(`select kind from rigo.companies where id = $1`, [inv.company_id])).rows[0]?.kind;
+  if (kind !== 'real') throw conflict('This invitation is from a demo, so it can’t be accepted. Demos are for looking around.');
   // Single use: the conditional update is the guard against concurrent acceptance.
   const upd = await q.query(`update rigo.invitations set status = 'accepted', accepted_by = $2, accepted_at = now(), link_token = null where id = $1 and status = 'pending' returning id`, [inv.id, user.id]);
   if (!upd.rows.length) throw conflict('This invitation has already been used.');
@@ -434,7 +460,7 @@ invitationPublic.post('/me/invitations/:id/accept', async (c) => {
   // an address before its owner does (security review). The link itself always works.
   const verified = (await db.query<{ v: boolean }>(`select email_verified_at is not null as v from rigo.users where id = $1`, [user.id])).rows[0]?.v;
   if (!verified) throw forbidden('Open the invitation link you were sent to join. It shows this email address is yours.');
-  const r = await db.tx((q) => acceptInvitation(q, user, { id: c.req.param('id') }));
+  const r = await db.tx((q) => acceptInvitation(q, user, { id: idParam(c.req.param('id'), 'Invitation') }));
   return c.json(r);
 });
 

@@ -37,7 +37,7 @@ while the only owner), invitations by email or a link to share.
 **Your words, roles and stages.** Each workspace names its main record (job, appointment, order,
 visit…), its customers, its team, its equipment and its places, and every screen follows. Owners
 build roles (office screens or the phone app) and tick what each may see and do; the Owner role
-always exists. Owners build the stages of the main record, each tagged Open, Active, Finished,
+always exists; nobody but an owner gives a role that can do more than their own. Owners build the stages of the main record, each tagged Open, Active, Finished,
 Cancelled or Failed; a stage can need a field filled first and can limit where work moves next.
 Custom fields on work, customers and equipment (text, number, money, choice, yes/no, date, phone,
 email); phone and email fields are removed for roles without contact access, money fields for roles

@@ -41,6 +41,15 @@ export const PERMISSION_GROUPS: { label: string; keys: Permission[] }[] = [
   { label: 'Team and setup', keys: ['members.view', 'members.invite', 'members.manage', 'roles.manage', 'workspace.settings', 'templates.manage'] },
 ];
 
+/** Seeing and doing your own assigned work gives no power over anyone else's, so anyone who invites may
+ * hand it out. */
+const BASELINE: readonly Permission[] = ['work.view_assigned', 'work.do'];
+
+/** What `wanted` has beyond `held` (and the baseline). Used so nobody but an owner hands out more than they hold. */
+export function permissionsBeyond(wanted: readonly Permission[], held: ReadonlySet<string>): Permission[] {
+  return wanted.filter((p) => !held.has(p) && !BASELINE.includes(p));
+}
+
 /** Which screens a role opens on: the office places, or the worker's Today / Upcoming / Done. */
 export type RoleApp = 'office' | 'worker';
 

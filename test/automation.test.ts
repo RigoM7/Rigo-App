@@ -154,4 +154,53 @@ describe('owners stay in charge', () => {
     expect(office).toHaveLength(1);
     expect(office[0].message_body).toMatch(/\$375\.00 is still open/);
   });
+
+  it('amounts stay with people who see money: a reminder never reaches an approver without money access', async () => {
+    const t = await team();
+    // The owner lets the dispatcher decide approvals and control automation, but not see money.
+    await t.dana.patch(`/c/${t.cid}/roles/dispatcher`, { permissions: ['members.view', 'customers.view', 'work.view_all', 'work.create', 'work.edit', 'work.assign', 'approvals.decide', 'automation.control'] });
+    await t.dana.put(`/c/${t.cid}/automation/rules/invoice_on_finish`, { level: 'manual' });
+    await t.dana.patch(`/c/${t.cid}/money/settings`, { taxRate: '0' });
+    const { workId } = await finishedWork(t);
+    const inv = (await t.priya.post(`/c/${t.cid}/invoices`, { workIds: [workId] })).body;
+    await t.priya.post(`/c/${t.cid}/invoices/${inv.id}/approve`, { version: (await t.priya.get(`/c/${t.cid}/invoices/${inv.id}`)).body.invoice.version });
+    await t.priya.post(`/c/${t.cid}/invoices/${inv.id}/issue`);
+    await (await getDb()).query(`update rigo.money_invoices set due_on = current_date - 10 where id = $1`, [inv.id]);
+    await runDueReminders();
+    const mine = (await t.marcus.get(`/c/${t.cid}/inbox`)).body;
+    expect(mine.approvals.filter((a: any) => a.rule_key === 'payment_reminder')).toEqual([]);
+    expect(JSON.stringify(mine.notifications)).not.toMatch(/\$375/);
+    const activity = (await t.marcus.get(`/c/${t.cid}/automation`)).body.activity;
+    expect(JSON.stringify(activity)).not.toMatch(/\$375/);
+    const reminder = (await t.priya.get(`/c/${t.cid}/inbox`)).body.approvals.find((a: any) => a.rule_key === 'payment_reminder');
+    expect((await t.marcus.post(`/c/${t.cid}/inbox/${reminder.id}/approve`, {})).status).toBe(403);
+    // Priya, who sees money, is told and decides.
+    expect(JSON.stringify((await t.priya.get(`/c/${t.cid}/inbox`)).body.notifications)).toMatch(/\$375\.00 open/);
+  });
+
+  it('customer messages are an office tool: a phone-app role with contact access neither lists nor sends them', async () => {
+    const t = await team();
+    await t.dana.patch(`/c/${t.cid}/roles/driver`, { permissions: ['work.view_assigned', 'work.do', 'customers.contact'] });
+    const c = (await t.dana.post(`/c/${t.cid}/customers`, { name: 'Grace Okafor', email: 'grace-msg@example.test' })).body.id;
+    await t.priya.post(`/c/${t.cid}/messages`, { clientId: c, channel: 'email', body: 'Hello' });
+    expect((await t.luis.get(`/c/${t.cid}/messages`)).status).toBe(404);
+    expect((await t.luis.post(`/c/${t.cid}/messages`, { clientId: c, channel: 'email', body: 'Hi', send: true })).status).toBe(404);
+    const msg = (await t.priya.get(`/c/${t.cid}/messages`)).body.messages[0];
+    expect((await t.luis.post(`/c/${t.cid}/messages/${msg.id}/send`)).status).toBe(404);
+    expect(msg.status).toBe('prepared');
+  });
+});
+
+describe('money on the phone app (security review)', () => {
+  it('a phone-app role with money access reaches only invoices for its own work, and no workspace totals', async () => {
+    const t = await team();
+    await t.dana.patch(`/c/${t.cid}/roles/driver`, { permissions: ['work.view_assigned', 'work.do', 'money.view', 'payments.record'] });
+    await t.dana.put(`/c/${t.cid}/automation/rules/invoice_on_finish`, { level: 'manual' });
+    const { workId } = await finishedWork(t); // assigned to Luis
+    const inv = (await t.priya.post(`/c/${t.cid}/invoices`, { workIds: [workId] })).body;
+    expect((await t.luis.get(`/c/${t.cid}/invoices/${inv.id}`)).status).toBe(200);
+    expect((await t.sam.get(`/c/${t.cid}/invoices/${inv.id}`)).status).toBe(404);
+    expect((await t.sam.post(`/c/${t.cid}/invoices/${inv.id}/payments`, { amount: '1', method: 'cash' })).status).toBe(404);
+    expect((await t.luis.get(`/c/${t.cid}/money/summary`)).status).toBe(404);
+  });
 });

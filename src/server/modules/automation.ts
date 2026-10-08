@@ -109,7 +109,7 @@ async function prepareInvoiceAction(q: Q, cc: CompanyCtx, actionId: string, work
   }
   await notifyPermission(q, cc.company.id, 'invoices.approve', {
     category: 'needs_action', title: inv.status === 'held' ? 'An invoice Rigo prepared is held' : 'An invoice is ready for your approval', body: summary, link: `money/invoices/${inv.id}`, refType: 'invoice', refId: inv.id,
-  });
+  }, ['money.view']);
 }
 
 /** Called when work gets a time (created with one, or rescheduled). */
@@ -181,7 +181,7 @@ async function reminderFor(q: Q, cc: CompanyCtx, invoiceId: string) {
     const r = await sendMessage(q, cc, msg.id);
     await q.query(`update rigo.auto_actions set status = $2, result = $3 where id = $1`, [actionId, r.status === 'sent' || r.status === 'simulated' ? 'done' : 'failed', JSON.stringify(r)]);
   } else {
-    await notifyPermission(q, cc.company.id, 'approvals.decide', { category: 'needs_action', title: 'A payment reminder is ready to send', body: `${owed} open on ${inv.number}.`, link: 'inbox', refType: 'action', refId: actionId });
+    await notifyPermission(q, cc.company.id, 'approvals.decide', { category: 'needs_action', title: 'A payment reminder is ready to send', body: `${owed} open on ${inv.number}.`, link: 'inbox', refType: 'action', refId: actionId }, ['money.view']);
   }
   return true;
 }
@@ -193,7 +193,8 @@ automationRoutes.get('/automation', async (c) => {
   needAny(cc, 'automation.manage', 'automation.control', 'approvals.decide');
   const levels = await ruleLevels(cc.db, cc.company.id);
   const activity = (await cc.db.query(`select a.id, a.rule_key, a.level, a.kind, a.title, a.summary, a.status, a.created_at, a.decided_at, u.name as decided_by
-      from rigo.auto_actions a left join rigo.users u on u.id = a.decided_by where a.company_id = $1 order by a.created_at desc limit 50`, [cc.company.id])).rows;
+      from rigo.auto_actions a left join rigo.users u on u.id = a.decided_by where a.company_id = $1 order by a.created_at desc limit 50`, [cc.company.id])).rows
+    .map((a: any) => (aboutMoney(a) && !can(cc, 'money.view') ? { ...a, summary: '' } : a));
   const counts = (await cc.db.query<any>(`select count(*) filter (where status = 'waiting')::int as waiting, count(*) filter (where status = 'paused')::int as paused from rigo.auto_actions where company_id = $1`, [cc.company.id])).rows[0];
   return c.json({
     mode: cc.company.automation_mode, paused: cc.company.paused, pausedAt: cc.company.paused_at,
@@ -263,19 +264,27 @@ automationRoutes.put('/automation/rules/:key', async (c) => {
 
 // ---------------------------------------------------------------- the approvals inbox
 
-/** Who may decide an action: invoices by invoice approvers, messages by approvers. */
-function mayDecide(cc: CompanyCtx, kind: string) {
-  return kind === 'invoice' ? can(cc, 'invoices.approve') && can(cc, 'money.view') : can(cc, 'approvals.decide');
+/** Items that name an amount: prepared invoices and payment reminders. */
+function aboutMoney(a: { kind: string; rule_key: string | null }) {
+  return a.kind === 'invoice' || a.rule_key === 'payment_reminder';
+}
+
+/** Who may decide an action: invoices by invoice approvers, messages by approvers; anything about money
+ * only by people who see money. */
+function mayDecide(cc: CompanyCtx, a: { kind: string; rule_key: string | null }) {
+  if (aboutMoney(a) && !can(cc, 'money.view')) return false;
+  return a.kind === 'invoice' ? can(cc, 'invoices.approve') : can(cc, 'approvals.decide');
 }
 
 automationRoutes.get('/inbox', async (c) => {
   const cc = c.get('cc');
-  const kinds = ['invoice', 'message'].filter((k) => mayDecide(cc, k));
+  const kinds = ['invoice', 'message'].filter((k) => k === 'invoice' ? can(cc, 'invoices.approve') : can(cc, 'approvals.decide'));
   const approvals = kinds.length ? (await cc.db.query<any>(
     `select a.id, a.rule_key, a.level, a.kind, a.subject_type, a.subject_id, a.title, a.summary, a.status, a.created_at,
             m.body as message_body, m.recipient as message_recipient, m.channel as message_channel, i.status as invoice_status, i.total_minor, i.currency, i.version as invoice_version, i.hold_reasons
        from rigo.auto_actions a left join rigo.outbox_messages m on a.kind = 'message' and m.id = a.subject_id left join rigo.money_invoices i on a.kind = 'invoice' and i.id = a.subject_id
       where a.company_id = $1 and a.status = 'waiting' and a.kind = any($2) order by a.created_at`, [cc.company.id, kinds])).rows
+    .filter((a) => mayDecide(cc, a))
     .map((a) => ({ ...a, message_recipient: can(cc, 'customers.contact') ? a.message_recipient : undefined })) : [];
   const requests = can(cc, 'requests.manage')
     ? (await cc.db.query(`select id, name, ${can(cc, 'customers.contact') ? 'email, phone,' : ''} address, message, wanted, preferred_at, created_at from rigo.requests where company_id = $1 and status = 'new' order by created_at`, [cc.company.id])).rows
@@ -291,7 +300,7 @@ async function getAction(q: Q, cc: CompanyCtx, id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound('Item');
   const a = (await q.query<any>(`select * from rigo.auto_actions where id = $1 and company_id = $2 for update`, [id, cc.company.id])).rows[0];
   if (!a) throw notFound('Item');
-  if (!mayDecide(cc, a.kind)) throw forbidden(`Your role (${cc.roleName}) can't decide this.`);
+  if (!mayDecide(cc, a)) throw forbidden(`Your role (${cc.roleName}) can't decide this.`);
   if (a.status !== 'waiting') throw conflict('Someone already dealt with this.');
   return a;
 }
@@ -369,8 +378,14 @@ automationRoutes.post('/inbox/:id/take-over', async (c) => {
 
 // ---------------------------------------------------------------- messages by hand
 
+/** Messages to customers are an office tool: the phone app never lists or writes them. */
+function officeOnly(cc: CompanyCtx) {
+  if (cc.roleApp === 'worker') throw notFound('Messages');
+}
+
 automationRoutes.get('/messages', async (c) => {
   const cc = c.get('cc');
+  officeOnly(cc);
   needAny(cc, 'approvals.decide', 'customers.contact');
   const contact = can(cc, 'customers.contact');
   const { rows } = await cc.db.query<any>(`select m.id, m.channel, m.recipient, m.subject, m.body, m.status, m.detail, m.created_at, m.updated_at, m.work_id, m.invoice_id, c.name as client_name, m.client_id
@@ -381,6 +396,7 @@ automationRoutes.get('/messages', async (c) => {
 
 automationRoutes.post('/messages', async (c) => {
   const cc = c.get('cc');
+  officeOnly(cc);
   need(cc, 'customers.contact');
   const input = await body(c, z.object({
     clientId: z.string().uuid('Choose a customer'), channel: z.enum(['email', 'sms']), subject: z.string().trim().max(200).default(''),
@@ -399,6 +415,7 @@ automationRoutes.post('/messages', async (c) => {
 
 automationRoutes.post('/messages/:id/send', async (c) => {
   const cc = c.get('cc');
+  officeOnly(cc);
   need(cc, 'customers.contact');
   need(cc, 'approvals.decide');
   if (!/^[0-9a-f-]{36}$/i.test(c.req.param('id'))) throw notFound('Message');

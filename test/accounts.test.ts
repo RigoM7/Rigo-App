@@ -504,3 +504,23 @@ describe('m1 and m3: plain messages and link checks', () => {
     expect((await new Client('x').get('/auth/legal')).body).toEqual({ termsUrl: null, privacyUrl: null });
   });
 });
+
+describe('sign-up attempts (security review)', () => {
+  it('every attempt counts toward the per-address limit, including addresses that already have an account', async () => {
+    const taken = await signup('Taken');
+    const probe = new Client('probe@example.test');
+    const r = await probe.post('/auth/signup', { name: 'Probe', email: taken.email, password: 'violet-tractor-sunrise' });
+    expect(r.status).toBe(409);
+    const { rows } = await (await getDb()).query(`select count(*)::int n from rigo.auth_attempts where key = $1`, [`signup-try:${probe.ip}`]);
+    expect(rows[0].n).toBe(1);
+  });
+
+  it('the local test mailbox is never served in production', async () => {
+    const { config } = await import('../src/server/config.js');
+    const was = config.isProd;
+    (config as any).isProd = true;
+    try {
+      expect((await new Client('x@example.test').get('/auth/dev/mailbox')).body).toEqual({ enabled: false, messages: [] });
+    } finally { (config as any).isProd = was; }
+  });
+});

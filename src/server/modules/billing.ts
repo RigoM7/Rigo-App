@@ -169,6 +169,12 @@ async function getInvoice(q: Q, cc: CompanyCtx, id: string, lock = false) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound('Invoice');
   const { rows } = await q.query<any>(`${INVOICE_SELECT} where i.id = $1 and i.company_id = $2${lock ? ' for update of i' : ''}`, [id, cc.company.id]);
   if (!rows[0]) throw notFound('Invoice');
+  // On the phone app, only invoices for the person's own work.
+  if (cc.roleApp === 'worker') {
+    const mine = await q.query(`select 1 from rigo.money_invoice_work x join rigo.work_assignees a on a.work_id = x.work_id
+        where x.invoice_id = $1 and a.user_id = $2 limit 1`, [id, cc.actingUserId]);
+    if (!mine.rows.length) throw notFound('Invoice');
+  }
   return rows[0];
 }
 
@@ -220,6 +226,7 @@ billingRoutes.get('/money/ready', async (c) => {
 billingRoutes.get('/money/summary', async (c) => {
   const cc = c.get('cc');
   needMoney(cc);
+  if (cc.roleApp === 'worker') throw notFound('Money');
   const t = today(cc);
   const open = (await cc.db.query<any>(`select due_on, total_minor, paid_minor from rigo.money_invoices where company_id = $1 and status = 'issued' and payment_status <> 'paid'`, [cc.company.id])).rows;
   const aging = Object.fromEntries(AGING_BUCKETS.map((b) => [b.key, 0])) as Record<string, number>;

@@ -169,6 +169,12 @@ accounts.post('/signup', async (c) => {
   // Only accounts actually created count toward the per-device limit.
   // Production allows 20 new accounts per address per hour; local copies (tests, demos) allow more.
   await limitCalls(db, `signup:${ip}`, config.isProd ? 20 : 500, 60, 'new accounts');
+  // Every attempt counts too, so nobody can test addresses one after another (or keep the server hashing).
+  await limitCalls(db, `signup-try:${ip}`, config.isProd ? 60 : 2000, 60, 'sign-up attempts');
+  await recordCall(db, `signup-try:${ip}`);
+  if ((await db.query(`select 1 from rigo.users where lower(email) = $1`, [em])).rows.length) {
+    throw conflict('An account with this email already exists. Sign in instead.', { fields: { email: 'An account with this email already exists. Sign in instead, or reset your password.' } });
+  }
   const hash = await bcrypt.hash(input.password, 12);
   const { tok, user } = await db.tx(async (q) => {
     const exists = await q.query(`select 1 from rigo.users where lower(email) = $1`, [em]);
@@ -471,7 +477,7 @@ accounts.post('/me/delete', async (c) => {
 
 /** Local development only: the simulated mailbox that stands in for real email delivery. */
 accounts.get('/dev/mailbox', async (c) => {
-  if (!config.devMailbox) return c.json({ enabled: false, messages: [] });
+  if (!config.devMailbox || config.isProd) return c.json({ enabled: false, messages: [] });
   const { rows } = await (await getDb()).query(`select * from rigo.dev_mailbox order by created_at desc limit 50`);
   return c.json({ enabled: true, messages: rows });
 });

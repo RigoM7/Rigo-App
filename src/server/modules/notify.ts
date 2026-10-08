@@ -3,6 +3,8 @@ import { z } from 'zod';
 import type { Q } from '../db/index.js';
 import type { AppEnv } from '../http/context.js';
 import { body } from '../lib/util.js';
+import { effectivePermissions } from '../../shared/workspace.js';
+import type { Permission } from '../../shared/permissions.js';
 
 // Notifications: what each person is told inside Rigo (the inbox's updates). Never an email or text.
 
@@ -19,13 +21,22 @@ export async function notifyUsers(q: Q, companyId: string, userIds: string[], n:
   }
 }
 
-/** Everyone whose role has this permission (owners always). In a demo, the visitor too. */
-export async function notifyPermission(q: Q, companyId: string, perm: string, n: NoticeInput) {
-  const { rows } = await q.query<{ user_id: string }>(
-    `select m.user_id from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
-      where m.company_id = $1 and m.status = 'active' and not m.is_fictional and (r.is_owner or $2 = any(r.permissions))
-     union select c.demo_user_id from rigo.companies c where c.id = $1 and c.kind = 'demo'`, [companyId, perm]);
-  await notifyUsers(q, companyId, rows.map((r) => r.user_id).filter(Boolean), n);
+/** Everyone whose role has this permission (owners always), counted as the role's app allows. `alsoNeed`
+ * adds permissions the notice needs too, like money.view for a notice that names an amount. In a demo,
+ * the visitor too. */
+export async function notifyPermission(q: Q, companyId: string, perm: string, n: NoticeInput, alsoNeed: string[] = []) {
+  const { rows } = await q.query<{ user_id: string; is_owner: boolean; app: 'office' | 'worker'; permissions: string[] }>(
+    `select m.user_id, r.is_owner, r.app, r.permissions from rigo.memberships m join rigo.roles r on r.company_id = m.company_id and r.key = m.role_key
+      where m.company_id = $1 and m.status = 'active' and not m.is_fictional
+     union select c.demo_user_id, true, 'office', '{}'::text[] from rigo.companies c where c.id = $1 and c.kind = 'demo'`, [companyId]);
+  const needed = [perm, ...alsoNeed];
+  const users = rows.filter((r) => {
+    if (!r.user_id) return false;
+    if (r.is_owner) return true;
+    const eff = effectivePermissions(r.app, (r.permissions ?? []) as Permission[]) as string[];
+    return needed.every((p) => eff.includes(p));
+  });
+  await notifyUsers(q, companyId, users.map((r) => r.user_id), n);
 }
 
 /** Every owner of the workspace. */

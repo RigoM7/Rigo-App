@@ -21,22 +21,29 @@ owner's "launch"; migrations 020–024 are new and only add.
 | 7. Assisted automation and the inbox | Done | Three automations with Off/Manual/Assisted/Automatic, workspace level (safest wins), pause with held items, take over, approvals inbox, honest message states. |
 | 8. Booking pages, templates, library | Done | Public `/book/:slug` (request or pick a time), requests in the inbox, four launch templates + general, the shared library (`/templates`, Settings, Templates). |
 | 9. Landing page and demos | Done | Front page in the seven agreed sections; demos of any template, empty until "Show sample data", "See it as a worker". |
-| 10. Full check of every screen | In progress | Automated: `e2e/run.mjs` passes on every screen at 375/768/1024/1440 px in both themes with axe, plus the flows. Still to do: see "Next" below. |
+| 10. Full check of every screen | Done | `e2e/run.mjs` passes on every screen at 375/768/1024/1440 px in both themes with axe, plus the flows. Security review done and fixed (below). Manual pass: stage controls aligned on Work detail; long names truncate in the switcher. |
 
-## Next (for the next session)
+## Security review (step 10)
 
-1. Push and let GitHub run CI on the branch; fix anything red.
-2. A manual pass of each screen against `DESIGN.md` and the rule "one main action, most important
-   first, nothing the person can't use" (use `impeccable critique`/`polish` where it helps), at phone
-   and desktop widths, both themes. Known small items:
-   - Work detail: the stage card's "Or move to" select sits beside the main button; check it on phones.
-   - Long workspace names truncate in the sidebar switcher (by design); check the phone top bar.
-   - The calendar month view hides on phones in favour of the agenda; confirm it reads well.
-3. Run `/security-review` on the branch (sign-in, permissions and customer data all changed).
-4. Then stop and ask the owner to launch. At launch: apply migrations 020–024 to Supabase, then ask
-   the owner once more before wiping the old live data (accounts, workspaces and the old tables in
-   README.md, "Old tables"); the clean-up migration that drops old tables is written then, with the
-   owner's yes.
+Two reviews of the branch (sign-in and public pages; workspace data and roles). Fixed, each with a test:
+- Customer messages are office-only: phone-app roles can't list, write or send them.
+- Amounts stay with people who see money: payment reminders and prepared invoices are hidden from
+  approvers without money access in the inbox, the automation activity and notifications.
+- Nobody but an owner gives a role that can do more than their own (inviting, resending, changing a
+  member); nobody but an owner changes their own role; moving a role to the phone app drops what it
+  can't use.
+- Phone-app roles with money access reach only invoices for their own work, never workspace totals.
+- Every sign-up attempt counts toward the per-address limit (no testing addresses one after another).
+- Demos can't be joined by invitation; only the demo's visitor switches its view; the test mailbox is
+  never served in production; ids that aren't ids are "not found".
+Left as is: `/api/cron/tick` runs without `CRON_SECRET` when none is set (harmless: reminders are
+deduplicated). Setting `CRON_SECRET` in Vercel is an owner-only key, suggested at launch.
+
+## Next
+
+Stop and ask the owner to launch. At launch: apply migrations 020–024 to Supabase, then ask the owner
+once more before wiping the old live data (accounts, workspaces and the old tables in README.md, "Old
+tables"); the clean-up migration that drops old tables is written then, with the owner's yes.
 
 ## Decisions taken during the rebuild (also in PRODUCT.md)
 
