@@ -524,3 +524,17 @@ describe('sign-up attempts (security review)', () => {
     } finally { (config as any).isProd = was; }
   });
 });
+
+describe('the launch fresh start (025)', () => {
+  it('removes every row once, keeps the tables and the record of applied migrations', async () => {
+    await signup('Before Launch');
+    const db = await getDb();
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync(new URL('../migrations/025_launch_fresh_start.sql', import.meta.url), 'utf8');
+    const applied = (await db.query<{ n: number }>(`select count(*)::int n from rigo.schema_migrations`)).rows[0].n;
+    await db.tx(async (q) => { await (q as any).exec?.(sql) ?? await q.query(sql); });
+    expect((await db.query<{ n: number }>(`select count(*)::int n from rigo.users`)).rows[0].n).toBe(0);
+    expect((await db.query<{ n: number }>(`select count(*)::int n from rigo.schema_migrations`)).rows[0].n).toBe(applied);
+    expect((await db.query(`select name from rigo.schema_migrations where name = '025_launch_fresh_start.sql'`)).rows).toHaveLength(1);
+  });
+});
