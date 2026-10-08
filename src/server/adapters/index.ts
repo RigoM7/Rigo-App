@@ -15,11 +15,11 @@ export interface Capabilities { email: Capability; sms: Capability; ai: Capabili
 export function sendingAllowed(company: { id?: string }) {
   return config.sendingCompanies.includes('*') || (!!company.id && config.sendingCompanies.includes(company.id));
 }
-const NOT_ALLOWED = (what: string) => `${what} is set up on this server, but sending isn't turned on for this company yet (RIGO_SENDING_COMPANIES). Messages are prepared for you to send yourself.`;
+const NOT_ALLOWED = (what: string) => `${what} is set up on this server, but sending isn't turned on for this workspace yet (RIGO_SENDING_COMPANIES). Messages are prepared for you to send yourself.`;
 
 export function capabilities(company: { kind: string; id?: string }): Capabilities {
   const demo = company.kind === 'demo';
-  const sim = (what: string): Capability => ({ state: 'simulated', reason: `Demo workspace: ${what} is simulated and nothing leaves Rigo.` });
+  const sim = (what: string): Capability => ({ state: 'simulated', reason: `Demo: ${what} is simulated and nothing leaves Rigo.` });
   const allowed = sendingAllowed(company);
   return {
     email: demo ? sim('email') : emailReady() && !allowed ? { state: 'disabled', reason: NOT_ALLOWED('Email') } : emailReady()
@@ -32,10 +32,7 @@ export function capabilities(company: { kind: string; id?: string }): Capabiliti
       : config.sms.provider
         ? { state: 'disabled', reason: `Text messaging is not fully set up yet (missing ${smsSetupGaps().join(', ')}). Texts are prepared for you to send yourself.` }
         : { state: 'disabled', reason: 'Text messaging is not set up. Texts are prepared for you to send from your phone.' },
-    ai: demo ? { state: 'simulated', reason: 'Demo workspace: the assistant uses prepared responses only.' }
-      : config.ai.provider === 'anthropic' && config.ai.apiKey
-        ? { state: 'available', reason: `AI provider configured (${config.ai.model}).` }
-        : { state: 'disabled', reason: 'Real AI is off. The assistant uses clearly labeled prepared responses.' },
+    ai: { state: 'disabled', reason: 'The AI assistant comes after launch. Suggestions use simple word matching, not AI.' },
     payments: { state: 'disabled', reason: 'Payment processing is not part of this build. You can record payments received.' },
     maps: { state: 'disabled', reason: 'Maps, routing and geocoding are not configured. Addresses are stored as text.' },
     fileStorage: { state: 'available', reason: config.storageDriver === 'local' ? 'Files are stored on this server.' : 'Files are stored in the database.' },
@@ -64,10 +61,10 @@ export async function deliverMessage(company: { kind: string; id?: string }, msg
   const provider = sms ? config.sms.provider : config.email.provider;
   if (guard && company.id) {
     const archived = (await guard.q.query<{ archived_at: string | null }>(`select archived_at from rigo.companies where id = $1`, [company.id])).rows[0]?.archived_at;
-    if (archived) return { status: 'blocked' as const, detail: 'Not sent: this company is archived. Restore it to send messages.', provider: 'none' };
-    const n = (await guard.q.query<{ n: number }>(`select count(*)::int as n from rigo.messages where company_id = $1 and channel = $2 and provider = $3 and status in ('sent','delivered','failed','replied') and updated_at > now() - interval '1 day'`, [company.id, sms ? 'sms' : 'email', provider])).rows[0].n;
+    if (archived) return { status: 'blocked' as const, detail: 'Not sent: this workspace is archived. Restore it to send messages.', provider: 'none' };
+    const n = (await guard.q.query<{ n: number }>(`select count(*)::int as n from rigo.outbox_messages where company_id = $1 and channel = $2 and provider = $3 and status in ('sent','failed') and updated_at > now() - interval '1 day'`, [company.id, sms ? 'sms' : 'email', provider])).rows[0].n;
     const limit = sms ? config.dailyTextLimit : config.dailyEmailLimit;
-    if (n >= limit) return { status: 'blocked' as const, detail: `Not sent: this company has reached today's limit of ${limit} ${sms ? 'texts' : 'emails'}. It stays prepared; send it tomorrow or yourself.`, provider: 'none' };
+    if (n >= limit) return { status: 'blocked' as const, detail: `Not sent: this workspace has reached today's limit of ${limit} ${sms ? 'texts' : 'emails'}. It stays prepared; send it tomorrow or yourself.`, provider: 'none' };
   }
   try {
     if (sms) await sendText({ to: msg.recipient, body: msg.body });

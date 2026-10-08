@@ -1,55 +1,56 @@
-export { formatMoney, parseMoney, minorToInput } from '../../shared/billing.js';
+import { formatMoney } from '../../shared/money';
+export { formatMoney, parseMoney, minorToInput, formatRate, rateToInput } from '../../shared/money';
+
+// Dates and times always in the workspace's time zone, never the device's.
 
 export function fmtDateTime(iso: string | null | undefined, tz?: string) {
   if (!iso) return '—';
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: tz }).format(new Date(iso));
+  return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date(iso));
 }
-// `locale` (optional): the person's language on translated screens (D8); dates stay in the company's time zone.
-export function fmtDate(iso: string | null | undefined, tz?: string, locale?: string) {
+export function fmtDate(iso: string | null | undefined, tz?: string) {
   if (!iso) return '—';
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
-  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: /^\d{4}-\d{2}-\d{2}$/.test(iso) ? 'UTC' : tz }).format(d);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = dateOnly ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: dateOnly ? 'UTC' : tz }).format(d);
 }
-export function fmtTime(iso: string | null | undefined, tz?: string, locale?: string) {
-  if (!iso) return 'No time set';
-  return new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone: tz }).format(new Date(iso));
+export function fmtDay(iso: string, tz?: string) {
+  return new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz }).format(new Date(iso));
 }
-export function relTime(iso: string, locale?: string) {
+export function fmtTime(iso: string | null | undefined, tz?: string) {
+  if (!iso) return 'Any time';
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(new Date(iso));
+}
+export function relTime(iso: string) {
   const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (locale && !locale.startsWith('en')) {
-    const r = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
-    return s < 60 ? r.format(0, 'second') : s < 3600 ? r.format(-Math.floor(s / 60), 'minute') : s < 86400 ? r.format(-Math.floor(s / 3600), 'hour') : r.format(-Math.floor(s / 86400), 'day');
-  }
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
   return `${Math.floor(s / 86400)} d ago`;
 }
-/** Value for <input type="datetime-local"> in the company time zone. */
+/** "2030-01-07" in the workspace's zone for a moment. */
+export function dayKey(iso: string | Date, tz: string) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+/** Hours and minutes past midnight in the workspace's zone. */
+export function minutesOfDay(iso: string, tz: string) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return Number(p.hour) * 60 + Number(p.minute);
+}
+/** Value for <input type="datetime-local"> in the workspace's zone. */
 export function toLocalInput(iso: string | null | undefined, tz: string) {
   if (!iso) return '';
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
-export function titleCase(s: string) { return s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()); }
-/**
- * When a start time moves, move the end by the same amount so the job keeps its length
- * (datetime-local values, "2026-10-06T09:00"). An empty end or start stays as it is.
- */
-export function shiftEnd(oldStart: string, oldEnd: string, newStart: string) {
-  if (!oldStart || !oldEnd || !newStart) return oldEnd;
-  const ms = (s: string) => Date.parse(`${s}:00Z`);
-  const len = ms(oldEnd) - ms(oldStart);
-  if (!Number.isFinite(len) || len <= 0 || !Number.isFinite(ms(newStart))) return oldEnd;
-  return new Date(ms(newStart) + len).toISOString().slice(0, 16);
+export function money(minor: number | null | undefined, currency = 'USD') { return formatMoney(minor, currency); }
+export function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
 }
-
-/**
- * "Open in Maps" for an address (R9-M3, D9): Apple Maps on iPhone and iPad, Google Maps elsewhere
- * (it opens the Maps app on Android). A link only; no key, no embedded map.
- */
+/** "Open in Maps": Apple Maps on Apple devices, Google Maps elsewhere. A link only; no key. */
 export function mapsUrl(address: string) {
   const q = encodeURIComponent(address);
-  const apple = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && 'ontouchend' in (globalThis as any).document;
+  const apple = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document;
   return apple ? `https://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`;
 }
+export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

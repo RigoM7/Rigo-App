@@ -30,20 +30,13 @@ export const config = {
   storageDriver: (env.STORAGE_DRIVER || (env.VERCEL ? 'database' : 'local')) as 'local' | 'database',
   devMailbox: env.RIGO_DEV_MAILBOX ? env.RIGO_DEV_MAILBOX === '1' : !isProd,
   sessionDays: 30,
-  ai: {
-    provider: env.RIGO_AI_PROVIDER || '',
-    apiKey: env.ANTHROPIC_API_KEY || '',
-    model: env.RIGO_AI_MODEL || 'claude-sonnet-5-5',
-    dailyLimit: Number(env.RIGO_AI_DAILY_LIMIT || 50),
-  },
-  emailProvider: env.RIGO_EMAIL_PROVIDER || '',
   // Email and texts to customers and account email (D1, D10): off until these are set.
   email: { provider: (env.RIGO_EMAIL_PROVIDER || '').toLowerCase(), apiKey: env.RIGO_EMAIL_API_KEY || '', from: env.RIGO_EMAIL_FROM || '' },
   sms: { provider: (env.RIGO_SMS_PROVIDER || '').toLowerCase(), accountSid: env.TWILIO_ACCOUNT_SID || '', authToken: env.TWILIO_AUTH_TOKEN || '', from: env.TWILIO_FROM_NUMBER || '' },
-  // Which companies may really send to customers once a provider is set (security review): company
+  // Which workspaces may really send to customers once a provider is set (security review): company
   // ids separated by commas, or "*" for every company. Empty: nobody sends; messages stay prepared.
   sendingCompanies: (env.RIGO_SENDING_COMPANIES || '').split(',').map((s) => s.trim()).filter(Boolean),
-  // Daily ceilings per company, so a mistake or a misused account can't run up a bill.
+  // Daily ceilings per workspace, so a mistake or a misused account can't run up a bill.
   dailyEmailLimit: Number(env.RIGO_DAILY_EMAIL_LIMIT || 300),
   dailyTextLimit: Number(env.RIGO_DAILY_TEXT_LIMIT || 100),
   // Texts go only to US and Canada numbers (+1) unless this is "1".

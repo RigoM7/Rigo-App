@@ -1,8 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import '@fontsource-variable/geist/wght.css';
-import '@fontsource-variable/geist-mono/wght.css';
+import '@fontsource-variable/bricolage-grotesque/wght.css';
+import '@fontsource-variable/figtree/wght.css';
+import '@fontsource-variable/jetbrains-mono/wght.css';
 import './styles.css';
 import { App } from './App';
 import { ApiError } from './lib/api';

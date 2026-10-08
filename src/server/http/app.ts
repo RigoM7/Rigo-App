@@ -4,24 +4,18 @@ import { secureHeaders } from 'hono/secure-headers';
 import { type AppEnv, loadUser, companyScope } from './context.js';
 import { HttpError } from './errors.js';
 import { accounts, cleanupAuth } from '../modules/accounts.js';
-import { companiesPublic, companyRoutes } from '../modules/companies.js';
+import { workspacesPublic, workspaceRoutes } from '../modules/workspaces.js';
 import { teamRoutes, invitationPublic } from '../modules/team.js';
-import { inboxRoutes } from '../modules/inbox.js';
-import { recordRoutes } from '../modules/records.js';
-import { jobRoutes } from '../modules/jobs.js';
+import { notifyRoutes } from '../modules/notify.js';
+import { customerRoutes } from '../modules/customers.js';
+import { workRoutes } from '../modules/work.js';
+import { workerRoutes } from '../modules/worker.js';
 import { billingRoutes } from '../modules/billing.js';
-import { workflowRoutes } from '../modules/workflows.js';
-import { recurringRoutes, generateAll } from '../modules/recurring.js';
-import { importRoutes } from '../modules/imports.js';
-import { templateRoutes } from '../modules/templates.js';
-import { assistantRoutes } from '../modules/assistant.js';
+import { automationRoutes, runDueReminders } from '../modules/automation.js';
+import { bookingPublic, bookingRoutes } from '../modules/booking.js';
+import { libraryPublic, libraryRoutes } from '../modules/library.js';
 import { demoPublic, demoRoutes } from '../modules/demo.js';
-import { overviewRoutes } from '../modules/overview.js';
-import { invoiceViewPublic } from '../modules/invoice-view.js';
-import { collectionRoutes, runCollections } from '../modules/collections.js';
-import { latePublic, lateRoutes } from '../modules/late-records.js';
-import { customerMergeRoutes } from '../modules/customer-merge.js';
-import { processAll, escalateApprovals } from '../automation/engine.js';
+import { searchRoutes } from '../modules/search.js';
 import { config } from '../config.js';
 
 export function createApp() {
@@ -40,33 +34,23 @@ export function createApp() {
 
   app.get('/health', (c) => c.json({ ok: true }));
   app.route('/auth', accounts);
-  app.route('/', companiesPublic);
+  app.route('/', workspacesPublic);
   app.route('/', invitationPublic);
+  app.route('/', bookingPublic);
+  app.route('/', libraryPublic);
   app.route('/', demoPublic);
-  app.route('/', invoiceViewPublic);
-  app.route('/', latePublic);
 
   const company = new Hono<AppEnv>();
   company.use('*', companyScope);
-  // In serverless deployments there is no background process, so mutating requests drain due automation before returning.
-  company.use('*', async (c, next) => {
-    await next();
-    if (config.isServerless && c.req.method !== 'GET' && c.res.status < 400) await processAll(2500).catch((e) => console.error('[automation]', e));
-  });
-  for (const r of [companyRoutes, teamRoutes, inboxRoutes, recordRoutes, jobRoutes, billingRoutes, collectionRoutes, lateRoutes, customerMergeRoutes, workflowRoutes, recurringRoutes, importRoutes, templateRoutes, assistantRoutes, demoRoutes, overviewRoutes]) {
-    company.route('/', r);
-  }
+  for (const r of [workspaceRoutes, teamRoutes, notifyRoutes, customerRoutes, workRoutes, workerRoutes, billingRoutes, automationRoutes, bookingRoutes, libraryRoutes, demoRoutes, searchRoutes]) company.route('/', r);
   app.route('/c/:cid', company);
 
   // Scheduled maintenance (Vercel Cron or any external scheduler). Protected by CRON_SECRET when set.
   app.get('/cron/tick', async (c) => {
     if (config.cronSecret && c.req.header('authorization') !== `Bearer ${config.cronSecret}`) return c.json({ error: 'unauthorized' }, 401);
-    const visits = await generateAll();
-    const escalated = await escalateApprovals();
-    await runCollections();
-    await processAll(8000);
     await cleanupAuth();
-    return c.json({ ok: true, visits, escalated });
+    const reminders = await runDueReminders();
+    return c.json({ ok: true, reminders });
   });
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: 'Not found.' } }, 404));

@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0A0A0B" />
-    <meta name="description" content="Rigo: business management and automation for field-service companies." />
+    <meta name="theme-color" content="#F5F7F4" />
+    <meta name="description" content="Rigo: one place to run your business, whatever it is. Bookings, schedule, your team on their phones, invoices and payments." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -15,8 +15,8 @@
     </script>
     <style>
       /* Shown until the app starts (R17-m3), so a slow first visit is never a blank page. */
-      .boot { min-height: 100dvh; display: grid; place-items: center; align-content: center; gap: 14px; margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #55555e; background: #fafafa; }
-      [data-theme="dark"] .boot { color: #a1a1aa; background: #0a0a0b; }
+      .boot { min-height: 100dvh; display: grid; place-items: center; align-content: center; gap: 14px; margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #4A5751; background: #F5F7F4; }
+      [data-theme="dark"] .boot { color: #A7B4AE; background: #0F1513; }
       .boot img { width: 40px; height: 40px; }
       .boot-bar { width: 120px; height: 3px; border-radius: 2px; background: rgba(127,127,127,.25); overflow: hidden; }
       .boot-bar::after { content: ""; display: block; width: 40%; height: 100%; background: currentColor; animation: boot 1.1s ease-in-out infinite; }
@@ -26,7 +26,7 @@
     </style>
   </head>
   <body>
-    <div id="root"><div class="boot" role="status"><img src="/icon.svg" alt="" /><span>Loading Rigo…</span><div class="boot-bar" aria-hidden="true"></div></div></div>
+    <div id="root"><div class="boot" role="status"><img src="/icon.svg" alt="" /><span>Opening Rigo…</span><div class="boot-bar" aria-hidden="true"></div></div></div>
     <noscript>Rigo needs JavaScript to run.</noscript>
     <script type="module" src="./main.tsx"></script>
   </body>

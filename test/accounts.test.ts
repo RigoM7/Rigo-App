@@ -469,7 +469,8 @@ describe('m1 and m3: plain messages and link checks', () => {
       (await owner.post(`/c/${cid}/customers`, { name: 'z'.repeat(500), email: 'bad', location: { address: 'q'.repeat(2000) } })).body,
       (await owner.patch('/auth/me', { name: 'n'.repeat(81), theme: 'pink' })).body,
       (await owner.post(`/c/${cid}/invitations`, { email: 'nope', role: 'x'.repeat(100) })).body,
-      (await owner.post(`/c/${cid}/delegations`, { toUserId: 'not-a-uuid', endsAt: 'tomorrow' })).body,
+      (await owner.post(`/c/${cid}/roles`, { name: 'r'.repeat(100), app: 'robot', permissions: ['nope'] })).body,
+      (await owner.post(`/c/${cid}/work`, { clientId: 'not-a-uuid', startsAt: 'tomorrow', lines: [{ description: '', quantity: 'lots' }] })).body,
     ];
     const all = bodies.flatMap(messages);
     expect(all.length).toBeGreaterThan(10);
@@ -501,5 +502,39 @@ describe('m1 and m3: plain messages and link checks', () => {
 
   it('legal links are only shown when configured', async () => {
     expect((await new Client('x').get('/auth/legal')).body).toEqual({ termsUrl: null, privacyUrl: null });
+  });
+});
+
+describe('sign-up attempts (security review)', () => {
+  it('every attempt counts toward the per-address limit, including addresses that already have an account', async () => {
+    const taken = await signup('Taken');
+    const probe = new Client('probe@example.test');
+    const r = await probe.post('/auth/signup', { name: 'Probe', email: taken.email, password: 'violet-tractor-sunrise' });
+    expect(r.status).toBe(409);
+    const { rows } = await (await getDb()).query(`select count(*)::int n from rigo.auth_attempts where key = $1`, [`signup-try:${probe.ip}`]);
+    expect(rows[0].n).toBe(1);
+  });
+
+  it('the local test mailbox is never served in production', async () => {
+    const { config } = await import('../src/server/config.js');
+    const was = config.isProd;
+    (config as any).isProd = true;
+    try {
+      expect((await new Client('x@example.test').get('/auth/dev/mailbox')).body).toEqual({ enabled: false, messages: [] });
+    } finally { (config as any).isProd = was; }
+  });
+});
+
+describe('the launch fresh start (025)', () => {
+  it('removes every row once, keeps the tables and the record of applied migrations', async () => {
+    await signup('Before Launch');
+    const db = await getDb();
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync(new URL('../migrations/025_launch_fresh_start.sql', import.meta.url), 'utf8');
+    const applied = (await db.query<{ n: number }>(`select count(*)::int n from rigo.schema_migrations`)).rows[0].n;
+    await db.tx(async (q) => { await (q as any).exec?.(sql) ?? await q.query(sql); });
+    expect((await db.query<{ n: number }>(`select count(*)::int n from rigo.users`)).rows[0].n).toBe(0);
+    expect((await db.query<{ n: number }>(`select count(*)::int n from rigo.schema_migrations`)).rows[0].n).toBe(applied);
+    expect((await db.query(`select name from rigo.schema_migrations where name = '025_launch_fresh_start.sql'`)).rows).toHaveLength(1);
   });
 });

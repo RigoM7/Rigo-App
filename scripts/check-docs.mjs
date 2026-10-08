@@ -1,34 +1,45 @@
-// Checks the code map against the code (`npm run check:docs`): every path named in
-// docs/CODEMAP.md exists, every file in the covered folders belongs to an area, every test file is
-// some area's test, the areas' tables are exactly the tables the code creates, and
-// docs/FEATURES.md has the same areas in the same order.
+// Checks the code map in README.md against the code (`npm run check:docs`): every path it names
+// exists, every file in the covered folders belongs to an area, every test file is some area's test,
+// and the tables listed (the areas' and the old ones) are exactly the tables the code creates. Also
+// checks that the docs are the four agreed files.
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
-const MAP = 'docs/CODEMAP.md';
-const AREAS = 17;
+const MAP = 'README.md';
 const COVERED = ['src/', 'test/', 'e2e/', 'scripts/', 'migrations/', 'static/', '.github/'];
 const problems = [];
 const tick = (s) => [...s.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-const isPath = (t) => /^[\w.-]+(\/[\w.@-]*)+$/.test(t) || /^[\w.-]+\.md$/.test(t);
+const isPath = (t) => /^[\w.-]+(\/[\w.@-]*)+$/.test(t) && !t.startsWith('/');
 
-// Areas: the "## name (code: old name)" sections that have a Files list. Other "## " sections
-// (Shared files, Recipes, Gotchas) aren't areas. Lists may wrap onto following lines.
-const map = readFileSync(MAP, 'utf8');
-const sections = map.split(/^## /m).slice(1)
-  .filter((s) => s.includes('**Files:**'))
-  .map((s) => ({ name: s.split('\n')[0].split(' (code:')[0].trim(), body: s }));
-if (sections.length !== AREAS) problems.push(`${MAP} has ${sections.length} areas; expected ${AREAS}.`);
-if (!sections.some((s) => s.name === 'foundation')) problems.push(`${MAP} has no foundation area.`);
+const readme = readFileSync(MAP, 'utf8');
+const mapStart = readme.indexOf('\n## Code map');
+if (mapStart < 0) { console.error(`${MAP} has no "## Code map" section.`); process.exit(1); }
+const mapEnd = readme.indexOf('\n## ', mapStart + 5);
+const map = readme.slice(mapStart, mapEnd < 0 ? undefined : mapEnd);
+
+// Areas: "### name" sections with a Files list. "### Old tables" lists tables only.
+const sections = map.split(/^### /m).slice(1).map((s) => ({ name: s.split('\n')[0].trim(), body: s }));
+const areas = sections.filter((s) => s.body.includes('**Files:**'));
+if (areas.length < 5) problems.push(`${MAP} code map has ${areas.length} areas; expected the full list.`);
+if (!areas.some((s) => s.name === 'foundation')) problems.push(`${MAP} code map has no foundation area.`);
 
 const fieldText = (body, label) => {
-  const m = body.match(new RegExp(`\\*\\*${label}:\\*\\*([\\s\\S]*?)(?=\\n- \\*\\*|\\n## |$)`));
+  const m = body.match(new RegExp(`\\*\\*${label}:\\*\\*([\\s\\S]*?)(?=\\n- \\*\\*|\\n### |$)`));
   return m ? m[1] : '';
 };
 const owned = new Set();
 const tests = new Set();
 const listed = new Map(); // table -> { area, from }
-for (const { name, body } of sections) {
+const addTables = (name, text) => {
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s+- `(\w+)`:/);
+    if (!m) continue;
+    const from = tick(line).at(-1);
+    if (listed.has(m[1])) problems.push(`Table ${m[1]} is listed twice.`);
+    listed.set(m[1], { area: name, from });
+  }
+};
+for (const { name, body } of areas) {
   const files = tick(fieldText(body, 'Files'));
   const own = tick(fieldText(body, 'Tests'));
   if (!files.length) problems.push(`Area ${name} lists no files.`);
@@ -39,27 +50,12 @@ for (const { name, body } of sections) {
     tests.add(t);
     owned.add(t);
   }
-  // Tables: "  - `table`: what it holds (`created in`)"; the last backticked name is where.
-  for (const line of fieldText(body, 'Tables').split('\n')) {
-    const m = line.match(/^\s+- `(\w+)`:/);
-    if (!m) continue;
-    const from = tick(line).at(-1);
-    if (listed.has(m[1])) problems.push(`Table ${m[1]} is listed in two areas.`);
-    listed.set(m[1], { area: name, from });
-  }
+  addTables(name, fieldText(body, 'Tables'));
 }
+const old = sections.find((s) => s.name === 'Old tables');
+if (old) addTables('old tables', old.body);
 
 for (const t of tick(map).filter(isPath)) if (!existsSync(t)) problems.push(`${MAP} names ${t}, which doesn't exist.`);
-
-// docs/FEATURES.md uses the same areas, in the same order, so a name links the two files.
-const FEATURES = 'docs/FEATURES.md';
-const NOT_AREAS = ['Gap to PRODUCT.md', 'Known limitations'];
-const featureAreas = readFileSync(FEATURES, 'utf8').split('\n')
-  .filter((l) => l.startsWith('## ')).map((l) => l.slice(3).trim()).filter((n) => !NOT_AREAS.includes(n));
-const mapAreas = sections.map((s) => s.name);
-if (featureAreas.join() !== mapAreas.join()) {
-  problems.push(`${FEATURES} areas (${featureAreas.join(', ')}) don't match ${MAP} areas (${mapAreas.join(', ')}).`);
-}
 
 const files = execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' })
   .split('\n').filter((f) => f && COVERED.some((d) => f.startsWith(d)) && existsSync(f));
@@ -69,7 +65,7 @@ for (const f of readdirSync('test').filter((f) => f.endsWith('.test.ts'))) {
   if (!tests.has(`test/${f}`)) problems.push(`test/${f} is no area's test in ${MAP}.`);
 }
 
-// Tables created by migrations or by server code, against the areas' Tables lists.
+// Tables created by migrations or by server code, against the lists.
 const created = new Map();
 const scan = (file) => {
   for (const m of readFileSync(file, 'utf8').matchAll(/create table (?:if not exists )?rigo\.(\w+)/gi)) {
@@ -85,8 +81,13 @@ for (const [t, { area, from }] of listed) {
   if (!(src.includes('/') ? existsSync(src) : existsSync(`migrations/${src}`))) problems.push(`${MAP}: ${t} says it was created in ${src}, which doesn't exist.`);
 }
 
+// The docs: PRODUCT.md, DESIGN.md, README.md and CLAUDE.md at the top.
+for (const d of ['PRODUCT.md', 'DESIGN.md', 'README.md', 'CLAUDE.md']) if (!existsSync(d)) problems.push(`${d} is missing.`);
+const extra = existsSync('docs') ? readdirSync('docs').filter((f) => f.endsWith('.md')) : [];
+for (const f of extra) problems.push(`docs/${f}: the docs are four files. Fold it into one of them.`);
+
 if (problems.length) {
   console.error(`check:docs found ${problems.length} problem(s):\n- ${problems.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`check:docs: ${sections.length} areas cover ${files.length} files and ${tests.size} test files; ${listed.size} tables match.`);
+console.log(`check:docs: ${areas.length} areas cover ${files.length} files and ${tests.size} test files; ${listed.size} tables match.`);

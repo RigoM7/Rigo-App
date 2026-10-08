@@ -1,164 +1,110 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PauseCircle, PlayCircle, Hand, Play, X, Plug, CheckCircle2, FlaskConical, Ban, History } from 'lucide-react';
-import { useCompany } from '../lib/session';
-import { get, patch, post } from '../lib/api';
+import { PauseCircle, PlayCircle, Bot, ShieldAlert } from 'lucide-react';
+import { get, patch, put } from '../lib/api';
+import { useWorkspace } from '../lib/session';
 import { useSubmit } from '../lib/form';
-import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, ActionStatus, Dialog, ErrorSummary, Pill, LiveDot, AskRigo, useToast, useConfirm } from '../components/ui';
+import { useTitle } from '../lib/title';
 import { relTime } from '../lib/format';
-import { MODE_HELP, type Mode } from '../../shared/workflows';
-import { useDocumentTitle } from '../lib/title';
+import { PageHeader, Button, Loading, ErrorState, FormError, Banner, Badge, useToast, Dialog, Segmented } from '../components/ui';
+import { LEVELS, ACTION_STATUS, type Level, type RuleLevel } from '../../shared/automation';
 
-export function ModePicker({ value, onChange, disabled }: { value: Mode; onChange: (m: Mode) => void; disabled?: boolean }) {
-  return (
-    <fieldset disabled={disabled}>
-      <legend className="sr-only">Automation mode</legend>
-      <div className="radio-cards">
-        {(['manual', 'assisted', 'automatic'] as Mode[]).map((m) => (
-          <label key={m} className="radio-card">
-            <input type="radio" name="mode" checked={value === m} onChange={() => onChange(m)} />
-            <span><strong>{m === 'manual' ? 'Manual' : m === 'assisted' ? 'Assisted' : 'Automatic'}</strong><br /><span className="small muted">{MODE_HELP[m]}</span></span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
+// You stay in charge: Manual, Assisted (the default) or Automatic for the workspace and for each
+// automation, a pause for everything, and a log of what Rigo prepared and what people decided.
 
-export function CapabilityList() {
-  const c = useCompany();
-  const labels: Record<string, string> = { email: 'Customer email', sms: 'Text messages', ai: 'AI assistant', payments: 'Payment processing', maps: 'Maps and routing', fileStorage: 'File storage' };
-  return (
-    <ul className="list">
-      {Object.entries(c.capabilities).map(([k, cap]) => (
-        <li key={k} className="list-item" style={{ paddingLeft: 0, paddingRight: 0 }}>
-          {cap.state === 'available' ? <CheckCircle2 aria-hidden style={{ color: 'var(--success)', width: 20 }} /> : cap.state === 'simulated' ? <FlaskConical aria-hidden style={{ width: 20 }} /> : <Ban aria-hidden style={{ color: 'var(--text-3)', width: 20 }} />}
-          <span style={{ flex: 1 }}><strong>{labels[k] ?? k}</strong><div className="small muted">{cap.reason}</div></span>
-          <Pill tone={cap.state === 'available' ? 'success' : cap.state === 'simulated' ? 'demo' : 'neutral'}>{cap.state === 'available' ? 'Available' : cap.state === 'simulated' ? 'Simulated' : 'Not enabled'}</Pill>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function subjectLink(c: ReturnType<typeof useCompany>, a: any) {
-  if (a.subject_type === 'job') return c.can('jobs.view_all') ? c.to(`jobs/${a.subject_id}`) : null;
-  if (a.subject_type === 'invoice') return c.can('invoices.view') ? c.to(`invoices/${a.subject_id}`) : null;
-  if (a.subject_type === 'message') return c.can('messages.view') ? c.to('messages') : null;
-  return null;
-}
-
-export function Automation() {
-  const c = useCompany();
-  useDocumentTitle('Automation');
+export function SettingsAutomation() {
+  const ws = useWorkspace();
   const qc = useQueryClient();
   const toast = useToast();
-  const { ask, node } = useConfirm();
-  const [sp, setSp] = useSearchParams();
-  const tab = (sp.get('tab') ?? 'queue') as 'queue' | 'runs' | 'history' | 'services';
-  const [pauseOpen, setPauseOpen] = useState(false);
-  const q = useQuery({ queryKey: [c.cid, 'automation'], queryFn: () => get(`/c/${c.cid}/automation`), refetchInterval: 10_000 });
-  // The shell's paused banner reads the company from "me", so refresh that too.
-  const refresh = () => { qc.invalidateQueries({ queryKey: [c.cid] }); qc.invalidateQueries({ queryKey: ['me'] }); };
-  // Changing what Rigo does on its own is confirmed with a plain summary of what changes (R14-m2).
-  const MODE_SUMMARY: Record<Mode, string> = {
-    manual: 'Rigo stops preparing anything on its own. Each workflow step becomes a to-do for a person; in-app notices still go out.',
-    assisted: 'Rigo prepares drafts (invoices, emails) and proposes every step that commits something; a person runs each one.',
-    automatic: `Rigo runs workflow steps on its own, including issuing invoices and sending messages through connected services. Steps with an approval still wait for one${c.company.invoiceApprovalRequired !== false ? ', and every invoice still needs approval before it is issued' : ''}.`,
-  };
-  const setMode = useSubmit(async (mode: Mode) => {
-    if (!(await ask({ title: `Switch to ${mode === 'automatic' ? 'Automatic' : mode === 'assisted' ? 'Assisted' : 'Manual'}?`, body: MODE_SUMMARY[mode], confirm: `Switch to ${mode}`, danger: mode === 'automatic' }))) return;
-    await patch(`/c/${c.cid}/automation`, { mode }); refresh(); toast(`Automation mode set to ${mode}. Approval rules still apply.`);
+  useTitle('Automation', ws.workspace.name);
+  const r = useQuery({ queryKey: [ws.cid, 'automation'], queryFn: () => get<any>(`/c/${ws.cid}/automation`) });
+  const [moneyConfirm, setMoneyConfirm] = useState<string | null>(null);
+  const [resume, setResume] = useState(false);
+  const refresh = () => { ws.refresh(); void qc.invalidateQueries({ queryKey: [ws.cid] }); };
+  const setMode = useSubmit(async (mode: Level) => { await patch(`/c/${ws.cid}/automation`, { mode }); toast(`Rigo is ${LEVELS[mode].label} now.`); refresh(); });
+  const setRule = useSubmit(async (key: string, level: RuleLevel, confirmMoney = false) => {
+    try { await put(`/c/${ws.cid}/automation/rules/${key}`, { level, confirmMoney }); setMoneyConfirm(null); toast('Saved.'); refresh(); }
+    catch (e: any) { if (e?.details?.needsConfirm === 'money') { setMoneyConfirm(key); return; } throw e; }
   });
-  const pause = useSubmit(async (queued: 'hold' | 'cancel') => { const r = await patch(`/c/${c.cid}/automation`, { paused: true, queued }); setPauseOpen(false); refresh(); toast(queued === 'cancel' ? `Paused. ${r.cancelled} waiting step(s) cancelled.` : 'Paused. Queued steps are held.'); });
-  const resume = useSubmit(async () => { await patch(`/c/${c.cid}/automation`, { paused: false }); refresh(); toast('Automation resumed. Held steps will continue.'); });
-  const act = useSubmit(async (id: string, what: 'run' | 'dismiss') => { await post(`/c/${c.cid}/automation/actions/${id}/${what}`); refresh(); toast(what === 'run' ? 'Step started.' : 'Step dismissed; the workflow run stops.'); });
-  const takeover = async (id: string) => {
-    if (!(await ask({ title: 'Take over this run?', body: 'Rigo stops this run. Its waiting steps and approval requests are cancelled, and you finish the work yourself. Steps already completed stay completed.', confirm: 'Take over' }))) return;
-    await post(`/c/${c.cid}/automation/runs/${id}/takeover`); refresh(); toast('You took over. Rigo will not continue this run.');
-  };
-  if (q.isLoading) return <div className="page"><LoadingBlock /></div>;
-  if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
-  const d = q.data;
-  const highlight = sp.get('action');
+  const pause = useSubmit(async (paused: boolean, held?: 'run' | 'cancel') => {
+    const x = await patch<any>(`/c/${ws.cid}/automation`, { paused, held });
+    toast(paused ? 'Rigo is paused. Nothing is prepared or sent on its own.' : `Rigo is running again.${x.ran ? ` ${x.ran} held item${x.ran === 1 ? '' : 's'} ran.` : ''}${x.cancelled ? ` ${x.cancelled} cancelled.` : ''}`);
+    setResume(false); refresh();
+  });
+  if (r.isLoading) return <div className="page"><Loading /></div>;
+  if (r.error) return <div className="page"><ErrorState error={r.error} retry={() => r.refetch()} /></div>;
+  const d = r.data;
+  const words = (t: string) => t.replace('{work}', ws.words.work.one.toLowerCase()).replace('{customer}', ws.words.customer.one.toLowerCase());
   return (
-    <div className="page">
-      <div className="page-header">
-        <div><h1>Automation</h1><div className="sub">Rigo at work right now: what it is preparing, what waits for a person, and the switches to pause it or change how much it does on its own. The rules it follows are in <Link to={c.to('workflows')}>Workflows</Link>.</div></div>
-        {c.can('automation.control') && (d.paused
-          ? <Button variant="primary" icon={<PlayCircle aria-hidden />} busy={resume.busy} onClick={() => resume.run()}>Resume automation</Button>
-          : <Button icon={<PauseCircle aria-hidden />} onClick={() => setPauseOpen(true)}>Pause all automation</Button>)}
-      </div>
-      {d.paused && <div className="banner banner-warning"><PauseCircle aria-hidden /><span><strong>Paused {d.pausedAt ? relTime(d.pausedAt) : ''}.</strong> Nothing new runs. Queued steps are held until you resume. Pausing does not undo completed steps.</span></div>}
-      <Card id="mode" title="How much Rigo automates">
-        <ModePicker value={d.mode} onChange={(m) => setMode.run(m)} disabled={!c.can('company.settings') || setMode.busy} />
-        <p className="small muted" style={{ marginTop: 12 }}>Workflows and individual steps can override this. Automatic never skips approvals and never turns on services that are not enabled.</p>
-        {d.workflows ? <p className="small" style={{ marginBottom: 0 }}><strong>{d.workflows.active} of {d.workflows.total} workflows on.</strong> <Link to={c.to('workflows')}>Review workflows</Link></p> : null}
-        <ErrorSummary error={setMode.error} />
-      </Card>
-      <Tabs label="Automation activity" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[
-        { key: 'queue', label: <>Waiting and queued<span className="count">{d.waiting.length}</span></> }, { key: 'runs', label: <>{d.runs.length ? <LiveDot /> : null}Active runs<span className="count">{d.runs.length}</span></> }, { key: 'history', label: 'History' }, { key: 'services', label: 'Connected services' },
-      ]} />
-      <ErrorSummary error={act.error} />
-      {tab === 'queue' && (d.waiting.length === 0 ? <Card><Empty icon={<Hand />} title="Nothing waiting">When a workflow prepares or proposes something, it appears here and in the inbox.</Empty></Card> : (
-        <div className="card card-flush"><ul className="list">{d.waiting.map((a: any) => {
-          const link = subjectLink(c, a);
-          return (
-            <li key={a.id} className="list-item" style={highlight === a.id ? { background: 'var(--primary-soft)' } : undefined}>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <div className="row"><strong>{a.label}</strong><ActionStatus status={a.status} held={d.paused || a.workflow_paused} /></div>
-                <div className="small">{link ? <Link to={link}>{a.subject_label}</Link> : a.subject_label}{a.workflow_name ? ` · ${a.workflow_name}` : ''} · {a.mode} mode · {relTime(a.created_at)}</div>
-                <div className="small muted">{a.explanation}</div>
-                {['suggested', 'proposed'].includes(a.status) && (
-                  <div className="row" style={{ marginTop: 6 }}>
-                    <Button size="sm" variant="primary" icon={a.status === 'suggested' ? <Hand aria-hidden /> : <Play aria-hidden />} busy={act.busy} onClick={() => act.run(a.id, 'run')}>{a.status === 'suggested' ? 'Do it now' : 'Run it'}</Button>
-                    <Button size="sm" variant="ghost" icon={<X aria-hidden />} onClick={() => act.run(a.id, 'dismiss')}>Dismiss</Button>
-                  </div>
-                )}
-                {a.status === 'waiting_approval' && <div className="row" style={{ marginTop: 6 }}><Link className="btn btn-sm" to={c.to('inbox')}>Decide in the inbox</Link></div>}
-              </span>
+    <div className="page page-narrow">
+      <PageHeader back={{ to: ws.to('settings'), label: 'Settings' }} title="Automation" sub="How much Rigo does on its own. Whatever you choose, nothing approves itself and you can pause at any time." />
+      <FormError error={setMode.error ?? setRule.error ?? pause.error} />
+      {ws.can('automation.control') && (
+        <section className={`card stack ${d.paused ? 'attention-card' : ''}`} aria-labelledby="pause-h">
+          <div className="row-between">
+            <div className="row">{d.paused ? <PauseCircle className="icon-attn" aria-hidden="true" /> : <Bot aria-hidden="true" />}<h2 id="pause-h">{d.paused ? 'Rigo is paused' : 'Rigo is running'}</h2></div>
+            {d.paused ? <Button variant="primary" onClick={() => (d.held ? setResume(true) : void pause.run(false))} busy={pause.busy} icon={<PlayCircle size={18} aria-hidden="true" />}>Resume</Button>
+              : <Button onClick={() => void pause.run(true)} busy={pause.busy} icon={<PauseCircle size={18} aria-hidden="true" />}>Pause everything</Button>}
+          </div>
+          <p className="small">{d.paused ? `Nothing is prepared or sent on its own. ${d.held ? `${d.held} item${d.held === 1 ? ' is' : 's are'} waiting for you to resume.` : ''}` : 'Pause stops Rigo preparing or sending anything until you resume. Work, invoices and payments you do yourself are not affected.'}</p>
+        </section>
+      )}
+      {ws.can('automation.manage') && (
+        <section className="card stack" aria-labelledby="lvl-h">
+          <h2 id="lvl-h">For the whole workspace</h2>
+          <div className="choices">
+            {(Object.keys(LEVELS) as Level[]).map((l) => (
+              <button key={l} type="button" className="choice" aria-pressed={d.mode === l} onClick={() => void setMode.run(l)}>
+                <strong>{LEVELS[l].label}{l === 'assisted' && <span className="small muted" style={{ fontWeight: 400 }}> · recommended</span>}</strong>
+                <span className="small muted">{LEVELS[l].hint}</span>
+              </button>
+            ))}
+          </div>
+          <p className="small muted">Each automation below can be set lower, never higher, than this: the safest level wins.</p>
+        </section>
+      )}
+      <section className="stack" aria-labelledby="rules-h">
+        <h2 id="rules-h">What Rigo prepares</h2>
+        {d.rules.map((rule: any) => (
+          <article key={rule.key} className="card stack-sm">
+            <div className="row-between"><h3>{rule.name}</h3>{rule.effective !== rule.level && rule.level !== 'off' && <Badge tone="open">Runs as {LEVELS[rule.effective as Level]?.label ?? 'Off'}</Badge>}</div>
+            <p className="small muted">{words(rule.when)}: {words(rule.effective === 'automatic' ? rule.automatic : rule.assisted)}</p>
+            {rule.money && <p className="small row"><ShieldAlert size={16} aria-hidden="true" />Moves money: Automatic needs an owner and a clear yes.</p>}
+            {ws.can('automation.manage') && (
+              <Segmented<RuleLevel> label={rule.name} value={rule.level} onChange={(v) => void setRule.run(rule.key, v)} options={[{ value: 'off', label: 'Off' }, { value: 'manual', label: 'Manual' }, { value: 'assisted', label: 'Assisted' }, { value: 'automatic', label: 'Automatic' }]} />
+            )}
+          </article>
+        ))}
+      </section>
+      <Banner tone="info" title="What is connected">{['email', 'sms'].map((k) => d.capabilities[k].reason).join(' ')}</Banner>
+      <section className="card stack" aria-labelledby="log-h">
+        <div className="row-between"><h2 id="log-h">What Rigo did</h2>{d.waiting > 0 && <Link to={ws.to('inbox')}>{d.waiting} waiting in the inbox</Link>}</div>
+        {!d.activity.length ? <p className="muted">Nothing yet. When Rigo prepares something, it shows here with what people decided.</p> : (
+          <ul className="divider-list">{d.activity.map((a: any) => (
+            <li key={a.id} className="list-row" style={{ paddingInline: 0 }}>
+              <span className="row-main"><span className="row-title">{a.title}</span><span className="row-sub">{[ACTION_STATUS[a.status as keyof typeof ACTION_STATUS], a.decided_by && `by ${a.decided_by}`, relTime(a.created_at), a.summary].filter(Boolean).join(' · ')}</span></span>
             </li>
-          );
-        })}</ul></div>
-      ))}
-      {tab === 'runs' && (d.runs.length === 0 ? <Card><Empty icon={<Play />} title="No active runs">Workflow runs in progress appear here, and you can take any of them over.</Empty></Card> : (
-        <div className="card card-flush"><ul className="list">{d.runs.map((r: any) => (
-          <li key={r.id} className="list-item">
-            <span style={{ flex: 1, minWidth: 0 }}><span className="row" style={{ gap: 8 }}><LiveDot /><strong>{r.workflow_name}</strong></span><div className="small">{r.subject_label} · step {r.current_step + 1} · {relTime(r.created_at)}</div><div className="small muted">{r.summary}</div></span>
-            {c.can('automation.control') && <Button size="sm" onClick={() => takeover(r.id)}>Take over</Button>}
-          </li>
-        ))}</ul></div>
-      ))}
-      {tab === 'history' && (d.history.length === 0 ? <Card><Empty icon={<History />} title="No activity yet">Every step Rigo or a person runs is listed here with an explanation.</Empty></Card> : (
-        <div className="card card-flush"><ul className="list">{d.history.map((a: any) => {
-          const link = subjectLink(c, a);
-          return (
-            <li key={a.id} className="list-item" style={highlight === a.id ? { background: 'var(--primary-soft)' } : undefined}>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <div className="row"><strong>{a.label}</strong><ActionStatus status={a.status} /></div>
-                <div className="small">{link ? <Link to={link}>{a.subject_label}</Link> : a.subject_label}{a.workflow_name ? ` · ${a.workflow_name}` : ' · started by a person'} · {a.executed_by === 'rigo' ? 'run by Rigo' : 'run by a person'} · {relTime(a.updated_at)}</div>
-                <div className="small muted">{a.explanation}{a.attempts > 1 ? ` (${a.attempts} attempts)` : ''}</div>
-                {['blocked', 'failed'].includes(a.status) && c.can('assistant.use') ? <div style={{ marginTop: 6 }}><AskRigo to={c.to('assistant')} prompt={`Why did "${a.label}" ${a.status === 'failed' ? 'fail' : 'get blocked'}?`} /></div> : null}
-              </span>
-            </li>
-          );
-        })}</ul></div>
-      ))}
-      {tab === 'services' && <Card id="caps" title="Connected services"><p className="muted">Automatic mode can only use what is available here. Disabled services make no external calls.</p><CapabilityList /></Card>}
-      <Dialog open={pauseOpen} onClose={() => setPauseOpen(false)} title="Pause all automation?" footer={<>
-        <Button onClick={() => setPauseOpen(false)}>Cancel</Button>
-        <Button onClick={() => pause.run('cancel')} variant="danger" busy={pause.busy}>Pause and cancel waiting steps</Button>
-        <Button variant="primary" onClick={() => pause.run('hold')} busy={pause.busy}>Pause and hold</Button>
-      </>}>
-        <div className="stack">
-          <p>While paused, Rigo starts nothing new. Choose what happens to steps that are already queued or proposed:</p>
-          <ul><li><strong>Hold</strong>: they wait and continue when you resume.</li><li><strong>Cancel</strong>: they are cancelled and their runs stop.</li></ul>
-          <p className="muted">Pausing never reverses steps that already completed. Approvals already waiting stay in the inbox.</p>
-          <ErrorSummary error={pause.error} />
-        </div>
-      </Dialog>
-      {node}
+          ))}</ul>
+        )}
+      </section>
+      {moneyConfirm && (
+        <Dialog title="Let Rigo act on money?" onClose={() => setMoneyConfirm(null)} actions={<>
+          <Button variant="danger" busy={setRule.busy} onClick={() => void setRule.run(moneyConfirm, 'automatic', true)}>Yes, set it to Automatic</Button>
+          <Button variant="ghost" onClick={() => setMoneyConfirm(null)}>Keep it Assisted</Button>
+        </>}>
+          <p className="muted">Rigo would issue invoices on its own once they are approved, or straight away if your invoices don’t need approval. Invoices with a missing price are still held.</p>
+        </Dialog>
+      )}
+      {resume && (
+        <Dialog title="Resume Rigo?" onClose={() => setResume(false)} actions={<>
+          <Button variant="primary" busy={pause.busy} onClick={() => void pause.run(false, 'run')}>Resume and run them</Button>
+          <Button busy={pause.busy} onClick={() => void pause.run(false, 'cancel')}>Resume and cancel them</Button>
+          <Button variant="ghost" onClick={() => setResume(false)}>Stay paused</Button>
+        </>}>
+          <p className="muted">{d.held} item{d.held === 1 ? ' was' : 's were'} held while Rigo was paused. Running them prepares them now, for approval as usual.</p>
+        </Dialog>
+      )}
     </div>
   );
 }

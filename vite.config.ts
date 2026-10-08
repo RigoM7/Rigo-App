@@ -8,7 +8,7 @@ function preloadLatinFonts(): Plugin {
     enforce: 'post',
     transformIndexHtml(html, ctx) {
       if (!ctx.bundle) return html;
-      const fonts = Object.keys(ctx.bundle).filter((f) => /geist(-mono)?-latin-wght-normal[^/]*\.woff2$/.test(f));
+      const fonts = Object.keys(ctx.bundle).filter((f) => /(bricolage-grotesque|figtree|jetbrains-mono)-latin-wght-normal[^/]*\.woff2$/.test(f));
       return { html, tags: fonts.map((f) => ({ tag: 'link', attrs: { rel: 'preload', as: 'font', type: 'font/woff2', href: `/${f}`, crossorigin: '' }, injectTo: 'head' as const })) };
     },
   };
