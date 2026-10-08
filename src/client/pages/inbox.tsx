@@ -1,208 +1,157 @@
-import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, XCircle, Pencil, Hand, AlertTriangle, Info, Inbox as InboxIcon, Check, Eye } from 'lucide-react';
-import { useCompany } from '../lib/session';
+import { Inbox as InboxIcon, Check, X, Hand, Mail, FileText, AlertTriangle, Bell, UserPlus } from 'lucide-react';
 import { get, post } from '../lib/api';
-import { useSubmit } from '../lib/form';
-import { Button, Card, Tabs, LoadingBlock, ErrorState, Empty, Pill, PriorityPill, GuideTarget, Dialog, Field, Textarea, ErrorSummary, useToast, useConfirm } from '../components/ui';
-import { relTime, fmtDateTime, formatMoney } from '../lib/format';
-import { formatRate } from '../../shared/billing';
-import { useDocumentTitle } from '../lib/title';
+import { useWorkspace } from '../lib/session';
+import { useTitle } from '../lib/title';
+import { fmtDateTime, relTime } from '../lib/format';
+import { PageHeader, Button, Empty, Loading, ErrorState, Money, Badge, Banner, Dialog, TextField, useToast, LinkButton } from '../components/ui';
+import { LEVELS } from '../../shared/automation';
 
-/** What an approval would act on: the invoice lines and total, or a job's or message's key facts. */
-export function ApprovalSummary({ s, compact }: { s: any; compact?: boolean }) {
-  const c = useCompany();
-  if (!s) return null;
-  if (s.kind === 'invoice') {
-    const fin = s.totalMinor !== undefined;
-    return (
-      <div className="approval-summary">
-        <div className="as-head">
-          <span><strong>{s.customerName ?? 'No customer'}</strong>{s.jobNumber ? <> · Job <span className="num">#{s.jobNumber}</span></> : null}{s.serviceName ? ` · ${s.serviceName}` : ''}</span>
-          {fin ? <span className="as-total"><span className="sr-only">Total </span>{formatMoney(s.totalMinor, s.currency)}</span> : null}
-        </div>
-        {s.quantityNote ? <p className="as-note"><Info aria-hidden />{s.quantityNote}</p> : null}
-        {!compact && s.lines.length > 0 && (
-          // Scrolls sideways on its own when large text makes the lines wider than a phone.
-          <div className="as-lines-wrap" tabIndex={0} role="region" aria-label={`Invoice lines${s.jobNumber ? ` for job #${s.jobNumber}` : ''}`}>
-          <table className="as-lines">
-            <caption className="sr-only">Invoice lines</caption>
-            <thead><tr><th scope="col">Item</th><th scope="col" className="r">Quantity</th>{fin ? <><th scope="col" className="r">Rate</th><th scope="col" className="r">Amount</th></> : null}</tr></thead>
-            <tbody>
-              {s.lines.map((l: any, i: number) => (
-                <tr key={i}><td>{l.description}{l.note ? <div className="as-line-note">{l.note}</div> : null}</td><td className="r num">{l.quantity}{l.unit ? ` ${l.unit}` : ''}</td>{fin ? <><td className="r num">{l.rateE4 === null ? 'Not set' : formatRate(l.rateE4, s.currency)}</td><td className="r num">{l.amountMinor === null ? '—' : formatMoney(l.amountMinor, s.currency)}</td></> : null}</tr>
-              ))}
-            </tbody>
-            {fin ? (
-              <tfoot>
-                {s.moreLines ? <tr><td colSpan={4} className="muted small">and {s.moreLines} more line{s.moreLines === 1 ? '' : 's'} on the invoice</td></tr> : null}
-                {s.discountMinor ? <tr><th scope="row" colSpan={3} className="r">Discount</th><td className="r num">-{formatMoney(s.discountMinor, s.currency)}</td></tr> : null}
-                <tr><th scope="row" colSpan={3} className="r">Tax</th><td className="r num">{s.taxMinor === null ? '—' : formatMoney(s.taxMinor, s.currency)}</td></tr>
-                <tr className="as-total-row"><th scope="row" colSpan={3} className="r">Total</th><td className="r num">{s.totalMinor === null ? 'Incomplete' : formatMoney(s.totalMinor, s.currency)}</td></tr>
-              </tfoot>
-            ) : null}
-          </table>
-          </div>
-        )}
-        {s.holdReasons?.length ? <div className="banner banner-warning"><AlertTriangle aria-hidden /><div><strong>On hold</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{s.holdReasons.map((r: string) => <li key={r}>{r}</li>)}</ul></div></div> : null}
-        {!fin ? <p className="small muted" style={{ margin: 0 }}>Amounts are hidden for your role.</p> : null}
-      </div>
-    );
-  }
-  if (s.kind === 'job') {
-    return (
-      <dl className="kv approval-summary">
-        <dt>Job</dt><dd><span className="num">#{s.jobNumber}</span> {s.serviceName ?? ''}</dd>
-        <dt>Customer</dt><dd>{s.customerName ?? '—'}</dd>
-        <dt>When</dt><dd className="num">{s.scheduledStart ? fmtDateTime(s.scheduledStart, c.company.timezone) : 'Not scheduled'}</dd>
-        <dt>Driver</dt><dd>{s.assigneeName ?? 'Unassigned'}</dd>
-        {s.priority && s.priority !== 'normal' ? <><dt>Priority</dt><dd><PriorityPill priority={s.priority} /></dd></> : null}
-      </dl>
-    );
-  }
-  if (s.kind === 'message') {
-    return (
-      <dl className="kv approval-summary">
-        <dt>Message</dt><dd>{s.subject}</dd>
-        <dt>To</dt><dd>{s.customerName ?? '—'}{s.recipient ? ` (${s.recipient})` : ''}</dd>
-        <dt>By</dt><dd>{s.channel === 'sms' ? 'Text message' : 'Email'}</dd>
-      </dl>
-    );
-  }
-  return null;
-}
-
-/** The approve button says exactly what happens, with the amount: "Approve and issue · $773.99". */
-export function approveLabel(a: { actionType?: string; summary?: any }) {
-  const amount = a.summary?.kind === 'invoice' && a.summary.totalMinor !== undefined && a.summary.totalMinor !== null ? ` · ${formatMoney(a.summary.totalMinor, a.summary.currency)}` : '';
-  switch (a.actionType) {
-    case 'invoice.issue': return `Approve and issue${amount}`;
-    case 'message.send': return 'Approve and send';
-    case 'job.create_followup': return 'Approve and create the job';
-    default: return `Approve${amount}`;
-  }
-}
-
-function ApprovalCard({ a, onDone }: { a: any; onDone: () => void }) {
-  const c = useCompany();
-  const toast = useToast();
-  const [rejecting, setRejecting] = useState(false);
-  const [note, setNote] = useState('');
-  const { ask, node } = useConfirm();
-  const decide = useSubmit(async (decision: 'approve' | 'reject') => {
-    // Approving commits money or a message: confirm it, with the total for invoices (R2-M3, R6-m8).
-    if (decision === 'approve') {
-      const total = a.summary?.totalMinor !== undefined && a.summary?.totalMinor !== null ? formatMoney(a.summary.totalMinor, a.summary.currency) : null;
-      const what = a.actionType === 'invoice.issue' ? `It is issued${total ? ` for ${total}` : ''} and gets the next invoice number.` : a.actionType === 'message.send' ? 'The message is sent through the connected service.' : 'The step runs right away.';
-      if (!(await ask({ title: total ? `Approve ${total}?` : 'Approve this?', body: `${a.title}. ${what}`, confirm: approveLabel(a) }))) return;
-    }
-    const r = await post(`/c/${c.cid}/approvals/${a.id}/decide`, { decision, note });
-    if (r.status === 'stale') toast(`Not approved: ${r.reason} A fresh approval request was created if the step still applies.`, 'info');
-    else toast(decision === 'approve' ? 'Approved. Rigo will continue the workflow.' : 'Rejected. The step will not run.');
-    setRejecting(false);
-    onDone();
-  });
-  const isInvoice = a.subject_type === 'invoice';
-  const viewLink = isInvoice ? c.to(`invoices/${a.subject_id}`) : a.subject_type === 'job' ? c.to(`jobs/${a.subject_id}`) : a.subject_type === 'message' ? c.to('messages') : null;
-  const editLink = isInvoice ? c.to(`invoices/${a.subject_id}?edit=1`) : a.subject_type === 'job' ? c.to(`jobs/${a.subject_id}/edit`) : null;
-  const held = isInvoice && a.summary?.holdReasons?.length > 0;
-  return (
-    <article className="card stack-sm" id={`ap-${a.id}`} aria-labelledby={`ap-${a.id}-t`}>
-      <div className="row-between" style={{ alignItems: 'flex-start' }}><h3 id={`ap-${a.id}-t`}>{a.title}</h3><span className="row" style={{ gap: 6 }}>{a.escalated_at ? <Pill tone="danger" icon={<AlertTriangle aria-hidden />}>Escalated</Pill> : null}<Pill tone="warning">Waiting for approval</Pill></span></div>
-      <p className="xsmall muted" style={{ margin: 0 }}>
-        {a.workflow_name ? <>From workflow “{a.workflow_name}” · </> : null}Requested {relTime(a.created_at)}
-        {a.escalated_at ? <> · it passed its waiting time and is still pending. It is never approved automatically.</> : null}
-      </p>
-      <ApprovalSummary s={a.summary} />
-      <dl className="consequences">
-        <div><dt><CheckCircle2 aria-hidden />If approved</dt><dd>{a.consequence}</dd></div>
-        <div><dt><XCircle aria-hidden />If rejected</dt><dd>The step does not run and the workflow stops. Nothing already done is undone.</dd></div>
-        <div><dt><Pencil aria-hidden />If edited</dt><dd>Editing changes the record, so this request goes out of date and Rigo asks again. Viewing it changes nothing.</dd></div>
-      </dl>
-      <ErrorSummary error={decide.error} />
-      {a.canDecide ? (
-        <div className="form-actions">
-          <GuideTarget id={a.summary?.jobNumber ? `approve-job-${a.summary.jobNumber}` : `approve-${a.id}`}>
-            <Button variant="primary" className="btn-wrap" icon={<CheckCircle2 aria-hidden />} busy={decide.busy} disabled={held} onClick={() => decide.run('approve')}>{approveLabel(a)}</Button>
-          </GuideTarget>
-          {viewLink && <Link className="btn" to={viewLink}><Eye aria-hidden />{isInvoice ? 'View invoice' : a.subject_type === 'job' ? 'View job' : 'View message'}</Link>}
-          {editLink && <Link className="btn" to={editLink}><Pencil aria-hidden />{isInvoice ? 'Edit invoice' : 'Edit job'}</Link>}
-          <Button variant="danger" icon={<XCircle aria-hidden />} onClick={() => setRejecting(true)}>Reject</Button>
-        </div>
-      ) : <p className="small muted">You can see this but are not an approver for it.</p>}
-      {held && a.canDecide ? <p className="small" style={{ margin: 0 }}>Fix the hold on the invoice before approving it.</p> : null}
-      <Dialog open={rejecting} onClose={() => setRejecting(false)} title="Reject this step?" footer={<><Button onClick={() => setRejecting(false)}>Cancel</Button><Button variant="danger" busy={decide.busy} onClick={() => decide.run('reject')}>Reject</Button></>}>
-        <div className="stack">
-          <p>The step will not run and the workflow stops here. Nothing that already happened is reversed.</p>
-          <ErrorSummary error={decide.error} />
-          <Field label="Reason" id="f-note" hint="Tell the team what to change." error={decide.fieldError('note')}>{(p) => <Textarea {...p} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />}</Field>
-        </div>
-      </Dialog>
-      {node}
-    </article>
-  );
-}
-
-export function InboxPage() {
-  const c = useCompany();
-  useDocumentTitle('Inbox');
+/** The approvals inbox: what Rigo prepared and waits for a person, requests from the booking page, held invoices and updates. */
+export function Inbox() {
+  const ws = useWorkspace();
   const qc = useQueryClient();
-  const [sp, setSp] = useSearchParams();
-  const tab = (sp.get('tab') ?? 'action') as 'action' | 'warnings' | 'updates' | 'decided';
-  const approvals = useQuery({ queryKey: [c.cid, 'approvals', 'pending'], queryFn: () => get(`/c/${c.cid}/approvals?status=pending`) });
-  const decided = useQuery({ queryKey: [c.cid, 'approvals', 'decided'], queryFn: () => get(`/c/${c.cid}/approvals?status=decided`), enabled: tab === 'decided' });
-  const cat = tab === 'action' ? 'needs_action' : tab === 'warnings' ? 'warning' : 'update';
-  const notes = useQuery({ queryKey: [c.cid, 'notifications', cat], queryFn: () => get(`/c/${c.cid}/notifications?category=${cat}&state=${tab === 'updates' ? 'all' : 'open'}`), enabled: tab !== 'decided' });
-  const refresh = () => qc.invalidateQueries({ queryKey: [c.cid] });
-  const resolve = async (id: string) => { await post(`/c/${c.cid}/notifications/${id}/resolve`); refresh(); };
-  const markRead = async (id: string) => { await post(`/c/${c.cid}/notifications/read`, { ids: [id] }); refresh(); };
-  const list = (notes.data?.notifications ?? []).filter((n: any) => !(tab === 'action' && n.ref_type === 'approval'));
-  // Links from Home point at one approval card (#ap-…): bring it into view once the cards have loaded.
-  useEffect(() => {
-    const id = window.location.hash.slice(1);
-    if (id && approvals.data) document.getElementById(id)?.scrollIntoView({ block: 'start' });
-  }, [approvals.data]);
+  const toast = useToast();
+  useTitle('Inbox', ws.workspace.name);
+  const q = useQuery({ queryKey: [ws.cid, 'inbox'], queryFn: () => get<any>(`/c/${ws.cid}/inbox`) });
+  const [busy, setBusy] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<any>(null);
+  const [reason, setReason] = useState('');
+  const done = () => { void qc.invalidateQueries({ queryKey: [ws.cid] }); };
+  const act = async (id: string, what: 'approve' | 'take-over', body: unknown = {}) => {
+    setBusy(id);
+    try {
+      const r = await post<any>(`/c/${ws.cid}/inbox/${id}/${what}`, body);
+      if (what === 'take-over') toast('It’s yours now. Rigo won’t touch it.');
+      else if (r.issued) toast(`Approved and issued as ${r.issued}.`);
+      else if (r.status === 'simulated') toast('Approved. Demo: simulated, nothing was sent.', 'info');
+      else if (r.status === 'blocked') toast(`Approved, but not sent: ${r.detail}`, 'info');
+      else if (r.status === 'sent') toast('Approved and sent.');
+      else if (r.status === 'failed') toast(`Approved, but sending failed: ${r.detail}`, 'error');
+      else toast('Approved.');
+      done();
+    } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(null); }
+  };
+  const request = async (id: string, what: 'accept' | 'decline') => {
+    setBusy(id);
+    try {
+      const r = await post<any>(`/c/${ws.cid}/requests/${id}/${what}`, {});
+      toast(what === 'accept' ? `Added as ${ws.words.work.one.toLowerCase()} #${r.number}.` : 'Declined.');
+      done();
+    } catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(null); }
+  };
+  if (q.isLoading) return <div className="page"><Loading /></div>;
+  if (q.error) return <div className="page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
+  const d = q.data;
+  const total = d.approvals.length + d.requests.length + d.held.length;
   return (
     <div className="page page-narrow">
-      <div className="page-header"><div><h1>Inbox</h1><div className="sub">Approvals and next steps first, then warnings and updates. Reading an item does not resolve it.</div></div>{c.attention.unread ? <span className="small muted"><span className="num" style={{ color: 'var(--text)' }}>{c.attention.unread}</span> unread</span> : null}</div>
-      <Tabs label="Inbox sections" value={tab} onChange={(k) => setSp({ tab: k })} tabs={[
-        { key: 'action', label: <><Hand aria-hidden style={{ width: 16 }} />Needs action{c.attention.needs_action ? <span className="count">{c.attention.needs_action}</span> : null}</> },
-        { key: 'warnings', label: <><AlertTriangle aria-hidden style={{ width: 16 }} />Warnings{c.attention.warnings ? <span className="count">{c.attention.warnings}</span> : null}</> },
-        { key: 'updates', label: <><Info aria-hidden style={{ width: 16 }} />Updates</> },
-        { key: 'decided', label: 'Decided' },
-      ]} />
-      {tab === 'action' && (
-        <section className="stack" aria-label="Approvals">
-          {approvals.isLoading ? <LoadingBlock /> : approvals.error ? <ErrorState error={approvals.error} /> : approvals.data.approvals.map((a: any) => <ApprovalCard key={a.id} a={a} onDone={refresh} />)}
+      <PageHeader title="Inbox" sub={total ? `${total} waiting for a person.` : 'Nothing is waiting for you.'} />
+      {d.paused && <Banner tone="attn" title="Rigo is paused">Approving is off until it’s resumed. You can still take items over and do them yourself.</Banner>}
+
+      {d.approvals.length > 0 && (
+        <section className="stack" aria-labelledby="ib-approve">
+          <h2 id="ib-approve">To approve</h2>
+          {d.approvals.map((a: any) => (
+            <article key={a.id} className="card stack" aria-labelledby={`a-${a.id}`}>
+              <div className="row-between">
+                <div className="row">{a.kind === 'invoice' ? <FileText aria-hidden="true" /> : <Mail aria-hidden="true" />}<h3 id={`a-${a.id}`}>{a.title}</h3></div>
+                <Badge tone="open">Rigo prepared · {LEVELS[a.level as keyof typeof LEVELS].label}</Badge>
+              </div>
+              {a.kind === 'invoice' ? (
+                <div className="row-between">
+                  {a.invoice_status === 'held' ? <span className="row small"><AlertTriangle size={16} aria-hidden="true" />{a.hold_reasons?.[0]}</span> : <span>Total <Money minor={a.total_minor} currency={a.currency} /></span>}
+                  <Link to={ws.to(`money/invoices/${a.subject_id}`)}>Check the invoice</Link>
+                </div>
+              ) : (
+                <div className="stack-sm">
+                  <p className="small muted">{a.message_channel === 'sms' ? 'Text' : 'Email'}{a.message_recipient ? ` to ${a.message_recipient}` : ''}</p>
+                  <blockquote className="card soft small" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{a.message_body}</blockquote>
+                </div>
+              )}
+              <div className="form-actions">
+                <Button variant="primary" busy={busy === a.id} disabled={d.paused || a.invoice_status === 'held'} onClick={() => void act(a.id, 'approve', a.kind === 'invoice' ? { invoiceVersion: a.invoice_version } : {})} icon={<Check size={18} aria-hidden="true" />}>
+                  {a.kind === 'invoice' ? (a.level === 'automatic' ? 'Approve and issue' : 'Approve') : 'Approve and send'}
+                </Button>
+                <Button onClick={() => { setRejecting(a); setReason(''); }} icon={<X size={18} aria-hidden="true" />}>Reject</Button>
+                <Button variant="ghost" onClick={() => void act(a.id, 'take-over')} icon={<Hand size={18} aria-hidden="true" />}>Take over</Button>
+              </div>
+              <p className="tiny muted">Prepared {relTime(a.created_at)}. Nothing happens until a person decides.</p>
+            </article>
+          ))}
         </section>
       )}
-      {tab === 'decided' ? (
-        decided.isLoading ? <LoadingBlock /> : (
-          <div className="card card-flush"><ul className="list">{decided.data?.approvals.map((a: any) => (
-            <li key={a.id} className="list-item"><span style={{ flex: 1, minWidth: 0 }}><strong>{a.title}</strong><div className="small muted">{a.status} {a.decided_by_name ? `by ${a.decided_by_name}` : ''} {a.decided_at ? fmtDateTime(a.decided_at, c.company.timezone) : ''}{a.decision_note ? ` · ${a.decision_note}` : ''}</div>{a.summary?.kind === 'invoice' ? <div className="small">{a.summary.customerName}{a.summary.jobNumber ? ` · job #${a.summary.jobNumber}` : ''}{a.summary.number ? ` · ${a.summary.number}` : ''}</div> : null}</span>
-              <span className="decided-side">{a.summary?.kind === 'invoice' && a.summary.totalMinor !== undefined ? <span className="num as-total">{formatMoney(a.summary.totalMinor, a.summary.currency)}</span> : null}<Pill tone={a.status === 'approved' ? 'success' : a.status === 'rejected' ? 'danger' : 'neutral'}>{a.status}</Pill></span></li>
-          ))}</ul>{decided.data?.approvals.length === 0 && <Empty icon={<Check />} title="No decisions yet" />}</div>
-        )
-      ) : notes.isLoading ? <LoadingBlock /> : (
-        list.length === 0 && (tab !== 'action' || !approvals.data?.approvals.length) ? <Card><Empty icon={<InboxIcon />} title="All clear">{tab === 'action' ? 'Nothing is waiting for you.' : tab === 'warnings' ? 'No open warnings.' : 'No updates.'}</Empty></Card> : list.length > 0 && (
-          <div className="card card-flush"><ul className="list">{list.map((n: any) => (
-            <li key={n.id} className="list-item">
-              <span aria-hidden style={{ width: 8, height: 8, borderRadius: 4, marginTop: 8, background: n.read_at ? 'transparent' : 'var(--primary)', flex: 'none' }} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span className="row" style={{ gap: 8 }}><strong style={{ fontWeight: n.read_at ? 550 : 650 }}>{n.title}</strong>{n.read_at ? null : <span className="sr-only"> (unread)</span>}{!n.resolved_at && n.category !== 'update' ? <Pill tone="neutral">Unresolved</Pill> : null}</span>
-                {n.body ? <div className="small">{n.body}</div> : null}
-                <div className="xsmall muted">{relTime(n.created_at)}{n.resolved_at ? ' · resolved' : ''}</div>
-                <div className="row" style={{ marginTop: 6 }}>
-                  {n.link && <Link className="btn btn-sm" to={c.to(n.link)} onClick={() => markRead(n.id)}>Open</Link>}
-                  {!n.read_at && <Button size="sm" variant="ghost" onClick={() => markRead(n.id)}>Mark read</Button>}
-                  {!n.resolved_at && n.category !== 'update' && !['approval', 'action'].includes(n.ref_type) && <Button size="sm" variant="ghost" icon={<Check aria-hidden />} onClick={() => resolve(n.id)}>Mark resolved</Button>}
-                </div>
-              </span>
-            </li>
-          ))}</ul></div>
-        )
+
+      {d.requests.length > 0 && (
+        <section className="stack" aria-labelledby="ib-req">
+          <h2 id="ib-req">New requests</h2>
+          {d.requests.map((r: any) => (
+            <article key={r.id} className="card stack">
+              <div className="row-between"><div className="row"><UserPlus aria-hidden="true" /><h3>{r.name}</h3></div><span className="small muted">{relTime(r.created_at)}</span></div>
+              <dl className="details">
+                {r.wanted && <div><dt>Asked for</dt><dd>{r.wanted}</dd></div>}
+                {r.preferred_at && <div><dt>Time</dt><dd>{fmtDateTime(r.preferred_at, ws.workspace.timezone)}</dd></div>}
+                {r.address && <div><dt>Address</dt><dd>{r.address}</dd></div>}
+                {(r.email || r.phone) && <div><dt>Contact</dt><dd>{[r.email, r.phone].filter(Boolean).join(' · ')}</dd></div>}
+                {r.message && <div style={{ gridColumn: '1 / -1' }}><dt>Message</dt><dd>{r.message}</dd></div>}
+              </dl>
+              <div className="form-actions">
+                <Button variant="primary" busy={busy === r.id} onClick={() => void request(r.id, 'accept')} icon={<Check size={18} aria-hidden="true" />}>Accept and add</Button>
+                <Button onClick={() => void request(r.id, 'decline')}>Decline</Button>
+              </div>
+            </article>
+          ))}
+        </section>
       )}
+
+      {d.held.length > 0 && (
+        <section className="stack" aria-labelledby="ib-held">
+          <h2 id="ib-held">Held invoices</h2>
+          <div className="card card-flush"><ul className="divider-list">
+            {d.held.map((h: any) => (
+              <li key={h.id}><Link className="list-row" to={ws.to(`money/invoices/${h.id}`)}>
+                <AlertTriangle aria-hidden="true" style={{ color: 'var(--attention-ink)' }} />
+                <span className="row-main"><span className="row-title">{h.client_name}</span><span className="row-sub">{h.hold_reasons[0]}</span></span>
+                <span className="btn btn-sm">Fix it</span>
+              </Link></li>
+            ))}
+          </ul></div>
+        </section>
+      )}
+
+      {total === 0 && <div className="card"><Empty icon={<InboxIcon />} title="All clear">When Rigo prepares something, or a customer sends a request, it waits here for a person.</Empty></div>}
+
+      {d.notifications.length > 0 && (
+        <section className="stack" aria-labelledby="ib-upd">
+          <div className="row-between"><h2 id="ib-upd">Updates</h2><Button size="sm" variant="ghost" onClick={async () => { await post(`/c/${ws.cid}/notifications/read`, { all: true }); done(); }}>Mark all read</Button></div>
+          <div className="card card-flush"><ul className="divider-list">
+            {d.notifications.map((n: any) => (
+              <li key={n.id}>
+                {n.link ? <Link className="list-row" to={ws.to(n.link)}><Bell aria-hidden="true" style={{ color: n.read_at ? 'var(--text-2)' : 'var(--primary-text)' }} /><span className="row-main"><span className="row-title">{n.title}</span>{n.body && <span className="row-sub">{n.body}</span>}</span><span className="small muted">{relTime(n.created_at)}</span></Link>
+                  : <div className="list-row"><Bell aria-hidden="true" /><span className="row-main"><span className="row-title">{n.title}</span>{n.body && <span className="row-sub">{n.body}</span>}</span><span className="small muted">{relTime(n.created_at)}</span></div>}
+              </li>
+            ))}
+          </ul></div>
+        </section>
+      )}
+      {ws.can('automation.manage') && <p className="small muted">Choose how much Rigo does on its own in <Link to={ws.to('settings/automation')}>Settings, Automation</Link>.</p>}
+
+      {rejecting && (
+        <Dialog title="Reject this?" onClose={() => setRejecting(null)} actions={<>
+          <Button variant="primary" busy={busy === rejecting.id} onClick={async () => {
+            setBusy(rejecting.id);
+            try { await post(`/c/${ws.cid}/inbox/${rejecting.id}/reject`, { reason }); toast(rejecting.kind === 'invoice' ? 'Rejected. The work is back in Ready to bill.' : 'Rejected. Nothing was sent.'); setRejecting(null); done(); }
+            catch (e) { toast((e as Error).message, 'error'); } finally { setBusy(null); }
+          }}>Reject</Button>
+          <Button variant="ghost" onClick={() => setRejecting(null)}>Cancel</Button>
+        </>}>
+          <p className="muted">{rejecting.kind === 'invoice' ? 'The prepared invoice is removed and the work goes back to Ready to bill, for a person to handle.' : 'The message is not sent.'}</p>
+          <TextField label="Why" optional value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} />
+        </Dialog>
+      )}
+      <LinkButton to={ws.to()} variant="ghost" className="no-print">Back to Today</LinkButton>
     </div>
   );
 }

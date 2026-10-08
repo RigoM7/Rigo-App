@@ -7,15 +7,14 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 export function syncSummaryText(s: SyncSummary) {
   const parts: string[] = [];
-  if (s.sent) parts.push(`${plural(s.sent, 'record', 'records')} sent to the office.`);
-  if (s.held) parts.push(`${plural(s.held, 'record went', 'records went')} to the office for review.`);
+  if (s.sent) parts.push(`${plural(s.sent, 'update', 'updates')} sent.`);
   if (s.attention) parts.push(`${plural(s.attention, 'record needs', 'records need')} your attention.`);
   if (s.waiting) parts.push(`${plural(s.waiting, 'is', 'are')} still waiting for signal.`);
   return parts.join(' ');
 }
 
 /**
- * Sends submitted records without the driver having to do anything (R13-M1): on start, when signal
+ * Sends saved records without the worker having to do anything: on start, when signal
  * returns, when the app comes back to the front, and on a backoff timer while something is waiting.
  * One summary toast per run that sent anything.
  */
@@ -32,7 +31,7 @@ export function useAutoSync(uid: string, cid: string, enabled: boolean) {
       if (timer) { clearTimeout(timer); timer = null; }
       const s = await syncPending(uid, cid).catch(() => null);
       if (!alive || !s) return;
-      if (s.sent || s.held || s.attention) {
+      if (s.sent || s.attention) {
         toast(syncSummaryText(s), s.attention ? 'error' : 'success');
         qc.invalidateQueries({ queryKey: [cid] });
       }

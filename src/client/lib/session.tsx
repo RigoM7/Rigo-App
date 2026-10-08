@@ -1,31 +1,30 @@
-import type { GuideProgress } from '../../shared/demo';
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { get, post, ApiError, OFFLINE } from './api';
-import type { Permission } from '../../shared/permissions';
+import type { Permission, RoleApp } from '../../shared/permissions';
+import type { Vocabulary, FieldDef, Meaning } from '../../shared/workspace';
 import { applyTheme, type ThemePref } from './theme';
 
+export interface MeWorkspace { id: string; name: string; kind: 'real' | 'demo'; template_key: string | null; role_key: string; role_name: string; role_app: RoleApp; is_owner: boolean; created_at?: string; address?: string | null; archived_at?: string | null }
 export interface Me {
-  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean; language?: 'en' | 'es' | null } | null;
-  companies: { id: string; name: string; kind: 'real' | 'demo'; role_key: string; role_name: string; is_owner: boolean; branding: any; setup_completed_at: string | null; created_at?: string; address?: string | null; archived_at?: string | null; copied_from_demo?: boolean }[];
+  user: { id: string; email: string; name: string; theme: ThemePref; emailVerified: boolean } | null;
+  companies: MeWorkspace[];
   invitations: { id: string; role_name: string; company_name: string; expires_at: string; needsLink?: boolean }[];
   devMailbox: boolean;
-  /** How account email reaches people here: a real service, the local simulated mailbox, or none. */
   emailChannel: 'email' | 'mailbox' | 'none';
-  /** Set when there was no signal and this is the copy saved on this device (when it was saved). */
+  /** Set when there was no signal and this is the copy saved on this device. */
   offlineSince?: string;
 }
 
 const isOffline = (e: unknown) => e instanceof ApiError && (e.code === OFFLINE || e.status === 0);
 
-/** Who is signed in. With no signal, the last answer saved on this device, so the driver screens still open (R13-C1). */
+/** Who is signed in. With no signal, the last answer saved on this device, so the worker screens still open. */
 async function fetchMe(): Promise<Me> {
   try {
     const me = await get<Me>('/auth/me');
     const off = await import('./offline');
     if (me.user) void off.cacheMe(me);
     else {
-      // Signed out on the server (expired, or signed out elsewhere): the device copy goes; unsent drafts stay with their owner.
       const last = await off.cachedMe<Me>();
       if (last) void off.clearUserData(last.uid, { keepDrafts: true });
     }
@@ -39,64 +38,66 @@ async function fetchMe(): Promise<Me> {
   }
 }
 
-// networkMode "always": with no signal the query still runs and answers from the device copy, instead of pausing.
 export function useMe() {
   return useQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 30_000, networkMode: 'always' });
 }
 
-/**
- * Loads who is signed in into the cache before navigating. Use it after anything that changes
- * the signed-in person or their companies (sign-in, sign-up, password reset, accepting an
- * invitation, starting or resetting the demo, creating a company, changing email). An
- * invalidate alone would leave a stale "signed out" answer when nothing is observing it.
- */
+/** Loads who is signed in before navigating, after anything that changes it. */
 export function refreshMe(qc: QueryClient) {
   return qc.fetchQuery({ queryKey: ['me'], queryFn: fetchMe, staleTime: 0 });
 }
 
 /** Signs out and forgets everything cached, so the next person on this device sees nothing of it. */
 export async function signOutAndForget(qc: QueryClient) {
-  // Every sign-out clears what this phone kept for the person (unsent records stay, under their name only).
   const uid = qc.getQueryData<Me>(['me'])?.user?.id ?? (await (await import('./offline')).cachedMe<Me>())?.uid;
   if (uid) await (await import('./offline')).clearUserData(uid, { keepDrafts: true }).catch(() => {});
   await post('/auth/signout').catch(() => {});
   qc.clear();
   qc.setQueryData(['me'], { user: null } as Me);
-  try { localStorage.removeItem('rigo-last-company'); } catch { /* ignore */ }
+  try { localStorage.removeItem('rigo-last-workspace'); } catch { /* ignore */ }
 }
 
 export interface Capability { state: 'available' | 'simulated' | 'disabled'; reason: string }
+export interface StageInfo { id: string; key: string; name: string; meaning: Meaning; position: number; requires: string[]; next: string[] | null }
 export interface Boot {
-  company: { id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; automation_mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; branding: any; phone: string | null; email: string | null; address: string | null; service_categories: string[]; customFields: any; accent: { base: string | null; light: string; dark: string }; invoiceDueDays: number; paymentInstructions: string; invoicePrefix?: string; remitTo?: string; taxId?: string; invoice_seq?: number; invoiceApprovalRequired?: boolean; businessHours?: { days: number[]; start: string; end: string } | null; paused_at?: string | null; paused_by?: string | null };
-  role: { key: string; name: string; isOwner: boolean; simulated: string | null };
+  workspace: {
+    id: string; name: string; kind: 'real' | 'demo'; timezone: string; currency: string; description: string; templateKey: string | null; archivedAt: string | null;
+    taxRateBp?: number | null; automation: { mode: 'manual' | 'assisted' | 'automatic'; paused: boolean; pausedAt: string | null };
+  };
+  words: Vocabulary;
+  role: { key: string; name: string; isOwner: boolean; app: RoleApp; simulated: string | null };
   permissions: Permission[];
+  stages: StageInfo[];
+  fields: { work: FieldDef[]; customer: FieldDef[]; equipment: FieldDef[] };
+  equipment: boolean;
   capabilities: Record<'email' | 'sms' | 'ai' | 'payments' | 'maps' | 'fileStorage', Capability>;
-  attention: { needs_action: number; warnings: number; unread: number };
-  setup: null | { items: { key: string; label: string; done: boolean; required: boolean; link: string; note?: string }[]; ready: boolean; done: number; total: number; step: string; dismissed: boolean };
-  demo: null | { guide: { step: number; dismissed: boolean }; simRole: string; progress: GuideProgress };
-  members: { id: string; name: string; role_key: string }[];
-  roles: { key: string; name: string; canApprove?: boolean }[];
+  setup: null | { items: { key: string; label: string; done: boolean; link: string; note?: string }[]; done: number; total: number; dismissed: boolean };
+  members: { id: string; name: string; role_key: string; app: RoleApp }[];
+  roles: { key: string; name: string; app: RoleApp; is_owner: boolean }[];
+  unread: number;
+  demo: null | { sample: boolean; view: string };
   me: { id: string; actingUserId: string };
-  /** Set when there was no signal and these are the settings saved on this device. */
   offlineSince?: string;
 }
 
-interface CompanyCtxValue extends Boot {
+interface WorkspaceValue extends Boot {
   cid: string;
   can: (p: Permission) => boolean;
+  /** A path inside this workspace: to('work/new') → /w/<id>/work/new. */
   to: (path?: string) => string;
   refresh: () => void;
+  stage: (id: string) => StageInfo | undefined;
 }
-const Ctx = createContext<CompanyCtxValue | null>(null);
+const Ctx = createContext<WorkspaceValue | null>(null);
 
-/** Company settings. Drivers' copies are kept on the device so My jobs opens with no signal. */
-export function useCompanyBoot(cid: string, uid: string | undefined) {
+/** Workspace settings. Workers' copies are kept on the device so Today opens with no signal. */
+export function useWorkspaceBoot(cid: string, uid: string | undefined) {
   return useQuery({
     queryKey: [cid, 'boot'], staleTime: 15_000, refetchInterval: 60_000, networkMode: 'always',
     queryFn: async () => {
       try {
         const b = await get<Boot>(`/c/${cid}`);
-        if (uid && b.permissions.includes('jobs.work')) void import('./offline').then((o) => o.cacheBoot(uid, cid, b));
+        if (uid && b.role.app === 'worker') void import('./offline').then((o) => o.cacheBoot(uid, cid, b));
         return b;
       } catch (e) {
         if (!isOffline(e) || !uid) throw e;
@@ -108,58 +109,41 @@ export function useCompanyBoot(cid: string, uid: string | undefined) {
   });
 }
 
-export function CompanyProvider({ cid, boot, children }: { cid: string; boot: Boot; children: ReactNode }) {
+export function WorkspaceProvider({ cid, boot, children }: { cid: string; boot: Boot; children: ReactNode }) {
   const qc = useQueryClient();
-  const value = useMemo<CompanyCtxValue>(() => {
+  const value = useMemo<WorkspaceValue>(() => {
     const perms = new Set(boot.permissions);
     return {
       ...boot, cid,
       can: (p) => perms.has(p),
-      to: (path = '') => `/c/${cid}${path ? `/${path.replace(/^\//, '')}` : ''}`,
+      to: (path = '') => `/w/${cid}${path ? `/${path.replace(/^\//, '')}` : ''}`,
       refresh: () => qc.invalidateQueries({ queryKey: [cid] }),
+      stage: (id) => boot.stages.find((s) => s.id === id),
     };
   }, [boot, cid, qc]);
-  // Company branding: accent is validated server-side and has accessible light/dark variants.
-  useEffect(() => {
-    const root = document.documentElement;
-    const apply = () => {
-      const dark = root.dataset.theme === 'dark';
-      root.style.setProperty('--brand-accent', dark ? boot.company.accent.dark : boot.company.accent.light);
-      root.style.setProperty('--brand-accent-text', dark ? boot.company.accent.dark : boot.company.accent.light);
-    };
-    apply();
-    const obs = new MutationObserver(apply);
-    obs.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => { obs.disconnect(); root.style.removeProperty('--brand-accent'); root.style.removeProperty('--brand-accent-text'); };
-  }, [boot.company.accent]);
+  useEffect(() => { try { localStorage.setItem('rigo-last-workspace', cid); } catch { /* ignore */ } }, [cid]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useCompany() {
+export function useWorkspace() {
   const v = useContext(Ctx);
-  if (!v) throw new Error('useCompany outside CompanyProvider');
+  if (!v) throw new Error('useWorkspace outside WorkspaceProvider');
   return v;
 }
-
-/** The current company, or null outside a company workspace. */
-export function useOptionalCompany() {
-  return useContext(Ctx);
-}
+export function useOptionalWorkspace() { return useContext(Ctx); }
 
 export function useApplyUserTheme(pref: ThemePref | undefined) {
   useEffect(() => { if (pref) applyTheme(pref); }, [pref]);
 }
 
-/** Where to go after signing in: a same-site path from ?next=, otherwise home (the only company, or the list). */
+/** Where to go after signing in: a same-site path from ?next=, otherwise home. */
 export function safeNext(n: string | null | undefined) {
-  return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/open';
+  return n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') ? n : '/home';
 }
 
-/** One line that tells two companies with the same name apart (R17-M2): role, town, when and how it started. */
-export function companyMeta(co: { role_name: string; created_at?: string; address?: string | null; copied_from_demo?: boolean; kind?: string }) {
-  if (co.kind === 'demo') return 'Demo';
-  const parts = (co.address ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-  const town = parts.length > 1 ? parts[1] : '';
-  const since = co.created_at ? `created ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(co.created_at))}` : '';
-  return [co.role_name, town, since, co.copied_from_demo ? 'copied from the demo' : ''].filter(Boolean).join(' · ');
+/** One line that tells two workspaces with the same name apart: role, town, when it started. */
+export function workspaceMeta(w: MeWorkspace) {
+  if (w.kind === 'demo') return 'Demo';
+  const since = w.created_at ? `since ${new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(w.created_at))}` : '';
+  return [w.role_name, since, w.archived_at ? 'archived' : ''].filter(Boolean).join(' · ');
 }

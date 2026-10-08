@@ -1,401 +1,174 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { createBrowserRouter, RouterProvider, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { useMe, useCompanyBoot, CompanyProvider, useCompany, useApplyUserTheme, refreshMe, safeNext } from './lib/session';
-import { useDocumentTitle } from './lib/title';
-import { post } from './lib/api';
-import { ToastProvider, LoadingBlock, ErrorState, LinkButton, Wordmark, Empty } from './components/ui';
-import { Lock, SearchX, WifiOff } from 'lucide-react';
-// Every screen loads with its own script (R17-m3): the first visit downloads only what it shows.
-const AppShell = lazy(() => import('./components/shell').then((m) => ({ default: m.AppShell })));
-const MorePage = lazy(() => import('./components/shell').then((m) => ({ default: m.MorePage })));
-const SignIn = lazy(() => import('./pages/auth').then((m) => ({ default: m.SignIn })));
-const SignUp = lazy(() => import('./pages/auth').then((m) => ({ default: m.SignUp })));
-const Forgot = lazy(() => import('./pages/auth').then((m) => ({ default: m.Forgot })));
-const Reset = lazy(() => import('./pages/auth').then((m) => ({ default: m.Reset })));
-const ConfirmEmail = lazy(() => import('./pages/auth').then((m) => ({ default: m.ConfirmEmail })));
-const Landing = lazy(() => import('./pages/landing').then((m) => ({ default: m.Landing })));
-const Workspaces = lazy(() => import('./pages/workspaces').then((m) => ({ default: m.Workspaces })));
-const NewCompany = lazy(() => import('./pages/workspaces').then((m) => ({ default: m.NewCompany })));
-const InvitePage = lazy(() => import('./pages/invite').then((m) => ({ default: m.InvitePage })));
-const Account = lazy(() => import('./pages/account').then((m) => ({ default: m.Account })));
-const DevMailbox = lazy(() => import('./pages/devmailbox').then((m) => ({ default: m.DevMailbox })));
-import { ApiError } from './lib/api';
-import { PERMISSIONS, type Permission } from '../shared/permissions';
-import { PersonLanguage } from './lib/i18n';
+import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
+import { createBrowserRouter, RouterProvider, Navigate, Outlet, useLocation, useParams, useRouteError } from 'react-router-dom';
+import { useMe, useWorkspaceBoot, WorkspaceProvider, useApplyUserTheme } from './lib/session';
+import { ToastProvider, Loading, ErrorState, Empty, LinkButton } from './components/ui';
+import { SearchX } from 'lucide-react';
 
-const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+// Every screen loads with its own script: the first visit downloads only what it shows.
+const lazyPage = <T extends Record<string, any>>(load: () => Promise<T>, name: keyof T) => lazy(() => load().then((m) => ({ default: m[name] as ComponentType<any> })));
 
-const Dashboard = lazy(() => import('./pages/dashboard').then((m) => ({ default: m.Dashboard })));
-const Jobs = lazy(() => import('./pages/jobs').then((m) => ({ default: m.Jobs })));
-const JobForm = lazy(() => import('./pages/jobform').then((m) => ({ default: m.JobForm })));
-const DriverRecords = lazy(() => import('./pages/driver-records').then((m) => ({ default: m.DriverRecords })));
-const JobDetail = lazy(() => import('./pages/jobdetail').then((m) => ({ default: m.JobDetail })));
-const JobReport = lazy(() => import('./pages/job-report').then((m) => ({ default: m.JobReport })));
-const Today = lazy(() => import('./pages/driver').then((m) => ({ default: m.Today })));
-const DriverJob = lazy(() => import('./pages/driver').then((m) => ({ default: m.DriverJob })));
-const Customers = lazy(() => import('./pages/customers').then((m) => ({ default: m.Customers })));
-const CustomerDetail = lazy(() => import('./pages/customers').then((m) => ({ default: m.CustomerDetail })));
-const Team = lazy(() => import('./pages/team').then((m) => ({ default: m.Team })));
-const Resources = lazy(() => import('./pages/resources').then((m) => ({ default: m.Resources })));
-const Services = lazy(() => import('./pages/services').then((m) => ({ default: m.Services })));
-const ServiceEditor = lazy(() => import('./pages/services').then((m) => ({ default: m.ServiceEditor })));
-const Invoices = lazy(() => import('./pages/invoices').then((m) => ({ default: m.Invoices })));
-const InvoiceDetail = lazy(() => import('./pages/invoices').then((m) => ({ default: m.InvoiceDetail })));
-const NewInvoice = lazy(() => import('./pages/invoices').then((m) => ({ default: m.NewInvoice })));
-const Collections = lazy(() => import('./pages/collections').then((m) => ({ default: m.Collections })));
-const StatementView = lazy(() => import('./pages/collections').then((m) => ({ default: m.StatementView })));
-const PublicInvoice = lazy(() => import('./pages/invoice-view').then((m) => ({ default: m.PublicInvoice })));
-const InboxPage = lazy(() => import('./pages/inbox').then((m) => ({ default: m.InboxPage })));
-const Automation = lazy(() => import('./pages/automation').then((m) => ({ default: m.Automation })));
-const Workflows = lazy(() => import('./pages/workflows').then((m) => ({ default: m.Workflows })));
-const WorkflowEditor = lazy(() => import('./pages/workflows').then((m) => ({ default: m.WorkflowEditor })));
-const Recurring = lazy(() => import('./pages/recurring').then((m) => ({ default: m.Recurring })));
-const RecurringDetail = lazy(() => import('./pages/recurring').then((m) => ({ default: m.RecurringDetail })));
-const RecurringNew = lazy(() => import('./pages/recurring').then((m) => ({ default: m.RecurringNew })));
-const Imports = lazy(() => import('./pages/imports').then((m) => ({ default: m.Imports })));
-const Templates = lazy(() => import('./pages/templates').then((m) => ({ default: m.Templates })));
-const Messages = lazy(() => import('./pages/messages').then((m) => ({ default: m.Messages })));
-const SettingsPage = lazy(() => import('./pages/settings').then((m) => ({ default: m.SettingsPage })));
-const Setup = lazy(() => import('./pages/setup').then((m) => ({ default: m.Setup })));
-const SetupFromDemo = lazy(() => import('./pages/demo').then((m) => ({ default: m.SetupFromDemo })));
-const AssistantPage = lazy(() => import('./pages/assistant').then((m) => ({ default: m.AssistantPage })));
+const Landing = lazyPage(() => import('./pages/landing'), 'Landing');
+const SignIn = lazyPage(() => import('./pages/auth'), 'SignIn');
+const SignUp = lazyPage(() => import('./pages/auth'), 'SignUp');
+const Forgot = lazyPage(() => import('./pages/auth'), 'Forgot');
+const Reset = lazyPage(() => import('./pages/auth'), 'Reset');
+const ConfirmEmail = lazyPage(() => import('./pages/auth'), 'ConfirmEmail');
+const InvitePage = lazyPage(() => import('./pages/invite'), 'InvitePage');
+const Home = lazyPage(() => import('./pages/workspaces'), 'Home');
+const Workspaces = lazyPage(() => import('./pages/workspaces'), 'Workspaces');
+const Start = lazyPage(() => import('./pages/start'), 'Start');
+const DemoPicker = lazyPage(() => import('./pages/start'), 'DemoPicker');
+const Library = lazyPage(() => import('./pages/start'), 'Library');
+const Account = lazyPage(() => import('./pages/account'), 'Account');
+const DevMailbox = lazyPage(() => import('./pages/account'), 'DevMailbox');
+const BookingPage = lazyPage(() => import('./pages/booking-public'), 'BookingPage');
 
-function RequireUser({ children }: { children: ReactNode }) {
+const OfficeShell = lazyPage(() => import('./components/shell'), 'OfficeShell');
+const WorkerShell = lazyPage(() => import('./components/shell'), 'WorkerShell');
+const Today = lazyPage(() => import('./pages/today'), 'Today');
+const Inbox = lazyPage(() => import('./pages/inbox'), 'Inbox');
+const WorkList = lazyPage(() => import('./pages/work'), 'WorkList');
+const WorkDetail = lazyPage(() => import('./pages/work'), 'WorkDetail');
+const WorkForm = lazyPage(() => import('./pages/work'), 'WorkForm');
+const Customers = lazyPage(() => import('./pages/customers'), 'Customers');
+const CustomerDetail = lazyPage(() => import('./pages/customers'), 'CustomerDetail');
+const CustomerForm = lazyPage(() => import('./pages/customers'), 'CustomerForm');
+const MoneyHome = lazyPage(() => import('./pages/money'), 'MoneyHome');
+const Invoices = lazyPage(() => import('./pages/money'), 'Invoices');
+const InvoiceDetail = lazyPage(() => import('./pages/money'), 'InvoiceDetail');
+const Prices = lazyPage(() => import('./pages/money'), 'Prices');
+const Settings = lazyPage(() => import('./pages/settings'), 'Settings');
+const SettingsWorkspace = lazyPage(() => import('./pages/settings'), 'SettingsWorkspace');
+const SettingsWords = lazyPage(() => import('./pages/settings'), 'SettingsWords');
+const SettingsStages = lazyPage(() => import('./pages/settings'), 'SettingsStages');
+const SettingsFields = lazyPage(() => import('./pages/settings'), 'SettingsFields');
+const SettingsPeople = lazyPage(() => import('./pages/people'), 'SettingsPeople');
+const SettingsRoles = lazyPage(() => import('./pages/people'), 'SettingsRoles');
+const SettingsAutomation = lazyPage(() => import('./pages/automation'), 'SettingsAutomation');
+const SettingsBooking = lazyPage(() => import('./pages/settings'), 'SettingsBooking');
+const SettingsTemplates = lazyPage(() => import('./pages/settings'), 'SettingsTemplates');
+const SettingsEquipment = lazyPage(() => import('./pages/settings'), 'SettingsEquipment');
+const WorkerList = lazyPage(() => import('./pages/worker'), 'WorkerList');
+const WorkerItem = lazyPage(() => import('./pages/worker'), 'WorkerItem');
+
+function Page({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<div className="main"><div className="page"><Loading /></div></div>}>{children}</Suspense>;
+}
+
+/** Signed-in pages: anyone else goes to sign in and comes back. */
+function RequireUser() {
   const me = useMe();
   const loc = useLocation();
-  useApplyUserTheme(me.data?.user?.theme);
-  if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  if (me.error) return <div className="auth-wrap"><ErrorState error={me.error} retry={() => me.refetch()} /></div>;
+  if (me.isLoading) return <div className="main"><div className="page"><Loading /></div></div>;
+  if (me.error) return <div className="main"><div className="page"><ErrorState error={me.error} retry={() => me.refetch()} /></div></div>;
   if (!me.data?.user) return <Navigate to={`/signin?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
-  return <>{children}</>;
+  return <Outlet />;
 }
 
-/** Signed out, "/" explains what Rigo is; signed in, it goes straight to the workspaces. */
-function Home() {
-  const me = useMe();
-  if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  if (me.data?.user) return <Navigate to="/workspaces" replace />;
-  return <Landing />;
-}
-
-/** Sign-in and sign-up are for people who aren't signed in; everyone else continues where they were going. */
-function SignedOutOnly({ children }: { children: ReactNode }) {
-  const me = useMe();
-  const [sp] = useSearchParams();
-  if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  if (me.data?.user) return <Navigate to={safeNext(sp.get('next'))} replace />;
-  return <>{children}</>;
-}
-
-/** "Try the demo" from the landing page: after signing up, open the person's demo (creating it if needed). */
-function StartDemo() {
-  const me = useMe();
-  const qc = useQueryClient();
-  const nav = useNavigate();
-  const [error, setError] = useState<unknown>(null);
-  useDocumentTitle('Opening the demo');
-  const start = useCallback(async () => {
-    setError(null);
-    try {
-      // Always ask the server: it returns the existing demo and starts it in the Owner view.
-      const { id } = await post('/demo');
-      await qc.invalidateQueries({ queryKey: [id] });
-      await refreshMe(qc);
-      nav(`/c/${id}`, { replace: true });
-    } catch (e) { setError(e); }
-  }, [me.data, qc, nav]);
-  useEffect(() => { if (me.data?.user) start(); }, [me.data?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  return (
-    <div className="auth-wrap"><main className="auth-card" id="main">
-      <Wordmark to="/workspaces" />
-      <div className="auth-panel stack">
-        <h1>Opening the demo</h1>
-        {error ? <><ErrorState error={error} retry={start} /><LinkButton to="/workspaces">Go to my workspaces</LinkButton></> : <LoadingBlock rows={2} />}
-      </div>
-    </main></div>
-  );
-}
-
-function CompanyRoot() {
+/** A workspace: loads its settings, then the office places or the worker's phone screens. */
+function WorkspaceGate() {
   const { cid = '' } = useParams();
   const me = useMe();
-  const uid = me.data?.user?.id;
-  const qc = useQueryClient();
-  const boot = useCompanyBoot(cid, uid);
-  useDocumentTitle(boot.error ? 'No access' : null);
-  // Removed while a page is open (R12-m1): any request answered "not a member" checks the company
-  // again, which then shows "You no longer have access" instead of errors inside the app.
-  const lastName = useRef<string | null>(null);
-  if (boot.data?.company.name) lastName.current = boot.data.company.name;
-  useEffect(() => qc.getQueryCache().subscribe((ev) => {
-    const err = ev.type === 'updated' ? (ev.query.state.error as ApiError | null) : null;
-    if (!err || ev.query.queryKey[0] !== cid || ev.query.queryKey[1] === 'boot') return;
-    if (err.code === 'not_member' || (err.status === 404 && /^Company was not found/.test(err.message))) void qc.invalidateQueries({ queryKey: [cid, 'boot'] });
-  }), [cid, qc]);
-  useEffect(() => { try { localStorage.setItem('rigo-last-company', cid); } catch { /* ignore */ } }, [cid]);
-  // Back online after starting from the device copy: check again straight away.
-  useEffect(() => {
-    const on = () => { qc.invalidateQueries({ queryKey: ['me'] }); qc.invalidateQueries({ queryKey: [cid, 'boot'] }); };
-    window.addEventListener('online', on);
-    return () => window.removeEventListener('online', on);
-  }, [cid, qc]);
-  if (boot.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  if (boot.error) {
-    const e = boot.error as ApiError;
-    if (e.code === 'not_member' && uid) return <NoLongerMember cid={cid} uid={uid} until={e.details?.lateRecordsUntil ?? null} knownName={lastName.current} />;
-    return (
-      <div className="auth-wrap"><main className="auth-card" id="main">
-        <Wordmark to="/workspaces" />
-        <div className="auth-panel stack">
-          {e.status === 404 ? <>
-            <span className="empty-icon" aria-hidden><Lock /></span>
-            <h1>{lastName.current ? `You no longer have access to ${lastName.current}` : "You don't have access to this company"}</h1>
-            <p className="muted" style={{ margin: 0 }}>You are not a member of this company, or it no longer exists. Being signed in does not give access to a company; you need an invitation.</p>
-          </> : <ErrorState error={e} retry={() => boot.refetch()} />}
-          <LinkButton variant="primary" to="/workspaces">Go to my workspaces</LinkButton>
-        </div>
-      </main></div>
-    );
-  }
+  const boot = useWorkspaceBoot(cid, me.data?.user?.id);
+  if (boot.isLoading) return <div className="main"><div className="page"><Loading /></div></div>;
+  if (boot.error || !boot.data) return <div className="main"><div className="page"><ErrorState error={boot.error} retry={() => boot.refetch()} /></div></div>;
   return (
-    // key={cid} remounts everything when switching companies so no state carries across.
-    <CompanyProvider key={cid} cid={cid} boot={boot.data!}>
-      <DriverLanguage>
-        <AppShell>
-          <Suspense fallback={<LoadingBlock />}>
-            {boot.data!.offlineSince ? <OfflineRoutes /> : <CompanyRoutes />}
-          </Suspense>
-        </AppShell>
-      </DriverLanguage>
-    </CompanyProvider>
+    <WorkspaceProvider cid={cid} boot={boot.data}>
+      <Suspense fallback={<div className="main"><div className="page"><Loading /></div></div>}>
+        {boot.data.role.app === 'worker' ? <WorkerShell><Outlet /></WorkerShell> : <OfficeShell><Outlet /></OfficeShell>}
+      </Suspense>
+    </WorkspaceProvider>
   );
 }
 
-/**
- * Removed from the company (R12-M1): records still on this phone go to the office for review (for
- * 7 days, D12), then everything this phone kept for that company is deleted.
- */
-function NoLongerMember({ cid, uid, until, knownName }: { cid: string; uid: string; until: string | null; knownName: string | null }) {
-  const qc = useQueryClient();
-  const [done, setDone] = useState<null | { name: string | null; sent: number; removed: number; waiting: number }>(null);
-  useDocumentTitle('No longer a member');
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const off = await import('./lib/offline');
-      const name = knownName ?? ((await off.cachedBoot<any>(uid, cid))?.boot?.company?.name as string | undefined) ?? null;
-      const open = !!until && new Date(until) > new Date();
-      let sent = 0, removed = 0, waiting = 0;
-      for (const d of (await off.listDrafts(uid, cid)).filter(off.isUnsent)) {
-        if (!open || !d.outcome) { removed++; continue; }
-        const r = await off.sendLateRecord(d);
-        if (r.state === 'held') sent++;
-        else if (r.state === 'queued') { waiting++; await off.saveDraft(r); }
-        else removed++;
-      }
-      // Drafts that couldn't go yet for lack of signal stay until the next try; everything else goes.
-      await off.clearUserData(uid, { companyId: cid, keepDrafts: waiting > 0 });
-      try { if (localStorage.getItem('rigo-last-company') === cid) localStorage.removeItem('rigo-last-company'); } catch { /* ignore */ }
-      qc.removeQueries({ queryKey: [cid], predicate: (q) => q.queryKey[1] !== 'boot' });
-      if (alive) setDone({ name, sent, removed, waiting });
-    })();
-    return () => { alive = false; };
-  }, [cid, uid, until, qc]);
-  return (
-    <div className="auth-wrap"><main className="auth-card" id="main">
-      <Wordmark to="/workspaces" />
-      <div className="auth-panel stack">
-        <span className="empty-icon" aria-hidden><Lock /></span>
-        <h1>You no longer have access to {done?.name ?? knownName ?? 'this company'}</h1>
-        {!done ? <LoadingBlock rows={1} /> : <>
-          {done.sent > 0 && <p style={{ margin: 0 }}>{done.sent === 1 ? 'Your record was' : `${done.sent} records were`} sent to the office for review.</p>}
-          {done.waiting > 0 && <p style={{ margin: 0 }}>{done.waiting === 1 ? 'One record' : `${done.waiting} records`} couldn't be sent yet. Open this page again when you have signal.</p>}
-          {done.removed > 0 && <p style={{ margin: 0 }}>{done.removed === 1 ? 'One unfinished record' : `${done.removed} unfinished records`} could not be sent and {done.removed === 1 ? 'was' : 'were'} removed from this phone.</p>}
-          <p className="muted" style={{ margin: 0 }}>This company's jobs and details were removed from this phone. Ask the company if you think this is a mistake.</p>
-        </>}
-        <LinkButton variant="primary" to="/workspaces">Go to my workspaces</LinkButton>
-      </div>
-    </main></div>
-  );
-}
-
-/** With no signal the app runs from what this phone saved: a driver's jobs and records, nothing else. */
-function OfflineRoutes() {
-  return (
-    <Routes>
-      <Route index element={<OfflineHome />} />
-      <Route path="today" element={<PersonLanguage><Today /></PersonLanguage>} />
-      <Route path="today/:jobId" element={<PersonLanguage><DriverJob /></PersonLanguage>} />
-      <Route path="*" element={<NeedsConnection />} />
-    </Routes>
-  );
-}
-function OfflineHome() {
-  const c = useCompany();
-  return c.can('jobs.work') ? <Navigate to={c.to('today')} replace /> : <NeedsConnection />;
-}
-function NeedsConnection() {
-  const c = useCompany();
-  useDocumentTitle('Needs a connection');
-  return (
-    <div className="page page-narrow">
-      <div className="card"><Empty icon={<WifiOff />} title="This page needs a connection" action={c.can('jobs.work') ? <div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('today')}>Go to my jobs</LinkButton></div> : undefined}>It opens again as soon as you have signal.{c.can('jobs.work') ? ' Your jobs and records work without it.' : ''}</Empty></div>
-    </div>
-  );
-}
-
-/** Where the installed app opens (R13-m4): straight into the person's only company, or their last one. */
-function OpenApp() {
+function RoleSwitch({ office, worker }: { office: ReactNode; worker: ReactNode }) {
+  const { cid = '' } = useParams();
   const me = useMe();
-  if (me.isLoading) return <div className="auth-wrap"><LoadingBlock /></div>;
-  const list = me.data?.companies ?? [];
-  let last: string | null = null;
-  try { last = localStorage.getItem('rigo-last-company'); } catch { /* ignore */ }
-  const real = list.filter((x) => x.kind === 'real');
-  // Someone in exactly one real company goes straight to it (My jobs for drivers); the demo alone doesn't count.
-  const target = real.length === 1 ? real[0].id : real.some((x) => x.id === last) ? last : null;
-  return <Navigate to={target ? `/c/${target}` : '/workspaces'} replace />;
+  const boot = useWorkspaceBoot(cid, me.data?.user?.id);
+  return <>{boot.data?.role.app === 'worker' ? worker : office}</>;
+}
+
+/** The signed-in person's theme on every page, public ones included. */
+function AccountTheme() {
+  const me = useMe();
+  useApplyUserTheme(me.data?.user?.theme);
+  return <Outlet />;
 }
 
 function NotFound() {
-  const c = useCompany();
-  useDocumentTitle('Page not found');
-  return (
-    <div className="page page-narrow">
-      <h1 className="sr-only">Page not found</h1>
-      <div className="card"><Empty icon={<SearchX />} title="This page does not exist" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>The link may be old, or the page moved. Use the menu or press <kbd>Ctrl</kbd> <kbd>K</kbd> to search.</Empty></div>
-    </div>
-  );
+  return <div className="main"><div className="page page-narrow"><Empty icon={<SearchX />} title="This page doesn't exist" action={<LinkButton to="/home" variant="primary">Go to your workspace</LinkButton>}>The link may be old or mistyped.</Empty></div></div>;
 }
 
-/** Someone whose role is driving sees the menus in their language too; office roles stay English (D8). */
-function DriverLanguage({ children }: { children: ReactNode }) {
-  const c = useCompany();
-  return <PersonLanguage enabled={c.can('jobs.work') && !c.can('jobs.view_all')}>{children}</PersonLanguage>;
+function RouteError() {
+  const err = useRouteError();
+  return <div className="main"><div className="page page-narrow"><ErrorState error={err} retry={() => window.location.reload()} /></div></div>;
 }
 
-/** A driver opening an office link to their own job lands on the driver screen (R17-m4). */
-function JobOrDriverJob() {
-  const c = useCompany();
-  const { id = '' } = useParams();
-  if (!c.can('jobs.view_all') && c.can('jobs.work')) return <Navigate to={c.to(`today/${id}`)} replace />;
-  return <JobDetail />;
-}
+const p = (el: ReactNode) => <Page>{el}</Page>;
 
-/** An address that isn't a page says so, instead of quietly going somewhere else (R17-m4). */
-function TopNotFound() {
-  const me = useMe();
-  useDocumentTitle('Page not found');
-  const signedIn = !!me.data?.user;
-  return (
-    <div className="auth-wrap">
-      <main className="auth-card stack" id="main">
-        <Wordmark to={signedIn ? '/workspaces' : '/'} />
-        <div className="card"><Empty icon={<SearchX />} title="This page does not exist" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={signedIn ? '/workspaces' : '/'}>{signedIn ? 'Go to your companies' : 'Go to the home page'}</LinkButton></div>}>The link may be old or mistyped.</Empty></div>
-      </main>
-    </div>
-  );
-}
-
-function RoleHome() {
-  const c = useCompany();
-  if (!c.can('jobs.view_all') && c.can('jobs.work')) return <Navigate to={c.to('today')} replace />;
-  if (!c.can('jobs.view_all') && !c.can('reports.view')) return <Navigate to={c.to('inbox')} replace />;
-  return <Dashboard />;
-}
-
-/** A page someone's role doesn't allow says so, instead of loading and failing (R4-m4). */
-function Need({ any, children }: { any: Permission[]; children: ReactNode }) {
-  const c = useCompany();
-  useDocumentTitle(any.some((p) => c.can(p)) ? null : 'No access');
-  if (any.some((p) => c.can(p))) return <>{children}</>;
-  return (
-    <div className="page page-narrow">
-      {/* The permission is named in plain words, never as a code key (R17-m4). */}
-      <div className="card"><Empty icon={<Lock />} title="Your role doesn't include this page" action={<div className="row" style={{ justifyContent: 'center' }}><LinkButton variant="primary" to={c.to('')}>Go home</LinkButton></div>}>It needs permission to {any.map((p) => lowerFirst(PERMISSIONS[p])).join(', or to ')}. You are signed in as {c.role.name}; ask an owner if you need it.</Empty></div>
-    </div>
-  );
-}
-
-function CompanyRoutes() {
-  return (
-    <Routes>
-      <Route index element={<RoleHome />} />
-      <Route path="today" element={<Need any={['jobs.work']}><PersonLanguage><Today /></PersonLanguage></Need>} />
-      <Route path="today/:jobId" element={<Need any={['jobs.work']}><PersonLanguage><DriverJob /></PersonLanguage></Need>} />
-      <Route path="jobs" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><Jobs /></Need>} />
-      <Route path="jobs/new" element={<Need any={['jobs.create']}><JobForm /></Need>} />
-      <Route path="jobs/records" element={<Need any={['jobs.assign']}><DriverRecords /></Need>} />
-      <Route path="jobs/:id" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobOrDriverJob /></Need>} />
-      <Route path="jobs/:id/edit" element={<Need any={['jobs.edit']}><JobForm /></Need>} />
-      <Route path="jobs/:id/report" element={<Need any={['jobs.view_all', 'jobs.view_assigned']}><JobReport /></Need>} />
-      <Route path="customers" element={<Need any={['customers.view']}><Customers /></Need>} />
-      <Route path="customers/:id" element={<Need any={['customers.view']}><CustomerDetail /></Need>} />
-      <Route path="team" element={<Need any={['members.view']}><Team /></Need>} />
-      <Route path="resources" element={<Need any={['resources.view']}><Resources /></Need>} />
-      <Route path="services" element={<Services />} />
-      <Route path="services/:id" element={<ServiceEditor />} />
-      <Route path="invoices" element={<Need any={['invoices.view']}><Invoices /></Need>} />
-      <Route path="invoices/new" element={<Need any={['invoices.edit']}><NewInvoice /></Need>} />
-      <Route path="invoices/:id" element={<Need any={['invoices.view']}><InvoiceDetail /></Need>} />
-      <Route path="collections" element={<Need any={['finance.view']}><Collections /></Need>} />
-      <Route path="statements/:id" element={<Need any={['finance.view']}><StatementView /></Need>} />
-      <Route path="inbox" element={<InboxPage />} />
-      <Route path="automation" element={<Need any={['workflows.view']}><Automation /></Need>} />
-      <Route path="workflows" element={<Need any={['workflows.view']}><Workflows /></Need>} />
-      <Route path="workflows/:id" element={<Need any={['workflows.view']}><WorkflowEditor /></Need>} />
-      <Route path="recurring" element={<Need any={['jobs.view_all']}><Recurring /></Need>} />
-      <Route path="recurring/new" element={<Need any={['jobs.create']}><RecurringNew /></Need>} />
-      <Route path="recurring/:id" element={<Need any={['jobs.view_all']}><RecurringDetail /></Need>} />
-      <Route path="imports" element={<Need any={['imports.run']}><Imports /></Need>} />
-      <Route path="templates" element={<Need any={['templates.manage']}><Templates /></Need>} />
-      <Route path="messages" element={<Need any={['messages.view']}><Messages /></Need>} />
-      <Route path="settings" element={<Need any={['company.settings']}><SettingsPage /></Need>} />
-      <Route path="setup" element={<Need any={['company.settings']}><Setup /></Need>} />
-      <Route path="setup-company" element={<SetupFromDemo />} />
-      <Route path="assistant" element={<Need any={['assistant.use']}><AssistantPage /></Need>} />
-      <Route path="more" element={<MorePage />} />
-      <Route path="*" element={<NotFound />} />
-    </Routes>
-  );
-}
-
-/** The same quiet loading screen as index.html, while a screen's script arrives. */
-function BootScreen() {
-  return <div className="boot" role="status"><img src="/icon.svg" alt="" /><span>Loading Rigo…</span><div className="boot-bar" aria-hidden="true" /></div>;
-}
-
-function AppRoutes() {
-  return (
-    <ToastProvider>
-      <Suspense fallback={<BootScreen />}>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/signin" element={<SignedOutOnly><PersonLanguage><SignIn /></PersonLanguage></SignedOutOnly>} />
-        <Route path="/signup" element={<SignedOutOnly><PersonLanguage><SignUp /></PersonLanguage></SignedOutOnly>} />
-        <Route path="/forgot" element={<PersonLanguage><Forgot /></PersonLanguage>} />
-        <Route path="/reset/:token" element={<PersonLanguage><Reset /></PersonLanguage>} />
-        <Route path="/confirm-email/:token" element={<PersonLanguage><ConfirmEmail /></PersonLanguage>} />
-        <Route path="/start-demo" element={<RequireUser><StartDemo /></RequireUser>} />
-        <Route path="/invite/:token" element={<PersonLanguage><InvitePage /></PersonLanguage>} />
-        <Route path="/i/:token" element={<PublicInvoice />} />
-        <Route path="/dev/mailbox" element={<DevMailbox />} />
-        <Route path="/open" element={<RequireUser><OpenApp /></RequireUser>} />
-        <Route path="/workspaces" element={<RequireUser><Workspaces /></RequireUser>} />
-        <Route path="/workspaces/new" element={<RequireUser><NewCompany /></RequireUser>} />
-        <Route path="/account" element={<RequireUser><Account /></RequireUser>} />
-        <Route path="/c/:cid/*" element={<RequireUser><CompanyRoot /></RequireUser>} />
-        <Route path="*" element={<TopNotFound />} />
-      </Routes>
-      </Suspense>
-    </ToastProvider>
-  );
-}
-
-// A data router (rather than <BrowserRouter>) so screens can warn before leaving unsaved changes (useBlocker).
-const router = createBrowserRouter([{ path: '*', element: <AppRoutes /> }]);
+const router = createBrowserRouter([
+  {
+    errorElement: <RouteError />,
+    element: <AccountTheme />,
+    children: [
+      { path: '/', element: p(<Landing />) },
+      { path: '/signin', element: p(<SignIn />) },
+      { path: '/signup', element: p(<SignUp />) },
+      { path: '/forgot', element: p(<Forgot />) },
+      { path: '/reset/:token', element: p(<Reset />) },
+      { path: '/confirm-email/:token', element: p(<ConfirmEmail />) },
+      { path: '/invite/:token', element: p(<InvitePage />) },
+      { path: '/book/:slug', element: p(<BookingPage />) },
+      { path: '/templates', element: p(<Library />) },
+      { path: '/dev/mailbox', element: p(<DevMailbox />) },
+      {
+        element: <RequireUser />,
+        children: [
+          { path: '/home', element: p(<Home />) },
+          { path: '/workspaces', element: p(<Workspaces />) },
+          { path: '/start', element: p(<Start />) },
+          { path: '/demo', element: p(<DemoPicker />) },
+          { path: '/account', element: p(<Account />) },
+          {
+            path: '/w/:cid', element: <WorkspaceGate />,
+            children: [
+              { index: true, element: <RoleSwitch office={p(<Today />)} worker={p(<WorkerList list="today" />)} /> },
+              { path: 'upcoming', element: p(<WorkerList list="upcoming" />) },
+              { path: 'done', element: p(<WorkerList list="done" />) },
+              { path: 'inbox', element: p(<Inbox />) },
+              { path: 'work', element: p(<WorkList />) },
+              { path: 'work/new', element: p(<WorkForm />) },
+              { path: 'work/:id', element: <RoleSwitch office={p(<WorkDetail />)} worker={p(<WorkerItem />)} /> },
+              { path: 'work/:id/edit', element: p(<WorkForm />) },
+              { path: 'customers', element: p(<Customers />) },
+              { path: 'customers/new', element: p(<CustomerForm />) },
+              { path: 'customers/:id', element: p(<CustomerDetail />) },
+              { path: 'customers/:id/edit', element: p(<CustomerForm />) },
+              { path: 'money', element: p(<MoneyHome />) },
+              { path: 'money/invoices', element: p(<Invoices />) },
+              { path: 'money/invoices/:id', element: p(<InvoiceDetail />) },
+              { path: 'money/prices', element: p(<Prices />) },
+              { path: 'settings', element: p(<Settings />) },
+              { path: 'settings/workspace', element: p(<SettingsWorkspace />) },
+              { path: 'settings/words', element: p(<SettingsWords />) },
+              { path: 'settings/stages', element: p(<SettingsStages />) },
+              { path: 'settings/fields', element: p(<SettingsFields />) },
+              { path: 'settings/people', element: p(<SettingsPeople />) },
+              { path: 'settings/roles', element: p(<SettingsRoles />) },
+              { path: 'settings/automation', element: p(<SettingsAutomation />) },
+              { path: 'settings/booking', element: p(<SettingsBooking />) },
+              { path: 'settings/templates', element: p(<SettingsTemplates />) },
+              { path: 'settings/equipment', element: p(<SettingsEquipment />) },
+              { path: '*', element: <NotFound /> },
+            ],
+          },
+        ],
+      },
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+]);
 
 export function App() {
-  return <RouterProvider router={router} />;
+  return <ToastProvider><RouterProvider router={router} /></ToastProvider>;
 }

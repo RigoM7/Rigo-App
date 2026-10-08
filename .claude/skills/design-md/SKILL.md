@@ -55,13 +55,14 @@ Pin the version as above so results don't change under you. On Windows/PowerShel
 
 Rigo's design doc is `DESIGN.md` at the repository root, in this format: light-theme tokens in the
 front matter, the dark theme and the rules in the body. The real values live in
-`src/client/styles.css` (plain CSS custom properties, not Tailwind); fonts are Geist and Geist
-Mono.
+`src/client/styles.css` (plain CSS custom properties, not Tailwind); fonts are Bricolage Grotesque,
+Figtree and JetBrains Mono.
 
 - Keep `DESIGN.md` and `styles.css` in sync in the same change: when a look request changes a
   token, change both.
-- Lint after every edit to `DESIGN.md`. Its `orphaned-tokens` warnings are expected (colours the
-  prose uses but no component token references); fix errors and any contrast finding.
+- Lint after every edit to `DESIGN.md`. `orphaned-tokens` warnings are expected (colours the prose
+  uses but no component token references, such as lines and control edges); fix errors and any
+  contrast finding.
 - Don't change a token just to silence a warning; look changes follow `DESIGN.md`'s
   "Your words → skill" rules.
 - Use `export` output for comparison or hand-off only, not to replace `styles.css`.

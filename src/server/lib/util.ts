@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Context } from 'hono';
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
 import { badRequest, zodFields } from '../http/errors.js';
 
 export const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
@@ -27,4 +27,18 @@ export function paging(limit: string | undefined, offset: string | undefined, ma
   const l = Math.floor(Number(limit));
   const o = Math.floor(Number(offset));
   return { limit: Number.isFinite(l) && l >= 1 ? Math.min(l, max) : max, offset: Number.isFinite(o) && o > 0 ? Math.min(o, 100_000) : 0 };
+}
+
+/**
+ * Every field optional and with no defaults, for partial updates. (zod's own .partial() keeps
+ * defaults, which would quietly reset fields the request didn't mention.)
+ */
+export function patchSchema<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodType<Partial<z.output<z.ZodObject<T>>>> {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [k, v] of Object.entries(schema.shape)) {
+    let t: any = v;
+    while (t instanceof z.ZodDefault) t = t.unwrap();
+    shape[k] = t.optional();
+  }
+  return z.object(shape) as any;
 }

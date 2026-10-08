@@ -1,107 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { Sun, Moon, Monitor, AlertTriangle, ChevronLeft, MailCheck, Trash2, Send } from 'lucide-react';
-import { refreshMe, signOutAndForget, useMe } from '../lib/session';
-import { patch, post } from '../lib/api';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Inbox as InboxIcon } from 'lucide-react';
+import { get, post, patch } from '../lib/api';
+import { useMe, refreshMe, signOutAndForget } from '../lib/session';
 import { useSubmit } from '../lib/form';
+import { useTitle } from '../lib/title';
 import { applyTheme, readThemePref, type ThemePref } from '../lib/theme';
-import { useDocumentTitle } from '../lib/title';
-import { Button, Card, Field, Input, Select, PasswordInput, ErrorSummary, Banner, Pill, useToast, useConfirm, LoadingBlock, Wordmark } from '../components/ui';
-import { EmailSuggestion, NAME_MAX } from './auth';
+import { hasUnsynced } from '../lib/offline';
+import { relTime } from '../lib/format';
+import { Button, TextField, FormError, Banner, Segmented, Wordmark, Confirm, useToast, Loading, LinkButton, Empty } from '../components/ui';
 import { PASSWORD_HINT, PASSWORD_MAX } from '../../shared/password';
 import { EMAIL_MAX } from '../../shared/email';
-import type { Draft } from '../lib/offline';
-import { setDeviceLang } from '../lib/i18n';
-import type { Lang } from '../../shared/i18n';
 
-/** Resend the confirmation email. Shown only when email can actually be sent here. */
-export function ConfirmEmailNotice({ email }: { email: string }) {
-  const toast = useToast();
-  const s = useSubmit(async () => { await post('/auth/me/verify/resend'); toast(`Confirmation email sent to ${email}`); });
+function Frame({ children, title }: { children: React.ReactNode; title: string }) {
+  useTitle(title);
   return (
-    <Banner tone="info" title="Confirm your email" action={<Button size="sm" busy={s.busy} icon={<Send aria-hidden />} onClick={() => s.run()}>Resend</Button>}>
-      We sent a link to <strong className="wrap-anywhere">{email}</strong>. Confirming it lets you reset your password by email if you forget it.
-      {s.error ? <div className="field-error" style={{ marginTop: 6 }}>{s.error.message}</div> : null}
-    </Banner>
-  );
-}
-
-function EmailCard() {
-  const me = useMe();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const user = me.data!.user!;
-  const channel = me.data!.emailChannel;
-  const [v, setV] = useState({ email: '', password: '' });
-  const [touched, setTouched] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
-  const s = useSubmit(async () => {
-    const r = await post('/auth/me/email', v);
-    setV({ email: '', password: '' });
-    setTouched(false);
-    if (r.status === 'pending') { setPending(r.email); return; }
-    await refreshMe(qc);
-    toast('Email changed. Other devices were signed out.');
-  });
-  return (
-    <Card title="Email" id="email">
-      <div className="stack">
-        <div className="row" style={{ gap: 8 }}>
-          <span className="wrap-anywhere"><strong>{user.email}</strong></span>
-          {user.emailVerified ? <Pill tone="success">Confirmed</Pill> : <Pill tone="neutral">Not confirmed</Pill>}
-        </div>
-        {!user.emailVerified && channel !== 'none' ? <ConfirmEmailNotice email={user.email} /> : null}
-        {!user.emailVerified && channel === 'none' ? <p className="hint" style={{ margin: 0 }}>Rigo can't send email yet, so this address can't be confirmed for now. Check that it's spelled right.</p> : null}
-        {pending ? (
-          <Banner tone="success" title={`Check ${pending}`}>
-            Open the link we sent there to finish the change. Until then, keep signing in with {user.email}.
-            {channel === 'mailbox' ? <> On this local copy, emails appear in the <Link to="/dev/mailbox">test inbox</Link>.</> : null}
-          </Banner>
-        ) : null}
-        <form className="stack" onSubmit={(e) => { e.preventDefault(); s.run(); }} noValidate>
-          <h3 className="h3">Change your email</h3>
-          <ErrorSummary error={s.error} />
-          <div className="stack-sm">
-            <Field label="New email" id="f-email" error={s.fieldError('email')} hint={channel === 'none' ? 'It changes right away, and other devices are signed out.' : "We'll send a link to the new address. The change happens when you open it."}>
-              {(p) => <Input {...p} type="email" autoComplete="email" maxLength={EMAIL_MAX} value={v.email} onBlur={() => setTouched(true)} onChange={(e) => setV({ ...v, email: e.target.value })} />}
-            </Field>
-            {touched ? <EmailSuggestion email={v.email} onUse={(fixed) => setV({ ...v, email: fixed })} /> : null}
-          </div>
-          <input type="text" autoComplete="username" value={user.email} readOnly hidden />
-          <Field label="Current password" id="f-password" error={s.fieldError('password')}>{(p) => <PasswordInput {...p} autoComplete="current-password" maxLength={PASSWORD_MAX} value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />}</Field>
-          <div><Button type="submit" busy={s.busy} icon={<MailCheck aria-hidden />}>Change email</Button></div>
-        </form>
-      </div>
-    </Card>
-  );
-}
-
-function DeleteAccountCard({ onDeleted }: { onDeleted: () => Promise<void> }) {
-  const me = useMe();
-  const { ask, node } = useConfirm();
-  const [password, setPassword] = useState('');
-  const owned = (me.data?.companies ?? []).filter((c) => c.kind === 'real');
-  const s = useSubmit(async () => {
-    const ok = await ask({
-      title: 'Delete your account?',
-      body: <>You lose access to {owned.length ? owned.map((c) => c.name).join(', ') : 'Rigo'} right away, your demo is deleted, and you're signed out everywhere. Work you did stays in your companies' history as "Deleted user". This can't be undone.</>,
-      confirm: 'Delete my account', danger: true,
-    });
-    if (!ok) return;
-    await post('/auth/me/delete', { password });
-    await onDeleted();
-  });
-  return (
-    <Card title="Delete account" id="delete">
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); s.run(); }} noValidate>
-        <p className="muted" style={{ margin: 0 }}>If you're the only owner of a company, make someone else an owner in Team first.</p>
-        <ErrorSummary error={s.error} labels={{ password: 'f-delete-password' }} />
-        <Field label="Your password" id="f-delete-password" error={s.fieldError('password')}>{(p) => <PasswordInput {...p} autoComplete="current-password" maxLength={PASSWORD_MAX} value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
-        <div><Button type="submit" variant="danger" busy={s.busy} icon={<Trash2 aria-hidden />}>Delete my account</Button></div>
-      </form>
-      {node}
-    </Card>
+    <div className="public">
+      <header className="public-top"><Wordmark to="/home" /><LinkButton to="/home" variant="ghost" icon={<ArrowLeft size={18} aria-hidden="true" />}>Back to work</LinkButton></header>
+      <main id="main" className="main" style={{ paddingBottom: 48 }}><div className="page page-narrow">{children}</div></main>
+    </div>
   );
 }
 
@@ -110,102 +28,97 @@ export function Account() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const toast = useToast();
-  const [sp] = useSearchParams();
-  const { ask, node } = useConfirm();
-  const [name, setName] = useState('');
-  const [pref, setPref] = useState<ThemePref>(readThemePref());
+  const user = me.data?.user;
+  const [name, setName] = useState(user?.name ?? '');
+  const [theme, setThemeState] = useState<ThemePref>(user?.theme ?? readThemePref());
   const [pw, setPw] = useState({ current: '', password: '' });
-  const [unsynced, setUnsynced] = useState<Draft[] | null>(null);
-  useDocumentTitle('Account');
-  useEffect(() => { if (me.data?.user) setName(me.data.user.name); }, [me.data?.user]);
-  useEffect(() => {
-    (async () => {
-      if (!me.data?.user) return;
-      const { listDrafts } = await import('../lib/offline');
-      const all: Draft[] = [];
-      const { isUnsent } = await import('../lib/offline');
-      for (const c of me.data.companies) all.push(...(await listDrafts(me.data.user.id, c.id)).filter(isUnsent));
-      setUnsynced(all);
-    })();
-  }, [me.data]);
-  const saveName = useSubmit(async () => { await patch('/auth/me', { name }); await refreshMe(qc); toast('Name saved'); });
+  const [em, setEm] = useState({ email: '', password: '' });
+  const [del, setDel] = useState({ open: false, password: '' });
+  const [unsent, setUnsent] = useState(false);
+  useEffect(() => { if (user) void hasUnsynced(user.id).then(setUnsent); }, [user]);
+  const saveName = useSubmit(async () => { await patch('/auth/me', { name }); await refreshMe(qc); toast('Name saved.'); });
   const savePw = useSubmit(async () => { await post('/auth/me/password', pw); setPw({ current: '', password: '' }); toast('Password changed. Other devices were signed out.'); });
-  const setTheme = async (t: ThemePref) => { setPref(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); };
-  // The driver screens, sign-in pages and the notifications Rigo writes to you (D8). Empty: this device's language.
-  const saveLanguage = useSubmit(async (v: string) => { await patch('/auth/me', { language: v || null }); setDeviceLang(v ? (v as Lang) : null); await refreshMe(qc); toast(v === 'es' ? 'Idioma guardado' : 'Language saved'); });
-  const forgetDevice = async (keepDrafts = false) => {
-    const uid = me.data?.user?.id;
-    const { clearUserData } = await import('../lib/offline');
-    if (uid) await clearUserData(uid, { keepDrafts });
-  };
-  /**
-   * On a shared phone, "Switch driver" signs out and keeps this person's unsent records on the phone,
-   * under their name only, for when they sign in again (R4-M4). Discarding them is a separate choice.
-   */
-  const signOut = async (mode: 'keep' | 'discard' | 'plain') => {
-    if (mode === 'discard' && !(await ask({ title: 'Discard unsent records?', body: `${unsynced?.length ?? 0} job record(s) on this phone have not reached the office. Signing out this way deletes them. The jobs stay as they are on the server.`, confirm: 'Discard and sign out', danger: true }))) return;
-    await forgetDevice(mode === 'keep');
-    await signOutAndForget(qc);
-    nav('/signin');
-  };
-  const onDeleted = async () => {
-    await forgetDevice();
-    await signOutAndForget(qc);
-    toast('Your account was deleted.');
-    nav('/', { replace: true });
-  };
-  if (!me.data?.user) return <LoadingBlock />;
+  const saveEmail = useSubmit(async () => {
+    const r = await post<{ status: 'pending' | 'changed'; email: string }>('/auth/me/email', em);
+    setEm({ email: '', password: '' });
+    await refreshMe(qc);
+    toast(r.status === 'pending' ? `Check ${r.email} for a link to finish the change.` : `Your email is now ${r.email}.`);
+  });
+  const resend = useSubmit(async () => { await post('/auth/me/verify/resend'); toast(`Confirmation email sent to ${user?.email}.`); });
+  const remove = useSubmit(async () => { await post('/auth/me/delete', { password: del.password }); await signOutAndForget(qc); nav('/'); });
+  const setTheme = async (t: ThemePref) => { setThemeState(t); applyTheme(t); await patch('/auth/me', { theme: t }).catch(() => {}); };
+  if (!user) return <Loading />;
   return (
-    <div className="shell">
-      <header className="plain-top"><Wordmark to="/workspaces" /></header>
-      <main className="plain-main" id="main"><div className="page page-narrow">
-        <div><Link className="back-link" to="/workspaces"><ChevronLeft aria-hidden />Workspaces</Link><h1 style={{ marginTop: 8 }}>Account</h1><p className="muted wrap-anywhere">{me.data.user.email}</p></div>
-        {(sp.get('signout') || (unsynced && unsynced.length > 0)) && unsynced && unsynced.length > 0 && (
-          <Banner tone="warning" title={`${unsynced.length} job record${unsynced.length === 1 ? ' hasn\'t' : 's haven\'t'} reached the office`}>
-            They are saved only on this phone. Open them to send them, or use Switch driver below to keep them here for when you sign in again.
-            <ul>{unsynced.map((d) => <li key={d.jobId}><Link to={`/c/${d.companyId}/today/${d.jobId}`}>Job #{d.jobNumber}</Link>: {d.state === 'conflict' ? 'needs your review' : d.state === 'queued' || d.state === 'failed' || d.state === 'pending' ? 'waiting to send' : 'not submitted yet'}</li>)}</ul>
-          </Banner>
-        )}
-        <Card title="Theme" id="theme">
-          <div className="segmented" role="radiogroup" aria-label="Theme">
-            {([['light', 'Light', <Sun key="l" aria-hidden />], ['dark', 'Dark', <Moon key="d" aria-hidden />], ['system', 'System', <Monitor key="s" aria-hidden />]] as const).map(([k, l, i]) => <button key={k} role="radio" aria-checked={pref === k} onClick={() => setTheme(k)}>{i}{l}</button>)}
-          </div>
-          <p className="hint" style={{ marginTop: 8 }}>Saved to your account and this device. System follows your device setting.</p>
-        </Card>
-        <Card title="Language" id="language">
-          <div className="stack-sm">
-            <ErrorSummary error={saveLanguage.error} />
-            <Field label="Language" id="f-language" hint="Used on the driver screens, the sign-in pages and the notifications Rigo sends you. Office screens are in English for now. The Spanish wording is still being checked by a Spanish speaker.">{(p) => <Select {...p} value={me.data?.user?.language ?? ''} disabled={saveLanguage.busy} onChange={(e) => saveLanguage.run(e.target.value)}><option value="">Same as this device</option><option value="en" lang="en">English</option><option value="es" lang="es">Español</option></Select>}</Field>
-          </div>
-        </Card>
-        <Card title="Profile" id="profile">
-          <form className="stack" onSubmit={(e) => { e.preventDefault(); saveName.run(); }} noValidate>
-            <ErrorSummary error={saveName.error} />
-            <Field label="Name" id="f-name" error={saveName.fieldError('name')}>{(p) => <Input {...p} autoComplete="name" maxLength={NAME_MAX} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-            <div><Button type="submit" busy={saveName.busy}>Save name</Button></div>
-          </form>
-        </Card>
-        <EmailCard />
-        <Card title="Password" id="pw">
-          <form className="stack" onSubmit={(e) => { e.preventDefault(); savePw.run(); }} noValidate>
-            <ErrorSummary error={savePw.error} labels={{ password: 'f-new-password' }} />
-            <input type="text" autoComplete="username" value={me.data.user.email} readOnly hidden />
-            <Field label="Current password" id="f-current" error={savePw.fieldError('current')}>{(p) => <PasswordInput {...p} autoComplete="current-password" maxLength={PASSWORD_MAX} value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />}</Field>
-            <Field label="New password" id="f-new-password" hint={PASSWORD_HINT} error={savePw.fieldError('password')}>{(p) => <PasswordInput {...p} autoComplete="new-password" maxLength={PASSWORD_MAX} value={pw.password} onChange={(e) => setPw({ ...pw, password: e.target.value })} />}</Field>
-            <div><Button type="submit" busy={savePw.busy}>Change password</Button></div>
-          </form>
-        </Card>
-        <Card title="Sign out" id="so">
-          {unsynced && unsynced.length > 0 ? (
-            <div className="stack-sm">
-              <div className="row"><Button variant="primary" onClick={() => signOut('keep')}>Switch driver</Button><Button variant="danger" icon={<AlertTriangle aria-hidden />} onClick={() => signOut('discard')}>Discard records and sign out</Button></div>
-              <p className="hint" style={{ margin: 0 }}>Switch driver signs you out and keeps your unsent records on this phone. Only you see them when you sign in again; they send then.</p>
-            </div>
-          ) : <div className="row"><Button onClick={() => signOut('plain')}>Sign out</Button></div>}
-        </Card>
-        <DeleteAccountCard onDeleted={onDeleted} />
-        {node}
-      </div></main>
-    </div>
+    <Frame title="Your account">
+      <div className="stack-sm"><h1>Your account</h1><p className="muted">{user.email}</p></div>
+      {!user.emailVerified && me.data?.emailChannel !== 'none' && (
+        <Banner tone="attn" title="Confirm your email" action={<Button size="sm" busy={resend.busy} onClick={() => void resend.run()}>Send the link again</Button>}>So you can recover your account if you forget your password.</Banner>
+      )}
+      <section className="card stack" aria-labelledby="a-name">
+        <h2 id="a-name">Name and look</h2>
+        <form className="stack" onSubmit={(e) => { e.preventDefault(); void saveName.run(); }} noValidate>
+          <FormError error={saveName.error} />
+          <TextField label="Your name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} error={saveName.fieldError('name')} />
+          <div><Button type="submit" busy={saveName.busy}>Save name</Button></div>
+        </form>
+        <div className="stack-sm"><span className="field-label">Theme</span>
+          <Segmented label="Theme" value={theme} onChange={setTheme} options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'Same as this device' }]} />
+        </div>
+      </section>
+      <section className="card stack" aria-labelledby="a-pw">
+        <h2 id="a-pw">Password</h2>
+        <form className="stack" onSubmit={(e) => { e.preventDefault(); void savePw.run(); }} noValidate>
+          <FormError error={savePw.error} />
+          <TextField label="Current password" type="password" autoComplete="current-password" maxLength={PASSWORD_MAX} value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} error={savePw.fieldError('current')} />
+          <TextField label="New password" type="password" autoComplete="new-password" maxLength={PASSWORD_MAX} value={pw.password} onChange={(e) => setPw({ ...pw, password: e.target.value })} error={savePw.fieldError('password')} hint={PASSWORD_HINT} />
+          <div><Button type="submit" busy={savePw.busy}>Change password</Button></div>
+        </form>
+      </section>
+      <section className="card stack" aria-labelledby="a-email">
+        <h2 id="a-email">Email address</h2>
+        <form className="stack" onSubmit={(e) => { e.preventDefault(); void saveEmail.run(); }} noValidate>
+          <FormError error={saveEmail.error} />
+          <TextField label="New email" type="email" autoComplete="email" maxLength={EMAIL_MAX} value={em.email} onChange={(e) => setEm({ ...em, email: e.target.value })} error={saveEmail.fieldError('email')} />
+          <TextField label="Your password" type="password" autoComplete="current-password" maxLength={PASSWORD_MAX} value={em.password} onChange={(e) => setEm({ ...em, password: e.target.value })} error={saveEmail.fieldError('password')} />
+          <div><Button type="submit" busy={saveEmail.busy}>Change email</Button></div>
+        </form>
+      </section>
+      <section className="card stack" aria-labelledby="a-del">
+        <h2 id="a-del">Delete your account</h2>
+        <p className="muted">Your name and email are removed and you leave every workspace. Work you did stays in each workspace’s history.</p>
+        {unsent && <Banner tone="attn" title="Records not sent yet">This phone still has updates that weren’t sent. Open your workspace with signal first, or they’ll be lost.</Banner>}
+        <div><Button variant="danger" onClick={() => setDel({ open: true, password: '' })}>Delete my account</Button></div>
+      </section>
+      {del.open && (
+        <Confirm title="Delete your account?" danger confirm="Delete my account" busy={remove.busy} onClose={() => setDel({ open: false, password: '' })} onConfirm={() => void remove.run()}
+          body={<div className="stack">
+            <p>This can’t be undone.</p>
+            <FormError error={remove.error} />
+            <TextField label="Your password" type="password" autoComplete="current-password" value={del.password} onChange={(e) => setDel({ ...del, password: e.target.value })} error={remove.fieldError('password')} />
+          </div>} />
+      )}
+    </Frame>
+  );
+}
+
+/** Local copies only: where account emails land when no email service is set up. */
+export function DevMailbox() {
+  const q = useQuery({ queryKey: ['mailbox'], queryFn: () => get<{ enabled: boolean; messages: any[] }>('/auth/dev/mailbox'), refetchInterval: 5000 });
+  return (
+    <Frame title="Test inbox">
+      <div className="stack-sm"><h1>Test inbox</h1><p className="muted">On a local copy, account emails appear here instead of being sent. Nothing here left this computer.</p></div>
+      {q.isLoading ? <Loading /> : !q.data?.enabled ? <Empty icon={<InboxIcon />} title="The test inbox is off here">This server sends real email, or none.</Empty> : !q.data.messages.length ? <Empty icon={<InboxIcon />} title="No emails yet" /> : (
+        <ul className="stack" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          {q.data.messages.map((m) => (
+            <li key={m.id} className="card stack-sm">
+              <div className="row-between"><strong>{m.subject}</strong><span className="small muted">{relTime(m.created_at)}</span></div>
+              <div className="small muted">To {m.to_email}</div>
+              <pre className="small" style={{ whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'var(--font-body)' }}>{m.body}</pre>
+              {m.link && <a href={m.link}>Open the link</a>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Frame>
   );
 }

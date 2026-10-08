@@ -8,12 +8,12 @@ describe('accounts, companies and isolation', () => {
     const stranger = await signup('Stranger');
     const me = await stranger.get('/auth/me');
     expect(me.body.companies).toEqual([]);
-    for (const p of [`/c/${cid}`, `/c/${cid}/jobs`, `/c/${cid}/customers`, `/c/${cid}/invoices`, `/c/${cid}/assistant`]) {
+    for (const p of [`/c/${cid}`, `/c/${cid}/work`, `/c/${cid}/customers`, `/c/${cid}/invoices`, `/c/${cid}/inbox`, `/c/${cid}/schedule?from=2030-01-01`]) {
       const r = await stranger.get(p);
       expect(r.status, p).toBe(404);
     }
     const anon = new Client('anon');
-    expect((await anon.get(`/c/${cid}/jobs`)).status).toBe(401);
+    expect((await anon.get(`/c/${cid}/work`)).status).toBe(401);
   });
 
   it('rejects state changes without the CSRF header', async () => {
@@ -37,8 +37,7 @@ describe('accounts, companies and isolation', () => {
     expect(bobView.body.customers.find((x: any) => x.name === 'Alpha only customer')).toBeUndefined();
     // Using an id from another company is rejected.
     const alphaCust = (await a.get(`/c/${c1}/customers`)).body.customers[0].id;
-    const svc = (await b.get(`/c/${c2}/services`)).body.services[0].id;
-    const r = await b.post(`/c/${c2}/jobs`, { customerId: alphaCust, serviceId: svc, intent: 'draft', clientRequestId: 'cross-company-1' });
+    const r = await b.post(`/c/${c2}/work`, { clientId: alphaCust, title: 'Cross-company' });
     expect(r.status).toBe(400);
   });
 
@@ -62,7 +61,7 @@ describe('accounts, companies and isolation', () => {
     const owner = await signup();
     const disp = await signup();
     const cid = await newCompany(owner);
-    await owner.patch(`/c/${cid}/roles/dispatcher`, { permissions: ['members.view', 'members.invite', 'members.manage', 'jobs.view_all'] });
+    await owner.patch(`/c/${cid}/roles/dispatcher`, { permissions: ['members.view', 'members.invite', 'members.manage', 'work.view_all'] });
     await invite(owner, cid, disp, 'dispatcher');
     const r = await disp.post(`/c/${cid}/invitations`, { email: 'someone@example.test', role: 'owner' });
     expect(r.status).toBe(403);

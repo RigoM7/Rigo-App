@@ -1,118 +1,10 @@
 # Rigo
 
-## What Rigo is
-
-Rigo is a place where a business runs its work. An owner creates a workspace, invites the team,
-sets up services and workflows, and chooses how much Rigo does on its own (preparing invoices,
-telling people what changed, drafting messages), while keeping control through approvals, pause
-and takeover. Today Rigo is built around field service, with fuel delivery, portable toilets and
-septic as the first template; the goal is any business (`PRODUCT.md`).
+One place to run your business, whatever it is. What Rigo is and the owner's decisions are in
+`PRODUCT.md`; how it looks is `DESIGN.md`; how Claude works here is `CLAUDE.md`. This file is how
+to run, check and ship it, and where everything is in the code.
 
 Live site: https://rigo-app-dun.vercel.app
-
-## What works today
-
-The full, area-by-area record is `docs/FEATURES.md`.
-- Accounts, several workspaces per person, invitations by email, four roles with editable
-  permissions, an activity log.
-- Customers and locations with duplicate detection, merge and CSV imports.
-- Jobs with drafts, priority and late flags; a live schedule timeline with a lane per worker.
-- A phone view for workers that works offline: today's work, photos, signatures, payment at the stop.
-- Invoices with exact totals, holds when a price is missing, approvals, payments, credit,
-  collections, reminders and statements.
-- Recurring service and rentals with separate visit and billing schedules.
-- Workflows (Manual, Assisted, Automatic) with versions, tests, pause and takeover.
-- An assistant that answers from the company's data and proposes workflows.
-- Templates (private, shared, public) and a guided demo of a field-service business.
-- Simulated or off until set up: email and texts, real AI, payment processing, maps.
-
-## Glossary
-
-One name for each thing, used the same way in the menu, page titles, buttons, messages and docs.
-When a screen needs a new word, add it here first. Spanish names are in `src/shared/i18n/es.ts` and
-still need review by a Spanish speaker.
-
-### Work
-
-| Use | Not | Meaning |
-| --- | --- | --- |
-| **Job** | ticket, order, work order, task | One piece of work for a customer at one location: a delivery, a pump-out, a unit service. Numbered (`#54`). |
-| **Visit** | stop (in office text), trip | The driver being on site for a job. "The visit could not be completed." A job has one visit; a follow-up is a new job. |
-| **Stop** | visit (on the driver side) | A job on a driver's list for the day, in order ("Today's stops in order"). Driver screens only. |
-| **Draft** | pending, incomplete | A job that still lacks something it needs (a customer, a service or a required field). Drivers never see drafts. |
-| **Open** | scheduled, active | A complete job, ready to be assigned and done. |
-| **In progress** | started, active | The driver has started the job. |
-| **Completed / Partially completed / Unsuccessful visit / Cancelled** | done, failed, closed | How a job ended. "Unsuccessful" is never billed automatically. |
-| **Unassigned** | no driver yet, not assigned, open slot | A job without a driver. |
-| **On my way** | en route, dispatched | The driver has said they are heading to the job, with an optional arrival estimate. |
-| **Hand over** | transfer, reassign (by the driver) | A driver giving their job to another driver. Office staff **reassign**. |
-| **Recurring service & rentals** | recurring & rentals, plans, schedules | Work that repeats (a weekly pump-out) and units out on rent, billed per 28-day cycle. |
-| **Priority: Normal / Urgent / Emergency** | high, critical, ASAP | How soon a job must be done. Emergencies go to the top of the driver's list. |
-
-### People and places
-
-| Use | Not | Meaning |
-| --- | --- | --- |
-| **Customer** | client, account | Who the work is for and who is billed. |
-| **Location** | site, address (as a thing) | A place where work happens for a customer. A customer can have several. |
-| **Site contact** | contact (alone) | The person to call at a location. |
-| **Billing contact** | AP, accounts payable contact | Who receives invoices when it isn't the main contact. |
-| **Team member** | user, staff, employee | Someone with access to the company. |
-| **Owner / Dispatcher / Driver / Office (billing)** | admin, manager, tech | The standard roles. Owners can always do everything. |
-| **Trucks & equipment** | resources, assets, fleet items | Trucks, trailers and units (portable toilets, hand-wash stations). "Truck" alone is fine when it is a truck. |
-
-### Money
-
-| Use | Not | Meaning |
-| --- | --- | --- |
-| **Invoice** | bill, statement (for one job) | What the customer owes for one or more jobs or a rental cycle. |
-| **Invoice draft** | pending invoice | Prepared but not issued; can still change. |
-| **On hold** | blocked, error | An invoice that needs a person (a missing rate, an unusual quantity). It shows why. |
-| **Approve / Issue** | finalize, send | Approve: a person agrees with the amounts. Issue: it gets its number and is owed. |
-| **Void** | delete, cancel (an invoice) | An issued invoice that no longer applies. It keeps its number. |
-| **Payment / Credit** | receipt, refund (for credit) | Money received; extra becomes credit for the next invoice. |
-| **Statement** | account summary | A customer's open invoices and recent payments as of a date. |
-| **Reminder** | dunning, notice | A prepared message about an invoice due soon or overdue. |
-| **Rate** | price (for a unit) | The amount per gallon, per unit or per job. **Price** is fine in everyday sentences. |
-
-### Messages and automation
-
-| Use | Not | Meaning |
-| --- | --- | --- |
-| **Message** | communication, notification (to customers) | An email or text to a customer. Always **prepared** first. |
-| **Prepared / Sent / Simulated** | queued, delivered (unless it was) | Prepared: written, not sent. Sent: a service accepted it. Simulated: demo, nothing left Rigo. |
-| **Text** | SMS | A text message. |
-| **Notification** | alert, message (to the team) | Something in the bell for a team member. |
-| **Workflow** | automation rule, recipe | A rule: when something happens, what Rigo prepares or does. |
-| **Automation** | engine, bot | The page showing workflows running, what waits for a person, and the pause switch. |
-| **Approval** | sign-off, review request | A workflow step waiting for a person to decide. |
-| **Assistant** | AI, chatbot | Answers questions from your data and drafts workflows. Says when an answer is prepared rather than AI. |
-
-### Setup
-
-| Use | Not | Meaning |
-| --- | --- | --- |
-| **Company** | workspace (in sentences), tenant, org | A business in Rigo. The list of companies is **Workspaces**. |
-| **Services & pricing** | products, catalog | What the company offers, the form the driver fills in, and how each is priced. |
-| **Template** | blueprint, preset | A copy of a company's structure (services, fields, roles, workflows), never its customers or records. |
-| **Import** | upload, migration | Bringing customers or equipment in from a CSV file, reviewed before anything is saved. |
-| **Test inbox** | simulated mailbox, dev mailbox | On a local copy, where account emails appear instead of being sent. |
-
-### Shipping (words used with Claude, not in the app)
-
-| Word | Meaning |
-| --- | --- |
-| **Working branch** | The one branch where pending changes collect, with one draft pull request. |
-| **Checkpoint** | A commit whose first line contains `[checkpoint]`; Vercel doesn't build it. |
-| **Preview** | A temporary copy of the working branch on Vercel, built on "show me". |
-| **Launch** | Merging the working branch into `main`, which deploys the live site. |
-| **Migration** | A numbered SQL file in `migrations/` that adds to the database schema. |
-
-### Words never shown to people
-
-Permission keys (`jobs.view_all`), action and trigger keys (`invoice.prepare`, `job.completed`),
-field keys (`requested_qty`), raw time zone IDs (`America/Chicago`), "(cents)", "Invalid input" and
-other validator wording. The browser suite checks every page for them.
 
 ## Run it locally
 
@@ -121,29 +13,28 @@ Requires Node.js 22. No database server or API keys are needed.
 ```bash
 npm install
 npm run build      # build the web app into dist/
-npm start          # API + web app + worker on http://localhost:8787
+npm start          # API + web app on http://localhost:8787
 ```
 
-Data persists in `./data/` across restarts. For development with hot reload:
+Data persists in `./data/` across restarts (`RIGO_DATA_DIR=memory` keeps nothing). For development
+with hot reload:
 
 ```bash
 npm run dev        # API on :8787, web app on http://localhost:5173 (proxies /api)
 ```
 
-Then open the app, create an account, and either **Explore the demo** or **Create a company**.
-Locally, invitation, password-reset and email-confirmation emails are not sent: they appear in the
-**test inbox** at `/dev/mailbox`. Set `APP_URL=http://localhost:8787` when using `npm start`, or
-the emailed links point to the dev server on port 5173.
-
-To try the live site's behavior (no email service), run a production-like copy:
+Open the app, create an account, and either start a workspace or open a demo. Locally, invitation,
+password-reset and email-confirmation emails are not sent: they appear in the **test inbox** at
+`/dev/mailbox`. Set `APP_URL=http://localhost:8787` with `npm start`, or the emailed links point to
+port 5173. To try the live site's behaviour (no email service):
 
 ```bash
 NODE_ENV=production PORT=8788 RIGO_DATA_DIR=data/prodlike APP_URL=http://localhost:8788 npm start
 ```
 
-There, password recovery works through reset links an owner creates from Team.
+There, password recovery works through reset links an owner creates from Settings, People.
 
-### Use PostgreSQL instead of the embedded database
+### PostgreSQL instead of the embedded database
 
 ```bash
 export DATABASE_URL=postgres://user:password@localhost:5432/rigo
@@ -159,105 +50,286 @@ All optional; see `.env.example`.
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection. Without it, PGlite in `./data/db`. |
 | `PORT` | Local server port (default 8787). |
-| `APP_URL` | Base URL used in invitation/reset links. |
+| `APP_URL` | Base URL used in invitation and reset links. |
 | `STORAGE_DRIVER` | `local` (default locally) or `database`. |
 | `RIGO_DEV_MAILBOX` | `1` shows simulated emails at `/dev/mailbox` (default on outside production). |
-| `RIGO_AI_PROVIDER`, `ANTHROPIC_API_KEY`, `RIGO_AI_MODEL`, `RIGO_AI_DAILY_LIMIT` | Turn on real AI for real (non-demo) companies. Off by default. |
-| `CRON_SECRET` | Protects `/api/cron/tick` when set. |
-| `RIGO_SUPPORT_EMAIL` | Shown on the password recovery page for owners who have no other owner to ask. Not set: that line is left out. |
-| `RIGO_TERMS_URL`, `RIGO_PRIVACY_URL` | Terms of service and privacy policy, linked at sign-up. Not set: no agreement line is shown. |
-| `RIGO_EMAIL_PROVIDER`, `RIGO_EMAIL_API_KEY`, `RIGO_EMAIL_FROM` | Email through `resend` or `postmark`, from a verified sender such as `Tri-County <billing@yourdomain.com>`. Turns on password reset, invitation and confirmation emails, and customer emails for allowed companies. Off until all three are set. |
-| `RIGO_SMS_PROVIDER`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Text messages through `twilio` ("On my way", updates, messages to customers). Off until all four are set. |
-| `RIGO_SENDING_COMPANIES` | Company ids (comma-separated; the id is in the address bar after `/c/`) allowed to send to customers through the providers above, or `*` for all. Not set: no company sends; messages stay prepared. Keeps strangers who sign up from using your accounts. |
-| `RIGO_DAILY_EMAIL_LIMIT`, `RIGO_DAILY_TEXT_LIMIT`, `RIGO_SMS_ANY_COUNTRY` | Daily ceilings per company (300 emails, 100 texts) and, with `1`, texts to numbers outside the US and Canada. |
-| `RIGO_TRUST_PROXY` | `1` trusts `X-Forwarded-For` for client addresses (sign-in limits). Automatic on Vercel, which overwrites the header. |
+| `CRON_SECRET` | Protects `/api/cron/tick` (daily: overdue reminders, clean-up) when set. |
+| `RIGO_SUPPORT_EMAIL` | Shown on the password recovery page for owners with no other owner to ask. |
+| `RIGO_TERMS_URL`, `RIGO_PRIVACY_URL` | Terms and privacy links at sign-up. Not set: no agreement line. |
+| `RIGO_EMAIL_PROVIDER`, `RIGO_EMAIL_API_KEY`, `RIGO_EMAIL_FROM` | Email through `resend` or `postmark`. Turns on account emails, and customer emails for allowed workspaces. Off until all three are set. |
+| `RIGO_SMS_PROVIDER`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Texts through `twilio`. Off until all four are set. |
+| `RIGO_SENDING_COMPANIES` | Workspace ids (comma-separated) allowed to send to customers through the providers above, or `*`. Not set: nothing is sent; messages stay prepared. |
+| `RIGO_DAILY_EMAIL_LIMIT`, `RIGO_DAILY_TEXT_LIMIT`, `RIGO_SMS_ANY_COUNTRY` | Daily ceilings per workspace (300 emails, 100 texts) and, with `1`, texts outside the US and Canada. |
+| `RIGO_TRUST_PROXY` | `1` trusts `X-Forwarded-For` for client addresses. Automatic on Vercel. |
 
 ## Check your work
 
 ```bash
-npm run typecheck                          # about 5 seconds
-npx vitest run <files>                     # an area's tests, listed in docs/CODEMAP.md
-npm run check:docs                         # docs/CODEMAP.md matches the code
-npm test                                   # the full API/domain suite on embedded PostgreSQL (about 10 minutes)
-DATABASE_URL=postgres://… npm test         # the same tests on a real PostgreSQL server
+npm run typecheck                          # about 10 seconds
+npx vitest run <files>                     # an area's tests, listed in the code map below
+npm run check:docs                         # the code map matches the code
+npm test                                   # the full suite on embedded PostgreSQL
+DATABASE_URL=postgres://… npm test         # the same on a real PostgreSQL server
 
 # Browser checks against a running server (uses the pre-installed Chromium):
 npm run build && npm start &
 BASE_URL=http://localhost:8787 NODE_PATH=$(npm root -g) npm run test:browser
 ```
 
-Browser-check options: `NOEMAIL_URL=http://localhost:8788` (the production-like copy above) also
-checks recovery without email; `E2E_ONLY=<group>` (`auth`, `round2`, `phase1`) runs one group.
-Screenshots go to `e2e/output/`.
+The browser check (`e2e/run.mjs`) walks the real flows, scans every screen with axe (WCAG 2.2 AA)
+in both themes, and checks for sideways scrolling at 375, 768, 1024 and 1440px. `E2E_ONLY=<group>`
+runs one group; screenshots of failures go to `e2e/output/`.
 
 Every pull request runs the checks on GitHub (`.github/workflows/ci.yml`): the docs check always;
 typecheck, the full suite and the build when code changes; the browser check when client files
-change. What the checks cover, and the latest results, are in `docs/FEATURES.md`.
+change. "PR check" is the one job to require on `main`.
 
 ## Shipping to the live site
 
 **Where it runs:** the Vercel project `rigo-app` (the live site above) and the Supabase project
 `rigo-app`, schema `rigo` only. Vercel connects through the Supabase transaction pooler (port 6543)
-as the dedicated `rigo_app` role, through the `DATABASE_URL` environment variable; `APP_URL` sets
-the production link base. `npm run build` on Vercel also writes `.vercel/output`
-(`scripts/vercel-output.mjs`): the web app as static files and the API as one Node.js function. The
-old `public.rigo_*` tables belong to an earlier app and are unused.
+as the `rigo_app` role, through `DATABASE_URL`; `APP_URL` sets the link base. `npm run build` on
+Vercel also writes `.vercel/output` (`scripts/vercel-output.mjs`): the web app as static files and
+the API as one Node.js function.
 
 **The flow:**
 1. Changes collect on one working branch with one draft pull request. Pushes in between start the
    commit's first line with `[checkpoint]`, so Vercel doesn't build them; GitHub still runs the
    checks.
-2. **"Show me":** a push without `[checkpoint]` builds a Vercel preview of the branch to open on a
-   phone. Vercel deployments are limited, so previews happen only on request.
-3. **"Launch":** the checks pass, any held migrations are applied to Supabase, the pull request is
-   marked ready and merged into `main`, and Vercel deploys the live site. After a production
-   deployment, `.github/workflows/post-deploy.yml` loads the landing page, the health endpoint and
-   the sign-in page; on failure it opens an issue and prepares a revert pull request.
+2. **"Show me":** a push without `[checkpoint]` (and without new migrations) builds a Vercel preview.
+3. **"Launch":** the checks pass, held migrations are applied to Supabase, the pull request is marked
+   ready and merged into `main`, and Vercel deploys. After a production deployment,
+   `.github/workflows/post-deploy.yml` loads the front page, the health endpoint and the sign-in
+   page; on failure it opens an issue and prepares a revert pull request.
 
 **Migrations and previews:** previews share the live database, and migrations run on the first
-request to any deployment. So a new migration stays out of preview pushes and is added at launch;
-a preview of work that needs a new table won't fully work until then.
+request to any deployment. So a new migration stays out of preview pushes and is applied at launch.
 
-**Builds:** `scripts/vercel-ignore.sh` skips the Vercel build for a commit that only touches
-`docs/`, `.claude/`, `.github/`, `CLAUDE.md`, `README.md`, `PRODUCT.md`, `DESIGN.md` or
-`THIRD_PARTY_NOTICES.md`, and, off `main`, for a commit whose first line contains `[checkpoint]`.
-`main` otherwise always builds.
+**Builds:** `scripts/vercel-ignore.sh` skips the Vercel build for a commit that only touches docs,
+`.claude/`, `.github/` or the top-level docs, and, off `main`, for a commit whose first line
+contains `[checkpoint]`.
 
-**Automation on Vercel:** there is no always-on process. Due automation runs at the end of each
-state-changing request and in a daily cron (`/api/cron/tick`); recurring visits are generated then
-and whenever a plan is created or resumed.
+**Background work on Vercel:** there is no always-on process. Automations run inside the request
+that triggers them; the daily cron (`/api/cron/tick`) prepares overdue reminders and cleans up.
+Locally the server does the same every hour.
 
 ## Stack
 
 | Layer | Choice |
 |---|---|
-| Web interface | React 19, React Router 7, TanStack Query, Vite, plain CSS with semantic tokens, Lucide icons, self-hosted Geist + Geist Mono |
+| Web app | React 19, React Router 7, TanStack Query, Vite, plain CSS with tokens (`DESIGN.md`), Lucide icons, self-hosted Bricolage Grotesque, Figtree and JetBrains Mono |
 | API | Hono on Node.js 22 (TypeScript), zod validation |
-| Auth | Own sessions: random 256-bit tokens (stored as SHA-256), httpOnly SameSite=Lax cookies, bcrypt (cost 12) password hashes, CSRF header check |
-| Database | PostgreSQL 16+ through `pg`; with no `DATABASE_URL`, an embedded PostgreSQL (PGlite) stored in `./data/db` |
-| Migrations | Ordered SQL files in `migrations/`, applied automatically under an advisory lock |
-| Files | Local disk (`./data/uploads`) or database storage (`STORAGE_DRIVER=database`; used on Vercel) |
-| Background work | Durable `events → automation_runs → actions → approvals` tables; an in-process worker locally; request-time draining plus a daily cron on Vercel |
-| Tests | Vitest (API and domain, against PGlite or PostgreSQL) and Playwright browser checks |
+| Sign-in | Own sessions: random 256-bit tokens stored as SHA-256, httpOnly SameSite=Lax cookies, bcrypt (cost 12), a CSRF header check |
+| Database | PostgreSQL 16+ through `pg`; with no `DATABASE_URL`, embedded PostgreSQL (PGlite) in `./data/db` |
+| Migrations | Ordered SQL files in `migrations/`, applied automatically under an advisory lock; they only add |
+| Tests | Vitest (API and rules, against PGlite or PostgreSQL) and Playwright browser checks |
 
-Code layout (area by area in `docs/CODEMAP.md`):
+## Code map
 
-```
-src/shared/     business rules shared by server and client (permissions, pricing math, job states,
-                workflow definitions/validation/simulation, schedules, branding contrast)
-src/server/     http/ (app, auth context, errors) · modules/ (one router per area) ·
-                automation/ (engine + action primitives) · adapters/ (email, AI, storage, capabilities) · db/
-src/client/     components/ (UI kit, shell) · pages/ · lib/ (api, session, offline drafts, theme)
-migrations/     SQL schema (schema "rigo")
-test/           API and domain tests
-e2e/run.mjs     browser checks (themes, widths, accessibility, real flows)
-```
+Where each area lives. `npm run check:docs` keeps this honest: every path named here exists, every
+file under `src/`, `test/`, `e2e/`, `scripts/`, `migrations/`, `static/` and `.github/` belongs to
+an area, every test file is some area's test, and the tables listed are exactly the tables the
+migrations and server code create. Company-owned tables carry `company_id`, and every query on them
+is scoped by it with the helpers in `src/server/http/context.ts`. Read a table's migration before
+changing it.
 
-## The docs, in reading order
+### accounts
+Sign-up, sign-in with lockouts, password rules, recovery (email or an owner's reset link), email
+confirmation and change, deleting an account, the workspace list and invitations to accept.
+- **Files:** `src/server/modules/accounts.ts`, `src/server/lib/common-passwords.ts`, `src/shared/password.ts`,
+  `src/shared/email.ts`, `src/client/pages/auth.tsx`, `src/client/pages/account.tsx`,
+  `src/client/pages/invite.tsx`, `src/client/pages/workspaces.tsx`, `src/client/lib/session.tsx`
+- **Tables:**
+  - `users`: People who can sign in (`001_init.sql`)
+  - `sessions`: Signed-in sessions, hashed cookie tokens (`001_init.sql`)
+  - `password_resets`: Reset links, emailed or made by an owner (`001_init.sql`)
+  - `auth_attempts`: Sign-in attempts and other rate limits (`001_init.sql`)
+  - `email_tokens`: Email confirmation and email-change links (`002_account_recovery.sql`)
+  - `dev_mailbox`: Simulated account emails shown at `/dev/mailbox` (`001_init.sql`)
+- **Tests:** `test/accounts.test.ts`, `test/access.test.ts`
+- **Watch out:** sign-in, session and reset changes get `/security-review`. Tokens and links are
+  stored only as hashes.
 
-1. `CLAUDE.md`: how Claude works on Rigo (read automatically every session).
-2. `README.md`: this file.
-3. `PRODUCT.md`: where Rigo is going, and the owner's decisions.
-4. `docs/FEATURES.md`: what works today, area by area, and the gap to the vision.
-5. `docs/CODEMAP.md`: where each area lives in the code, with its tests and tables.
-6. `DESIGN.md`: how Rigo looks, and which design skill to use for each kind of look request.
+### workspace-model
+Creating a workspace from a template, the workspace's words, record types and custom fields, stages
+with meaning tags, settings, archive and delete, the setup checklist, and word matching.
+- **Files:** `src/server/modules/workspaces.ts`, `src/shared/workspace.ts`, `src/shared/templates.ts`,
+  `src/shared/permissions.ts`, `src/client/pages/start.tsx`, `src/client/pages/settings.tsx`
+- **Tables:**
+  - `companies`: Workspaces, their words, settings and counters (`001_init.sql`)
+  - `record_types`: Each workspace's record kinds and custom fields (`020_workspace_model.sql`)
+  - `stages`: Owner-built stages of the main record, with meanings (`020_workspace_model.sql`)
+- **Tests:** `test/workspace-model.test.ts`
+- **Watch out:** a structure is validated as data (`structureSchema`, `stageProblems`); templates
+  never carry prices, people or records. A stage holding work can't be removed.
+
+### people-and-roles
+Members, owner-built roles and permissions, invitations, owner reset links, notifications and the
+activity log.
+- **Files:** `src/server/modules/team.ts`, `src/server/modules/notify.ts`, `src/client/pages/people.tsx`
+- **Tables:**
+  - `roles`: Each workspace's roles, their app and permissions (`001_init.sql`)
+  - `memberships`: Who belongs to which workspace, with which role (`001_init.sql`)
+  - `invitations`: Invitations to join (`001_init.sql`)
+  - `notifications`: What each person is told inside Rigo (`001_init.sql`)
+  - `audit_log`: The activity log (`001_init.sql`)
+- **Tests:** `test/team.test.ts`
+- **Watch out:** the Owner role always exists and the last owner can't leave. Only owners change
+  roles. Worker-app roles keep only worker permissions (`effectivePermissions`).
+
+### work-and-schedule
+The main work record: list, stages board, calendar, the lane-per-person timeline, assigning people
+and equipment, what it charges for, history, Today and search.
+- **Files:** `src/server/modules/work.ts`, `src/server/modules/search.ts`, `src/client/pages/work.tsx`,
+  `src/client/pages/today.tsx`, `src/client/components/fields.tsx`
+- **Tables:**
+  - `work_items`: The main record and its stage, time, fields and billing state (`021_work_and_customers.sql`)
+  - `work_assignees`: Who is assigned (`021_work_and_customers.sql`)
+  - `work_equipment`: Which equipment is assigned (`021_work_and_customers.sql`)
+  - `work_lines`: What the work charges for (`021_work_and_customers.sql`)
+  - `work_history`: Each item's history (`021_work_and_customers.sql`)
+  - `equipment`: Vehicles, tools, chairs or rooms (`021_work_and_customers.sql`)
+- **Tests:** `test/work.test.ts`
+- **Watch out:** moves follow the owner's paths and required fields (`moveProblem`); workers move
+  only their own open work and never cancel. Assigning never needs dragging.
+
+### customers
+Customers, their places and contacts, history, next visit and what they owe, duplicates and archive.
+- **Files:** `src/server/modules/customers.ts`, `src/shared/customers.ts`, `src/client/pages/customers.tsx`
+- **Tables:**
+  - `clients`: Customers (`021_work_and_customers.sql`)
+  - `client_places`: Where work happens for a customer (`021_work_and_customers.sql`)
+  - `client_contacts`: More people to reach at a customer (`021_work_and_customers.sql`)
+- **Tests:** `test/work.test.ts`
+- **Watch out:** contact details are removed on the server without `customers.contact`; amounts
+  without `money.view` (`src/server/lib/redact.ts`).
+
+### worker-app
+The phone screens for workers: Today, Upcoming and Done, one action at a time, offline records that
+send themselves when signal returns.
+- **Files:** `src/server/modules/worker.ts`, `src/client/pages/worker.tsx`, `src/client/lib/offline.ts`,
+  `src/client/lib/autosync.ts`, `src/client/lib/draft-rev.ts`
+- **Tables:**
+  - `worker_submissions`: Records sent from phones, so a retry applies once (`021_work_and_customers.sql`)
+- **Tests:** `test/worker.test.ts`, `test/drafts.test.ts`
+- **Watch out:** only the server's acceptance moves work. Offline data is keyed by person and
+  workspace and removed on sign-out (unsent records stay, under their owner only).
+
+### money
+The price list, invoices built from finished work with exact totals, holds, approval, issuing,
+voiding, payments, what is owed by age, invoice settings.
+- **Files:** `src/server/modules/billing.ts`, `src/shared/money.ts`, `src/shared/invoices.ts`, `src/client/pages/money.tsx`
+- **Tables:**
+  - `catalog_items`: What a workspace sells and its price (`021_work_and_customers.sql`)
+  - `money_invoices`: Invoices and their state (`022_money.sql`)
+  - `money_invoice_lines`: Invoice lines (`022_money.sql`)
+  - `money_invoice_work`: Which work an invoice bills, once (`022_money.sql`)
+  - `money_payments`: Payments received (`022_money.sql`)
+- **Tests:** `test/money.test.ts`, `test/money-math.test.ts`
+- **Watch out:** money is exact, in minor units, worked out in `src/shared/money.ts`; a missing price
+  or tax rate holds the invoice; an approval is for the version seen.
+
+### automation-and-inbox
+Assisted automation (Manual, Assisted, Automatic per workspace and per automation, pause, take
+over), the approvals inbox, messages to customers and the provider boundary.
+- **Files:** `src/server/modules/automation.ts`, `src/shared/automation.ts`, `src/server/adapters/index.ts`,
+  `src/server/adapters/providers.ts`, `src/client/pages/automation.tsx`, `src/client/pages/inbox.tsx`
+- **Tables:**
+  - `auto_rules`: Each automation's level in a workspace (`023_automation.sql`)
+  - `auto_actions`: What Rigo prepared or did, and what people decided (`023_automation.sql`)
+  - `outbox_messages`: Messages to customers and what really happened to them (`023_automation.sql`)
+- **Tests:** `test/automation.test.ts`
+- **Watch out:** nothing approves itself; the safest level wins; Automatic on money needs an owner's
+  confirmation; demos only simulate; nothing is "sent" unless a provider accepted it.
+
+### booking-and-templates
+The public booking and request page, requests in the inbox, and the shared template library.
+- **Files:** `src/server/modules/booking.ts`, `src/server/modules/library.ts`, `src/shared/booking.ts`,
+  `src/shared/hours.ts`, `src/client/pages/booking-public.tsx`
+- **Tables:**
+  - `booking_pages`: A workspace's public page (`024_booking_and_library.sql`)
+  - `requests`: What came in from it (`024_booking_and_library.sql`)
+  - `library_templates`: Templates owners published (`024_booking_and_library.sql`)
+- **Tests:** `test/booking.test.ts`
+- **Watch out:** the public page never shows prices, people or other customers; requests are rate
+  limited and a hidden field catches bots.
+
+### landing-and-demos
+The front page and demos of any template, with sample data on request.
+- **Files:** `src/client/pages/landing.tsx`, `src/server/modules/demo.ts`, `src/server/modules/samples.ts`,
+  `src/shared/samples.ts`
+- **Tables:** none of its own; a demo is a workspace of kind `demo`.
+- **Tests:** `test/demo.test.ts`
+- **Watch out:** demos never send, charge, connect or call a paid service.
+
+### foundation
+The server and web-app shells, isolation helpers, the database and migrations, the component kit
+and tokens, builds, the browser check and GitHub workflows.
+- **Files:** `src/server/main.ts`, `src/server/config.ts`, `src/server/vercel.ts`, `src/server/http/`,
+  `src/server/db/`, `src/server/lib/util.ts`, `src/server/lib/redact.ts`, `src/server/lib/zod-messages.ts`,
+  `src/shared/schedule.ts`, `src/shared/timezones.ts`, `src/client/App.tsx`, `src/client/main.tsx`,
+  `src/client/index.html`, `src/client/styles.css`, `src/client/components/ui.tsx`,
+  `src/client/components/shell.tsx`, `src/client/lib/api.ts`, `src/client/lib/theme.ts`,
+  `src/client/lib/title.ts`, `src/client/lib/format.ts`, `src/client/lib/form.ts`, `static/`,
+  `migrations/`, `scripts/`, `e2e/run.mjs`, `test/helpers.ts`, `test/fixtures/`, `.github/`
+- **Tables:**
+  - `schema_migrations`: Which migration files have been applied (`src/server/db/index.ts`)
+  - `system_state`: Server-wide markers (`001_init.sql`)
+- **Tests:** `test/access.test.ts`
+- **Watch out:** `loadCompanyCtx` in `src/server/http/context.ts` scopes every request to one
+  workspace; non-members get 404. `.claude/hooks/protect-migrations.sh` blocks editing a migration
+  already on `main`.
+
+### Old tables
+Left by the earlier field-service app. Nothing reads or writes them; the owner approves dropping
+them in a clean-up at launch.
+  - `approval_delegations`: (`001_init.sql`)
+  - `customers`: (`001_init.sql`)
+  - `locations`: (`001_init.sql`)
+  - `resources`: (`001_init.sql`)
+  - `services`: (`001_init.sql`)
+  - `jobs`: (`001_init.sql`)
+  - `job_resources`: (`001_init.sql`)
+  - `job_events`: (`001_init.sql`)
+  - `files`: (`001_init.sql`)
+  - `invoices`: (`001_init.sql`)
+  - `invoice_lines`: (`001_init.sql`)
+  - `payments`: (`001_init.sql`)
+  - `messages`: (`001_init.sql`)
+  - `workflows`: (`001_init.sql`)
+  - `workflow_versions`: (`001_init.sql`)
+  - `events`: (`001_init.sql`)
+  - `automation_runs`: (`001_init.sql`)
+  - `actions`: (`001_init.sql`)
+  - `approvals`: (`001_init.sql`)
+  - `recurring_plans`: (`001_init.sql`)
+  - `plan_occurrences`: (`001_init.sql`)
+  - `imports`: (`001_init.sql`)
+  - `templates`: (`001_init.sql`)
+  - `template_shares`: (`001_init.sql`)
+  - `template_applications`: (`001_init.sql`)
+  - `assistant_messages`: (`001_init.sql`)
+  - `usage_counters`: (`001_init.sql`)
+  - `credit_entries`: (`007_billing_lifecycle.sql`)
+  - `invoice_credits`: (`007_billing_lifecycle.sql`)
+  - `statements`: (`007_billing_lifecycle.sql`)
+  - `invoice_links`: (`007_billing_lifecycle.sql`)
+  - `pending_submissions`: (`010_driver_records.sql`)
+  - `customer_merges`: (`014_customers.sql`)
+
+## Recipes
+
+**Add a feature end to end.** Check `PRODUCT.md`. Put the rule in `src/shared/` so the server and
+the screens share it. Add the route in the area's module: scope every query by `company_id`, check
+the permission with the helpers in `src/server/http/context.ts`, remove contact and money fields on
+the server (`src/server/lib/redact.ts`). Build the screen with the components in
+`src/client/components/` and the workspace's words (`useWorkspace().words`). Add tests, including a
+permission or isolation case. Update `PRODUCT.md` (what it does) and this map.
+
+**Add a screen.** Add the page in `src/client/pages/` and its route in `src/client/App.tsx`. Give it
+loading, empty (with the next action), error (with retry) and permission states, one main action,
+and nothing the person can't use. Check it at 375, 768, 1024 and 1440px in both themes; extend
+`e2e/run.mjs` for a key flow.
+
+**Change the database.** Add a new numbered file in `migrations/` that only adds; never edit one on
+`main`. List new tables above. Keep it out of preview pushes; it is applied at launch.

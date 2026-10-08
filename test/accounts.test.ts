@@ -469,7 +469,8 @@ describe('m1 and m3: plain messages and link checks', () => {
       (await owner.post(`/c/${cid}/customers`, { name: 'z'.repeat(500), email: 'bad', location: { address: 'q'.repeat(2000) } })).body,
       (await owner.patch('/auth/me', { name: 'n'.repeat(81), theme: 'pink' })).body,
       (await owner.post(`/c/${cid}/invitations`, { email: 'nope', role: 'x'.repeat(100) })).body,
-      (await owner.post(`/c/${cid}/delegations`, { toUserId: 'not-a-uuid', endsAt: 'tomorrow' })).body,
+      (await owner.post(`/c/${cid}/roles`, { name: 'r'.repeat(100), app: 'robot', permissions: ['nope'] })).body,
+      (await owner.post(`/c/${cid}/work`, { clientId: 'not-a-uuid', startsAt: 'tomorrow', lines: [{ description: '', quantity: 'lots' }] })).body,
     ];
     const all = bodies.flatMap(messages);
     expect(all.length).toBeGreaterThan(10);

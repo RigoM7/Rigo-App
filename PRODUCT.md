@@ -1,128 +1,137 @@
-# Rigo product
+# Rigo
 
-Where Rigo is going. This is the vision, not a list of what exists: what is built today, and how
-far it is from this, is in `docs/FEATURES.md` (its "Gap to PRODUCT.md" table). A request that
-conflicts with this file is flagged before it is built.
+What Rigo is, what it does today, what it doesn't yet, and the owner's decisions. A request that
+conflicts with this file is flagged before it is built. How it looks is `DESIGN.md`; how to run and
+ship it, and where the code is, is `README.md`.
 
-## 1. What Rigo is
+## What Rigo is
 
-A place where anyone runs their business, whatever the industry and whether it's a company or a
-team. People download Rigo, create an account, and create a workspace or join someone else's. They
-set the workspace up the way their business works (its records, roles, words and workflows) and
-Rigo takes on the routine: preparing invoices, telling people what changed, drafting follow-ups and
-messages. Rigo itself belongs to no industry.
+One place where any business runs its work. A cleaner, a salon, a bakery or a fuel company creates
+a workspace, sets it up in its own words, and Rigo takes on the routine: preparing invoices,
+confirming bookings, reminding customers who owe. The owner decides how much Rigo does on its own.
 
-Rigo ships as native App Store and Google Play apps (today it is a web app that installs from the
-browser).
+## Rules for every workspace
 
-## 2. Rules for every workspace
-
-1. **The owner decides how much is automated** and stays in control through permissions,
-   approvals, pause and takeover.
+1. **The owner decides how much is automated**, and stays in control through levels, approvals,
+   pause and take-over. Nothing ever approves itself; a timeout never approves.
 2. **Honest states.** Nothing claims a send, sync, payment, price or approval that didn't happen.
-   Simulated and demo output is labeled.
-3. **Workspaces start empty and private.** No fictional data in a real workspace; each workspace's
-   data is isolated and permission-checked on the server.
-4. **Configuration, not code.** Owners set everything up in the app, as validated data; never
-   scripts, HTML or CSS.
-5. **Exact money.** Prices, quantities, discounts, taxes and totals are exact; a missing price holds
-   an invoice; AI never decides prices, taxes or totals.
-6. **Works on the go.** People away from a desk get focused phone screens, large controls and
-   offline drafts; only the server's acceptance completes work.
+   Simulated and demo output is labelled.
+3. **Workspaces start empty and private.** No sample data in a real workspace; each workspace's data
+   is isolated and permission-checked on the server.
+4. **Configuration, not code.** Owners set everything up in the app, as validated data.
+5. **Exact money.** Prices, quantities, taxes and totals are exact; a missing price holds an invoice;
+   AI never decides prices, taxes or totals.
+6. **Works on the go.** Workers get focused phone screens, big controls and offline records; only the
+   server's acceptance completes work.
+7. **Every screen** has one main action, the most important thing first, and nothing the person
+   can't use.
 
-## 3. Accounts and people
+## What it does today
 
-- Anyone can create an account. One account can own workspaces and work in other people's, with a
-  different role in each.
-- An owner adds someone by the email they use for Rigo. The person sees a pending invitation and
-  accepts it; if they don't have an account yet, it waits until they sign up with that email.
-- The owner assigns the role. A workspace can have several owners; the last owner can't leave.
+**Accounts.** Anyone can sign up. One account can own workspaces and work in others with a different
+role in each. Sign-in pauses after repeated failures and names the wait; passwords follow one rule
+(10+ characters, not common or personal). Recovery by email when an email service is set, otherwise
+by a one-time reset link an owner makes. Email confirmation and change, account deletion (never
+while the only owner), invitations by email or a link to share.
 
-## 4. Your words, your roles
+**Your words, roles and stages.** Each workspace names its main record (job, appointment, order,
+visit…), its customers, its team, its equipment and its places, and every screen follows. Owners
+build roles (office screens or the phone app) and tick what each may see and do; the Owner role
+always exists. Owners build the stages of the main record, each tagged Open, Active, Finished,
+Cancelled or Failed; a stage can need a field filled first and can limit where work moves next.
+Custom fields on work, customers and equipment (text, number, money, choice, yes/no, date, phone,
+email); phone and email fields are removed for roles without contact access, money fields for roles
+without money access.
 
-- The owner renames everything core: roles, the work record, customers, resources (a salon says
-  Appointment, Client, Stylist; a fuel company says Job, Customer, Driver).
-- The owner adds, renames and removes roles and sets what each may see and do. The Owner role
-  always exists and can always do everything.
+**The first five minutes.** Create an account → name the workspace and describe it in a sentence
+(or pick a type) → Rigo suggests the closest template by plain word matching and shows what it
+brings → one review screen to adjust words, stages and roles → invite the team or skip → Today, with
+a short setup checklist.
 
-## 5. Work
+**Templates.** Field service (fuel, portable toilets, septic), cleaning and home services,
+appointments (salon, grooming, tutoring), orders and delivery (bakery, catering, small shop), and a
+general start. Structure only: never prices, people or records. Owners can publish their setup to a
+shared library; anyone can start from a published template. Applying copies it.
 
-- **One main work record**, named by each workspace (Job, Appointment, Order, Visit…), with
-  scheduling, assignment and billing built in, plus the fields the owner adds.
-- **Work comes in four ways:** staff create it; customers request it through a request form or
-  booking page; it is imported from a file; or schedules and workflows create it.
-- **Stages are built by the owner**, from nothing or from a template:
-  - each stage is tagged with a meaning (Open, Active, Finished, Cancelled or Failed), so Rigo can
-    bill, report and stay honest whatever the names are;
-  - work moves when people move it or automations move it, freely or only along paths the owner
-    allows;
-  - a stage can require information before work enters it, set who sees and acts on it, fire
-    automations on entry, and need an approval to leave.
-- **Failed or partial work:** the owner decides how it's handled.
-- **Building blocks every workspace can use:** records and custom fields, scheduling and recurring
-  work, invoices and payments, messages, imports.
+**Work and schedule.** The main record with a customer, a place, a time, assigned people and
+equipment, fields, notes, what it charges for, and history. A list, a board by stage, a month
+calendar (an agenda on phones) and a day timeline with a lane per person or per piece of equipment.
+Assigning uses selects and buttons, never dragging. Search on every screen.
 
-## 6. Automation
+**Customers.** Contacts, places with access notes, more people to reach, history. Each customer's
+page leads with the next visit and what they owe. Duplicate warnings, archive and restore.
 
-- **Three levels:** Manual (people start every step; Rigo suggests the next one), Assisted (Rigo
-  prepares; a person approves) and Automatic (Rigo does it).
-- **Set at four places:** the whole workspace, a workflow, a step, and a person or role. When they
-  disagree, the safest one (the one asking for more human involvement) wins.
-- **Need a person by default:** anything that moves money, deleting data, and a workflow's first
-  real run. The owner can switch each off after a clear warning.
-- **Controls:** pause everything or one workflow, take over a running automation, test on sample
-  data before turning anything on, and an activity log of what Rigo did and why something was
-  blocked.
-- **Approvals:** the owner picks the approver roles or people per workflow or step; approval
-  authority can be delegated for a period; approvals can be decided with one tap from a phone
-  notification. There is no escalation, and nothing ever approves itself (timeouts never approve).
-- **Building workflows:** tell the assistant in plain words, use guided forms or the visual
-  builder, or start from templates.
+**The worker phone app.** Today, Upcoming and Done, only their own work. The address first, call
+and directions buttons, one main action at the bottom (start, finish), "couldn't do it" when the
+owner has such a stage, and the fields a stage needs. Works offline: lists are kept on the phone,
+updates are saved there and send themselves when signal returns; the same update never applies twice.
 
-## 7. Assistant
+**Money.** A price list (prices to a hundredth of a cent; a missing price is never zero). Invoices
+built from finished work for one customer, with exact totals and tax; a missing price, quantity or
+tax rate holds the invoice with the reason. Approve (by default every invoice needs a person's
+approval), issue with a continuing number, void (it keeps its number), record payments received,
+see what is owed by age (not yet due, 1–30, 31–60, over 60 days) and what is ready to bill.
 
-Answers questions from the workspace's own data, turns plain requests into workflow proposals, and
-sets up a whole workspace from a description ("I run a mobile dog-grooming business"). Everything
-it proposes waits for the owner's approval. Real AI is optional, never used in demos, and never the
-authority for money.
+**Automation, assisted.** Three automations: invoices from finished work, booking confirmations, and
+reminders for invoices 7 days overdue. Each is Off, Manual, Assisted (the default: Rigo prepares, a
+person approves) or Automatic; the workspace has a level too and the safest wins. Automatic on money
+needs an owner's confirmation and still waits for approval while invoices require it. Pause stops
+everything (held items run or are cancelled on resume); any item can be taken over. The inbox holds
+what waits for a person: approvals, booking requests and held invoices, plus updates.
 
-## 8. Templates and the library
+**Booking and request pages.** A public page per workspace: people ask for work, or pick a free time
+from the owner's hours. Requests land in the inbox; accepting adds the customer (matched by email or
+phone) and the work. Never shows prices or people; rate limited, with a bot trap.
 
-- A template is a workspace's structure (record types, fields, stages, roles, vocabulary,
-  workflows), never its prices, people or data.
-- A new workspace picks a template or starts empty.
-- Any owner can publish their workspace as a template to a shared library that other Rigo users
-  browse and use. Applying a template copies it; later edits to the template never change a
-  workspace.
-- Fuel delivery, portable toilets and septic is the first template. It is built only from Rigo's
-  general features, as proof that the platform works.
+**Demos.** Any template opens as a demo: empty at first, "Show sample data" fills it (customers,
+work across stages, invoices Rigo prepared, a part-paid invoice, confirmations to approve). "See it as
+a worker" shows the phone app. Demos never send, charge, connect or call a paid service.
 
-## 9. Demo
+**The front page.** The vision, the same screen in four businesses' words, a request becoming a
+payment, the automation levels, templates, an honest list of what isn't connected, and sign-up.
 
-Anyone can try any template. A demo opens empty, and a "Show sample data" button turns sample data
-on. Demos never send, charge, connect or call a paid service.
+## Not yet (the gap to the vision)
 
-## 10. Branding
-
-Rigo's look is the default. A workspace may customize the look freely if it wants to; readability
-is always kept, and the Rigo name stays visible somewhere.
-
-## 11. Next steps
-
-1. Custom vocabulary and roles.
-2. Setting up any workspace from scratch.
-
-## 12. Business model
-
-Creating a workspace is free. Pricing is undecided; no billing is built.
+| Vision | Today |
+|---|---|
+| AI assistant: questions in plain words, setup by conversation | After launch. Suggestions use word matching. |
+| Native App Store and Google Play apps | Installs from the browser. |
+| Sending email and texts to customers | Prepared always; sent only once the owner connects a service (keys) and allows the workspace. |
+| Taking card payments | Records payments received. |
+| Workflows the owner builds (triggers, steps, approver per step, delegation) | Three built-in automations with levels. |
+| Recurring work and rentals | Not rebuilt yet. |
+| Photos, signatures and files on work | Not rebuilt yet. |
+| Imports from files, customer merge | Not rebuilt yet. |
+| A workspace's own look (logo, colour) | Not rebuilt yet. |
+| Spanish | Not rebuilt yet; English only. |
+| Several work record types per workspace | One main record per workspace. |
 
 ## Decisions
 
 One line per decision, newest last.
-- 2026-10-07: Rigo is a platform for any business; field service becomes the first template.
+- 2026-10-07: Rigo is a platform for any business; field service becomes one template.
 - 2026-10-07: Migrations wait for launch and stay out of preview pushes, because previews share the
   live database.
 - 2026-10-07: Only launching (merging into `main`) needs the owner's approval.
 - 2026-10-07: Email (Resend or Postmark) and texts (Twilio) stay off until the owner sets their keys;
   until then recovery uses owner-created reset links.
-- 2026-10-07: The black "Try the demo" button (commit 685334e) was not kept.
+- 2026-10-07: Rebuild everything from scratch for any business, keeping only the proven safety parts
+  (accounts and sign-in, recovery, invitations, isolation, server-side field removal, exact money,
+  offline drafts) and their tests.
+- 2026-10-07: Computer and phone are equally important.
+- 2026-10-07: The first version: work and schedule, customers, invoices and payments, the worker phone
+  app, assisted automation, booking and request pages, templates and a shared library. The AI
+  assistant comes after launch; until then "describe your business" uses plain word matching.
+- 2026-10-07: Launch templates: field service, cleaning and home services, appointments, orders and
+  delivery. Structure only, never prices, people or data.
+- 2026-10-07: Menus: office gets Today, Work, Customers, Money and Settings plus the inbox and search,
+  in the workspace's words; workers get Today, Upcoming and Done.
+- 2026-10-07: The look is "calm, bold, friendly" (Spruce and Marigold, Bricolage Grotesque, Figtree,
+  JetBrains Mono); red and black are gone.
+- 2026-10-07: Demos start empty with a "Show sample data" button.
+- 2026-10-07: Old data starts fresh at the switch; the owner confirms the wipe once more at launch.
+- 2026-10-07: Docs are four files: PRODUCT.md, DESIGN.md, README.md and CLAUDE.md.
+- 2026-10-07: Errors and destructive actions use Clay, a muted rust, with an icon and words; it is
+  never a brand colour. (Picked by Claude: the new palette has no red.)
+- 2026-10-07: Creating a demo needs an account, so each demo is the visitor's own private workspace.
+  (Picked by Claude.)

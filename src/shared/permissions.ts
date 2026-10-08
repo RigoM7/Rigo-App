@@ -1,85 +1,63 @@
 // Permission keys are the single vocabulary used by the server (enforcement) and the client
-// (navigation only). The server never trusts the client's view of these.
+// (navigation only). The server never trusts the client's view of these. Descriptions use plain
+// words; screens replace "work" and "customers" with the workspace's own words.
 
 export const PERMISSIONS = {
-  'company.settings': 'Edit company details, setup and branding',
-  'members.view': 'See team members',
+  'workspace.settings': 'Change the workspace details, words, stages and fields',
+  'members.view': 'See the team',
   'members.invite': 'Invite people and manage invitations',
-  'members.manage': 'Change roles and remove members',
-  'roles.manage': 'Edit role permissions',
-  'customers.view': 'See customers and service locations',
-  'customers.edit': 'Create and edit customers and locations',
-  'customers.contact': 'See customer email and phone',
-  'jobs.view_all': 'See all jobs',
-  'jobs.view_assigned': 'See jobs assigned to them',
-  'jobs.create': 'Create jobs',
-  'jobs.edit': 'Edit and cancel jobs',
-  'jobs.assign': 'Assign and reassign jobs',
-  'jobs.work': 'Start and complete assigned jobs',
-  'jobs.correct': 'Correct completed job records (with history)',
-  'resources.view': 'See trucks and equipment',
-  'resources.edit': 'Manage trucks and equipment',
-  'services.manage': 'Configure services, fields and pricing',
-  'finance.view': 'See prices, rates and invoice amounts',
-  'invoices.view': 'See invoices',
-  'invoices.edit': 'Prepare and edit draft invoices',
+  'members.manage': 'Change roles and remove people',
+  'roles.manage': 'Add, rename and change roles',
+  'customers.view': 'See customers, their places and history',
+  'customers.edit': 'Add and edit customers',
+  'customers.contact': 'See customer phone numbers and email addresses',
+  'work.view_all': 'See all work',
+  'work.view_assigned': 'See work assigned to them',
+  'work.create': 'Add work',
+  'work.edit': 'Edit, reschedule and cancel work',
+  'work.assign': 'Assign people and equipment',
+  'work.do': 'Move their assigned work forward',
+  'equipment.manage': 'Add and edit equipment',
+  'money.view': 'See prices, amounts and what customers owe',
+  'catalog.manage': 'Set services and prices',
+  'invoices.manage': 'Prepare, edit and issue invoices',
   'invoices.approve': 'Approve invoices',
-  'invoices.issue': 'Issue invoices',
   'payments.record': 'Record payments',
-  'workflows.view': 'See workflows and automation activity',
-  'workflows.edit': 'Edit and test workflow drafts',
-  'workflows.activate': 'Activate workflows',
-  'automation.control': 'Pause, resume and take over automation',
-  'approvals.decide': 'Act as an approver when assigned',
-  'imports.run': 'Import records from files',
-  'templates.manage': 'Create, share and apply templates',
-  'reports.view': 'See the business overview',
-  'messages.view': 'See customer communications',
-  'messages.send': 'Prepare and send customer communications',
-  'assistant.use': 'Use the assistant',
+  'automation.manage': 'Choose what Rigo does on its own',
+  'automation.control': 'Pause Rigo and take over',
+  'approvals.decide': 'Approve or reject what Rigo prepared',
+  'requests.manage': 'Run the booking page and answer requests',
+  'templates.manage': 'Publish and apply templates',
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
 
 export const PERMISSION_GROUPS: { label: string; keys: Permission[] }[] = [
-  { label: 'Records', keys: ['customers.view', 'customers.edit', 'resources.view', 'resources.edit', 'jobs.view_all', 'jobs.view_assigned'] },
-  { label: 'Fields', keys: ['customers.contact', 'finance.view'] },
-  { label: 'Actions', keys: ['jobs.create', 'jobs.edit', 'jobs.assign', 'jobs.work', 'jobs.correct', 'messages.view', 'messages.send', 'imports.run', 'assistant.use'] },
-  { label: 'Financial', keys: ['invoices.view', 'invoices.edit', 'invoices.issue', 'payments.record', 'reports.view'] },
-  { label: 'Workflow configuration', keys: ['services.manage', 'workflows.view', 'workflows.edit', 'workflows.activate', 'automation.control', 'templates.manage'] },
-  { label: 'Approval authority', keys: ['invoices.approve', 'approvals.decide'] },
-  { label: 'Member management', keys: ['members.view', 'members.invite', 'members.manage', 'roles.manage', 'company.settings'] },
+  { label: 'Work', keys: ['work.view_all', 'work.view_assigned', 'work.create', 'work.edit', 'work.assign', 'work.do', 'equipment.manage'] },
+  { label: 'Customers', keys: ['customers.view', 'customers.edit', 'customers.contact', 'requests.manage'] },
+  { label: 'Money', keys: ['money.view', 'catalog.manage', 'invoices.manage', 'invoices.approve', 'payments.record'] },
+  { label: 'Automation', keys: ['automation.manage', 'automation.control', 'approvals.decide'] },
+  { label: 'Team and setup', keys: ['members.view', 'members.invite', 'members.manage', 'roles.manage', 'workspace.settings', 'templates.manage'] },
 ];
 
-export interface RolePreset { key: string; name: string; description: string; permissions: Permission[]; isOwner?: boolean }
+/** Which screens a role opens on: the office places, or the worker's Today / Upcoming / Done. */
+export type RoleApp = 'office' | 'worker';
 
-export const ROLE_PRESETS: RolePreset[] = [
-  {
-    key: 'owner', name: 'Owner', isOwner: true,
-    description: 'Full control of the company, its configuration, members and approvals.',
-    permissions: ALL_PERMISSIONS,
-  },
-  {
-    key: 'dispatcher', name: 'Dispatcher',
-    description: 'Creates jobs, organizes schedules and assigns drivers and equipment.',
-    permissions: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'jobs.view_all', 'jobs.create',
-      'jobs.edit', 'jobs.assign', 'jobs.correct', 'resources.view', 'resources.edit', 'workflows.view', 'messages.view',
-      'messages.send', 'assistant.use'],
-  },
-  {
-    key: 'driver', name: 'Driver',
-    description: 'Sees assigned work and the information needed to complete it.',
-    permissions: ['jobs.view_assigned', 'jobs.work', 'resources.view', 'assistant.use'],
-  },
-  {
-    key: 'office', name: 'Office / billing',
-    description: 'Manages customers, invoices, approvals and payments.',
-    permissions: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'jobs.view_all', 'finance.view',
-      'invoices.view', 'invoices.edit', 'invoices.approve', 'invoices.issue', 'payments.record', 'approvals.decide', 'messages.view', 'messages.send',
-      'reports.view', 'imports.run', 'assistant.use'],
-  },
-];
+export interface RolePreset { key: string; name: string; description: string; app: RoleApp; permissions: Permission[] }
+
+/** Permission sets the role editor offers as starting points. Templates rename them. */
+export const PERMISSION_PRESETS: Record<'manager' | 'scheduler' | 'worker' | 'bookkeeper' | 'front_desk', Permission[]> = {
+  manager: ['members.view', 'members.invite', 'customers.view', 'customers.edit', 'customers.contact', 'work.view_all', 'work.create', 'work.edit',
+    'work.assign', 'equipment.manage', 'money.view', 'catalog.manage', 'invoices.manage', 'invoices.approve', 'payments.record', 'approvals.decide', 'requests.manage'],
+  scheduler: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'work.view_all', 'work.create', 'work.edit', 'work.assign',
+    'equipment.manage', 'requests.manage'],
+  worker: ['work.view_assigned', 'work.do'],
+  bookkeeper: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'work.view_all', 'money.view', 'catalog.manage',
+    'invoices.manage', 'invoices.approve', 'payments.record', 'approvals.decide'],
+  front_desk: ['members.view', 'customers.view', 'customers.edit', 'customers.contact', 'work.view_all', 'work.create', 'work.edit', 'work.assign',
+    'money.view', 'payments.record', 'requests.manage'],
+};
 
 export const has = (perms: readonly string[] | Set<string>, p: Permission) =>
   perms instanceof Set ? perms.has(p) : perms.includes(p);

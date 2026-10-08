@@ -12,7 +12,7 @@ import { checkPassword, PASSWORD_MAX, PASSWORD_MIN } from '../../shared/password
 import { EMAIL_MAX } from '../../shared/email.js';
 import { COMMON_PASSWORDS } from '../lib/common-passwords.js';
 import { removeMember, ownerResetBlocked } from './team.js';
-import { notifyRoles } from './inbox.js';
+import { notifyOwners } from './notify.js';
 
 export const accounts = new Hono<AppEnv>();
 
@@ -104,10 +104,9 @@ export async function mePayload(db: Db | Q, user: User | null) {
   if (!user) return { user: null };
   const extra = await db.query<{ email_verified_at: string | null }>(`select email_verified_at from rigo.users where id = $1`, [user.id]);
   const companies = await db.query(
-    `select c.id, c.name, c.kind, c.branding, m.role_key, r.name as role_name, r.is_owner,
-            (c.settings->'setup'->>'completedAt') as setup_completed_at,
-            -- What tells two companies with the same name apart (R17-M2).
-            c.created_at, c.address, c.archived_at, (c.settings->'setup'->>'start') = 'demo' as copied_from_demo
+    `select c.id, c.name, c.kind, c.template_key, m.role_key, r.name as role_name, r.is_owner, case when r.is_owner then 'office' else r.app end as role_app,
+            -- What tells two workspaces with the same name apart (R17-M2).
+            c.created_at, c.address, c.archived_at
        from rigo.memberships m join rigo.companies c on c.id = m.company_id
        join rigo.roles r on r.company_id = c.id and r.key = m.role_key
       where m.user_id = $1 and m.status = 'active' order by c.kind desc, c.name`, [user.id]);
@@ -351,7 +350,7 @@ async function applyEmailChange(q: Q, user: User, next: string, verified: boolea
   if (systemEmailChannel() !== 'none') {
     await sendSystemEmail(q, {
       to: user.email, kind: 'email_changed_notice', subject: 'Your Rigo email address was changed',
-      body: `The email address for your Rigo account was changed to ${next}.\n\nIf you didn't do this, reset your password right away or ask an owner of your company for help.`,
+      body: `The email address for your Rigo account was changed to ${next}.\n\nIf you didn't do this, reset your password right away or ask an owner of your workspace for help.`,
     });
   }
 }
@@ -362,12 +361,10 @@ accounts.get('/me', async (c) => c.json(await mePayload(await getDb(), c.get('us
 
 accounts.patch('/me', async (c) => {
   const user = requireUser(c);
-  const input = await body(c, z.object({ name: name.optional(), theme: z.enum(['light', 'dark', 'system']).optional(), language: z.enum(['en', 'es']).nullable().optional() }));
+  const input = await body(c, z.object({ name: name.optional(), theme: z.enum(['light', 'dark', 'system']).optional() }));
   const db = await getDb();
   if (input.name) await db.query(`update rigo.users set name = $1 where id = $2`, [input.name, user.id]);
   if (input.theme) await db.query(`update rigo.users set theme = $1 where id = $2`, [input.theme, user.id]);
-  // null: follow the device's language (D8).
-  if (input.language !== undefined) await db.query(`update rigo.users set language = $1 where id = $2`, [input.language, user.id]);
   return c.json({ ok: true });
 });
 
@@ -452,15 +449,14 @@ accounts.post('/me/delete', async (c) => {
         where m.user_id = $1 and m.status = 'active' and c.kind = 'real' for update of m`, [user.id]);
     const sole = ms.filter((m) => m.is_owner && m.owners <= 1).map((m) => m.company_name);
     if (sole.length) {
-      throw conflict(`You're the only owner of ${sole.join(', ')}. In Team, make someone else an owner first, then delete your account.`, { soleOwnerOf: sole });
+      throw conflict(`You're the only owner of ${sole.join(', ')}. In Settings, People, make someone else an owner first, then delete your account.`, { soleOwnerOf: sole });
     }
     for (const m of ms) {
       await removeMember(q, m.company_id, m, user.id, 'Assignee deleted their Rigo account');
       await audit(q, { company: { id: m.company_id }, user }, 'member.account_deleted', { memberId: m.id });
-      await notifyRoles(q, m.company_id, ['owner'], { category: 'update', title: `${user.name} deleted their Rigo account`, body: 'They no longer have access to this company. Their past work stays in history.', link: 'team' });
+      await notifyOwners(q, m.company_id, { category: 'update', title: `${user.name} deleted their Rigo account`, body: 'They no longer have access to this workspace. Their past work stays in history.', link: 'settings/people' });
     }
     await q.query(`delete from rigo.companies where kind = 'demo' and demo_user_id = $1`, [user.id]);
-    await q.query(`update rigo.approval_delegations set ends_at = now() where (from_user_id = $1 or to_user_id = $1) and (ends_at is null or ends_at > now())`, [user.id]);
     await q.query(`delete from rigo.sessions where user_id = $1`, [user.id]);
     await q.query(`delete from rigo.password_resets where user_id = $1`, [user.id]);
     await q.query(`delete from rigo.email_tokens where user_id = $1`, [user.id]);
