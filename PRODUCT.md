@@ -135,3 +135,5 @@ One line per decision, newest last.
   never a brand colour. (Picked by Claude: the new palette has no red.)
 - 2026-10-07: Creating a demo needs an account, so each demo is the visitor's own private workspace.
   (Picked by Claude.)
+- 2026-10-08: Launched the rebuild; the old live data (accounts, workspaces) was wiped with the owner's
+  yes, so everyone signs up fresh. The old tables stay, empty, until a later clean-up.

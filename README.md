@@ -281,8 +281,8 @@ and tokens, builds, the browser check and GitHub workflows.
   already on `main`.
 
 ### Old tables
-Left by the earlier field-service app. Nothing reads or writes them; the owner approves dropping
-them in a clean-up at launch.
+Left by the earlier field-service app, emptied at launch. Nothing reads or writes them; dropping
+them is a later clean-up the owner approves.
   - `approval_delegations`: (`001_init.sql`)
   - `customers`: (`001_init.sql`)
   - `locations`: (`001_init.sql`)

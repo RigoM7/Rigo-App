@@ -1,7 +1,7 @@
 // Checks the code map in README.md against the code (`npm run check:docs`): every path it names
 // exists, every file in the covered folders belongs to an area, every test file is some area's test,
 // and the tables listed (the areas' and the old ones) are exactly the tables the code creates. Also
-// checks that the docs are the four agreed files plus docs/REBUILD.md.
+// checks that the docs are the four agreed files.
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
@@ -81,10 +81,10 @@ for (const [t, { area, from }] of listed) {
   if (!(src.includes('/') ? existsSync(src) : existsSync(`migrations/${src}`))) problems.push(`${MAP}: ${t} says it was created in ${src}, which doesn't exist.`);
 }
 
-// The docs: PRODUCT.md, DESIGN.md, README.md and CLAUDE.md at the top, docs/REBUILD.md while the rebuild runs.
+// The docs: PRODUCT.md, DESIGN.md, README.md and CLAUDE.md at the top.
 for (const d of ['PRODUCT.md', 'DESIGN.md', 'README.md', 'CLAUDE.md']) if (!existsSync(d)) problems.push(`${d} is missing.`);
-const extra = existsSync('docs') ? readdirSync('docs').filter((f) => f.endsWith('.md') && f !== 'REBUILD.md') : [];
-for (const f of extra) problems.push(`docs/${f}: the docs are four files (and docs/REBUILD.md during the rebuild). Fold it into one of them.`);
+const extra = existsSync('docs') ? readdirSync('docs').filter((f) => f.endsWith('.md')) : [];
+for (const f of extra) problems.push(`docs/${f}: the docs are four files. Fold it into one of them.`);
 
 if (problems.length) {
   console.error(`check:docs found ${problems.length} problem(s):\n- ${problems.join('\n- ')}`);

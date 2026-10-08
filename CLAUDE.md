@@ -2,8 +2,7 @@
 
 Rigo is one place where any business runs its work. `PRODUCT.md` is what it is, does and doesn't
 yet, and the owner's decisions; `DESIGN.md` is the look; `README.md` is how to run, check and ship,
-and the code map. Live site: https://rigo-app-dun.vercel.app. While the rebuild runs,
-`docs/REBUILD.md` says where it stands: "continue the rebuild" starts there.
+and the code map. Live site: https://rigo-app-dun.vercel.app.
 
 ## The owner
 - Decides what Rigo does and how it looks. Not a developer; runs a field-service business. Claude
