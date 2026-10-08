@@ -319,7 +319,7 @@ export function WorkDetail() {
         </div>
         <FormError error={move.error} />
         {next.length > 0 && (
-          <div className="form-actions">
+          <div className="form-actions" style={{ alignItems: 'flex-end' }}>
             {forward && <Button variant="primary" size="lg" busy={move.busy} onClick={() => startMove(forward)} icon={<ArrowRight size={18} aria-hidden="true" />}>Move to {forward.name}</Button>}
             {others.length > 0 && (
               <SelectField label="Or move to" value="" onChange={(e) => { const s = others.find((x) => x.key === e.target.value); if (s) startMove(s); }} className="grow" style={{ minWidth: 200 }}>
